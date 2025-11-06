@@ -17,7 +17,13 @@ SECTIONS {
   }
 
   .bss : {
+    __bss_begin = .;
     *(.bss*)
     *(COMMON)
+    __bss_end = .;
   }
+
+  . = ALIGN(4);
+  . += 131072;
+  __stack_top = .;
 }

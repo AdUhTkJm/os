@@ -2,7 +2,7 @@
 .global _start
 
 _start:
-  la sp, stack_top
+  la sp, __stack_top
 
   # Set up interrupt vectors.
   # On interrupt, the CPU does the following:
@@ -14,15 +14,28 @@ _start:
   # 4. Returns. `sret` jumps to `sepc`, but normal `ret` jumps to ra.
 
   # We set stvec to the interrupt handler.
-  # la a0, stvec_pos
-  # csrw stvec, a0
+  la a0, stvec_pos
+  csrw stvec, a0
+
+  # `sie` bit 9 masks interrupts when unset. Note bit starts from 0.
+  csrr a0, sie
+  ori a0, a0, 512
+  csrw sie, a0
+
+  # `sstatus` bit 1 enables/disables all interrupt in S-mode.
+  # See https://riscv.github.io/riscv-isa-manual/snapshot/privileged/#sstatus
+  csrr a0, sstatus
+  ori a0, a0, 2
+  csrw sstatus, a0
+
   j kernel_main
 
+.align 4
 stvec_pos:
   # We must save all registers for a seamless recover.
   # To do this, we preserve the current value of `sp` in `sscratch`.
   csrw sscratch, sp
-  addi sp, sp, -124
+  addi sp, sp, -128
   sw ra, 0(sp)
   sw gp, 4(sp)
   sw tp, 8(sp)
@@ -62,6 +75,14 @@ stvec_pos:
   csrr a3, sepc
   call interrupt_handler
 
+  # Skip the illegal instruction (bit 63, interrupt = 0).
+  csrr a0, scause
+  bltz a0, 1f
+  csrr a0, sepc
+  addi a0, a0, 4
+  csrw sepc, a0 
+
+1:
   lw ra, 0(sp)
   lw gp, 4(sp)
   lw tp, 8(sp)
@@ -94,7 +115,3 @@ stvec_pos:
   lw s11, 116(sp)
   lw sp, 120(sp)
   sret
-
-.section .bss
-  .space 4096
-stack_top:
