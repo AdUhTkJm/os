@@ -1,4 +1,7 @@
 CompileFlags:
   Add:
-    - -nostdlib
-    - -ffreestanding
+    - -Wno-unused-includes
+Diagnostics:
+  Suppress:
+    - -Wunused-includes
+

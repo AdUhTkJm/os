@@ -41,6 +41,7 @@ int printf(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
 
+  char buf[32];
   for (const char *p = fmt; *p; p++) {
     if(*p != '%') {
       kputch(*p);
@@ -48,7 +49,6 @@ int printf(const char *fmt, ...) {
       continue;
     }
 
-    char buf[32];
     switch(*++p) {
     case 'd': {
       int val = va_arg(args, int);
@@ -66,6 +66,7 @@ int printf(const char *fmt, ...) {
     }
     case 'p': {
       uintptr_t val = va_arg(args, uintptr_t);
+      kputs("0x");
       itoa(val, buf, 16);
       kputs(buf);
       output += strlen(buf);
@@ -81,6 +82,17 @@ int printf(const char *fmt, ...) {
       char *val = va_arg(args, char*);
       kputs(val);
       output += strlen(val);
+      break;
+    }
+    case 'l': {
+      if (*++p != 'd') {
+        kputs("%l");
+        break;
+      }
+      int64_t val = va_arg(args, int64_t);
+      itoa(val, buf, 10);
+      kputs(buf);
+      output += strlen(buf);
       break;
     }
     case '%': {

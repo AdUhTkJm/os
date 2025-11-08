@@ -211,5 +211,5 @@ if __name__ == "__main__":
 
   build()
   if args.run:
-    proc.run(f"qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel", shell=True)
+    proc.check_call(f"qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel", shell=True)
   print("Run finished.")
