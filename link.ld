@@ -5,15 +5,21 @@ SECTIONS {
   . = 0x80200000;
 
   .text : {
+    __text_begin = .;
     *(.text*)
+    __text_end = .;
   }
 
   .rodata : {
+    __rodata_begin = .;
     *(.rodata*)
+    __rodata_end = .;
   }
 
   .data : {
+    __data_begin = .;
     *(.data*)
+    __data_end = .;
   }
 
   .bss : {
@@ -23,7 +29,16 @@ SECTIONS {
     __bss_end = .;
   }
 
-  . = ALIGN(4);
+  . = ALIGN(4096);
+  __pt_root = .; /* Root of page table */
+  . += 4096;
+
+  . = ALIGN(16);
   . += 131072;
   __stack_top = .;
+  
+  /* Kernel End and stack cannot overlap. */
+  . += 1;
+  . = ALIGN(4096);
+  __kernel_end = .;
 }

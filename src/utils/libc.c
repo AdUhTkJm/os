@@ -84,17 +84,27 @@ int printf(const char *fmt, ...) {
       output += strlen(val);
       break;
     }
-    case 'l': {
-      if (*++p != 'd') {
+    case 'l':
+      switch (*++p) {
+      case 'd': {
+        int64_t val = va_arg(args, int64_t);
+        itoa(val, buf, 10);
+        kputs(buf);
+        output += strlen(buf);
+        break;
+      }
+      case 'x': {
+        int64_t val = va_arg(args, int64_t);
+        itoa(val, buf, 16);
+        kputs(buf);
+        output += strlen(buf);
+        break;
+      }
+      default:
         kputs("%l");
         break;
       }
-      int64_t val = va_arg(args, int64_t);
-      itoa(val, buf, 10);
-      kputs(buf);
-      output += strlen(buf);
       break;
-    }
     case '%': {
       kputch('%');
       output++;

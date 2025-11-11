@@ -24,12 +24,22 @@ args = parser.parse_args()
 SRC_DIR = Path("src")
 BUILD_DIR = Path("build")
 FINAL_BINARY = BUILD_DIR / "kernel"
-COMPILER = "riscv64-unknown-elf-gcc"
+COMPILER = "riscv64-unknown-elf-g++"
 AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
-  "-c", "-std=c11", "-O2", "-g",
+  "-x", "c", "-c", "-std=c11", "-O2", "-g",
   "-Wall", "-Wextra", "-Wuninitialized", "-Wstrict-aliasing",
-  "-ffreestanding", "-nostdlib", # "-fno-rtti", "-fno-exceptions",
+  "-ffreestanding", "-nostdlib",
+  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
+]
+CXXFLAGS = [
+  "-x", "c++", "-c", "-std=c++20", "-O2", "-g",
+  "-Wall", "-Wextra", "-Wuninitialized", "-Wstrict-aliasing",
+  "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
+  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
+]
+SFLAGS = [
+  "-c", "-ffreestanding", "-nostdlib",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 LDFLAGS = ["-T", "link.ld", "-nostdlib", "-mcmodel=medany"]
@@ -126,7 +136,14 @@ def get_all_includes(src_path: Path, visited=None) -> set[Path]:
 # Note that the type of counter is not easily representable.
 def compile_cpp(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
-  proc.check_call([COMPILER] + CFLAGS + ["-o", str(obj_path), str(src_path)])
+  src = str(src_path)
+  if src.endswith(".cpp"):
+    flags = CXXFLAGS
+  elif src.endswith(".s"):
+    flags = SFLAGS
+  else:
+    flags = CFLAGS
+  proc.check_call([COMPILER, *flags, "-o", str(obj_path), src])
 
 def archive_objects(obj_files, lib_path: Path):
   if lib_path.exists():
