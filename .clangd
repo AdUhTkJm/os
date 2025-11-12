@@ -1,6 +1,7 @@
 CompileFlags:
   Add:
     - -Wno-unused-includes
+    - -std=c++20
 Diagnostics:
   Suppress:
     - -Wunused-includes

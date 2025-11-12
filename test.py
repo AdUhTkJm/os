@@ -18,6 +18,7 @@ mp.set_start_method("fork")
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--run", action="store_true")
 parser.add_argument("--rebuild", action="store_true")
+parser.add_argument("-d", "--objdump", type=str)
 
 args = parser.parse_args()
 
@@ -27,13 +28,13 @@ FINAL_BINARY = BUILD_DIR / "kernel"
 COMPILER = "riscv64-unknown-elf-g++"
 AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
-  "-x", "c", "-c", "-std=c11", "-O2", "-g",
+  "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-Wstrict-aliasing",
   "-ffreestanding", "-nostdlib",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 CXXFLAGS = [
-  "-x", "c++", "-c", "-std=c++20", "-O2", "-g",
+  "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-Wstrict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
@@ -227,6 +228,10 @@ if __name__ == "__main__":
     shutil.rmtree(BUILD_DIR)
 
   build()
+  if args.objdump:
+    proc.run(f"riscv64-unknown-elf-objdump -d {args.objdump}", shell=True)
+    exit(0)
+
   if args.run:
     proc.check_call(f"qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel", shell=True)
   print("Run finished.")

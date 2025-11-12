@@ -36,7 +36,7 @@ char *itoa(long value, char *str, int base) {
   return str;
 }
 
-int printf(const char *fmt, ...) {
+int printk(const char *fmt, ...) {
   int output = 0;
   va_list args;
   va_start(args, fmt);

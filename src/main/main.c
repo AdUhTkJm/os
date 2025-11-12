@@ -1,14 +1,14 @@
 #include <stdint.h>
 #include "../utils/libc.h"
 #include "../utils/plic.h"
-#include "../paging/ptable.h"
+#include "../mem/ptable.h"
 
 void kernel_main() {
   memset(__bss_begin, 0, __bss_end - __bss_begin);
-  printf("Kernel launched.\n");
+  printk("Kernel launched.\n");
   init_plic();
-  printf("PLIC enabled.\n");
+  printk("PLIC enabled.\n");
   init_pagetable();
-  printf("Page table initialized.\n");
+  printk("Page table initialized.\n");
   for (;;) ;
 }

@@ -17,14 +17,16 @@ SECTIONS {
   }
 
   .data : {
-    __data_begin = .;
-    *(.data*)
+    __data_begin = .;*
+    *(.sdata .sdata.* .gnu.linkonce.s.*)
+    *(.data .data.* .gnu.linkonce.d.*)
     __data_end = .;
   }
 
   .bss : {
     __bss_begin = .;
-    *(.bss*)
+    *(.sbss .sbss.*)
+    *(.bss .bss.* .gnu.linkonce.b.*)
     *(COMMON)
     __bss_end = .;
   }

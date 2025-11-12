@@ -20,7 +20,11 @@ static_assert(sizeof(Frame) == PAGE_SIZE);
 
 C void build_pagelist() {
   // Grab 32MB of memory. The linker script guarantees alignment.
-  Frame *begin = (Frame*)__kernel_end;
+  //
+  // We use __builtin_assume_aligned, or otherwise the final
+  // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
+  // single `sd`.
+  Frame *begin = (Frame*)__builtin_assume_aligned(__kernel_end, 8);
   Frame *end = begin + 0x2000;
 
   for (Frame *p = begin; p != end; p++) {

@@ -1,17 +1,17 @@
 #include "sbi.h"
 #include "libc.h"
+#include "helper.h"
 
-void kputs(const char *s) {
+C void kputs(const char *s) {
   unsigned len = strlen(s);
   sbi_console_write(len, s);
 }
 
-void kputch(char c) {
+C void kputch(char c) {
   sbi_console_write(1, &c);
 }
 
-void panic(const char *s) {
-  kputs("kernel panicked: ");
-  kputs(s);
+C void panic(const char *s) {
+  printk("Kernel panicked: %s\n", s);
   sbi_system_reset();
 }

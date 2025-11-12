@@ -4,16 +4,26 @@
 #include "sbi.h"
 
 #ifdef __cplusplus
-#define C extern "C"
-
-namespace os {
-
-// TODO: Basic STL
-
-}
+#  define C extern "C"
+#  include "helper.hpp"
 #else
-#define C
-#endif // #ifdef __cplusplus
+#  define C
+#endif /* #ifdef __cplusplus */
+
+/* Note that we're using clangd for IDE, but gcc for compilation. */
+#if defined(__has_cpp_attribute) && __has_cpp_attribute(assume)
+#  define assume(...) [[assume(__VA_ARGS__)]]
+#endif
+#ifndef assume
+#  if defined(__clang__)
+#    define assume(...) __builtin_assume(__VA_ARGS__)
+#  elif defined(__GNUC__) && __GNUC__ >= 13
+#    define assume(...) __attribute__((__assume__(__VA_ARGS__)))
+#  endif
+#endif
+#ifndef assume
+#  define assume(...)
+#endif
 
 C void kputs(const char *s);
 C void kputch(char c);

@@ -3,6 +3,15 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+#define C extern "C"
+#else
+#define C
+/* Inline behaves slightly different in C and C++. */
+/* To make linkage right, we do this hack here. */
+#define inline static inline
+#endif // #ifdef __cplusplus
+
 /*
 Register a6 stands for FID (SBI Function ID), and a7 stands for EID (SBI Extension ID).
 
@@ -27,22 +36,26 @@ typedef struct {
   int ret;
 } sbiret_t;
 
-extern sbiret_t sbicall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7);
+C sbiret_t sbicall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7);
 
-inline sbiret_t sbi_console_write(reg_t len, const char *s) {
+C inline sbiret_t sbi_console_write(reg_t len, const char *s) {
   return sbicall(len, (reg_t) s, 0, 0, 0, 0, SBI_DBCN_CONSOLE_WRITE);
 }
 
-inline sbiret_t sbi_console_write_byte(reg_t byte) {
+C inline sbiret_t sbi_console_write_byte(reg_t byte) {
   return sbicall(byte, 0, 0, 0, 0, 0, SBI_DBCN_CONSOLE_WRITE);
 }
 
-inline sbiret_t sbi_set_timer(reg_t value) {
+C inline sbiret_t sbi_set_timer(reg_t value) {
   return sbicall(value, 0, 0, 0, 0, 0, SBI_SET_TIMER);
 }
 
-inline void sbi_system_reset() {
+C [[noreturn]] inline void sbi_system_reset() {
   sbicall(0, 0, 0, 0, 0, 0, SBI_SYSTEM_RESET);
 } // NOLINT (Suppress warning of "noreturn")
+
+#ifndef __cplusplus
+#undef inline
+#endif
 
 #endif
