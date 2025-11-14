@@ -36,6 +36,23 @@ char *itoa(long value, char *str, int base) {
   return str;
 }
 
+static char *itoa_u(unsigned long value, char *str, int base) {
+  char *p = str, *q = str;
+  do {
+    int tmp = value % base;
+    *p++ = tmp < 10 ? '0' + tmp : 'a' + (tmp - 10);
+  } while (value /= base);
+  *p-- = '\0';
+
+  /* Reverse the digits. */
+  while (q < p) {
+    char tmp = *p;
+    *p-- = *q;
+    *q++ = tmp;
+  }
+  return str;
+}
+
 int printk(const char *fmt, ...) {
   int output = 0;
   va_list args;
@@ -57,6 +74,13 @@ int printk(const char *fmt, ...) {
       output += strlen(buf);
       break;
     }
+    case 'u': {
+      unsigned val = va_arg(args, unsigned);
+      itoa_u(val, buf, 10);
+      kputs(buf);
+      output += strlen(buf);
+      break;
+    }
     case 'x': {
       int val = va_arg(args, int);
       itoa(val, buf, 16);
@@ -67,7 +91,7 @@ int printk(const char *fmt, ...) {
     case 'p': {
       uintptr_t val = va_arg(args, uintptr_t);
       kputs("0x");
-      itoa(val, buf, 16);
+      itoa_u(val, buf, 16);
       kputs(buf);
       output += strlen(buf);
       break;
@@ -115,4 +139,24 @@ int printk(const char *fmt, ...) {
 
   va_end(args);
   return output;
+}
+
+int strcmp(const char *l, const char *r) {
+  while (*l == *r) {
+    if (*l == '\0')
+      return 0;
+    l++;
+    r++;
+  }
+
+  return (unsigned char) *l - (unsigned char) *r;
+}
+
+void strcpy(char *dst, const char *src) {
+  while ((*dst++ = *src++));
+}
+
+void strcat(char *dst, const char *src) {
+  char *p = dst + strlen(dst);
+  strcpy(p, src);
 }

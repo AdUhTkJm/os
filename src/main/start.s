@@ -4,6 +4,11 @@
 _start:
   la sp, __stack_top
 
+  # After OpenSBI finishes setup, a0 will be hart ID and a1 will be
+  # the location of flattened device tree (FDT).
+  # Now we read the FDT.
+  call read_fdt
+
   # Set up interrupt vectors.
   # On interrupt, the CPU does the following:
   # 1. `medeleg` is checked to know which mode is to handle the exception.

@@ -12,6 +12,9 @@ unsigned strlen(const char *s);
 void *memset(void *p, int v, unsigned long size);
 int printk(const char *fmt, ...);
 char *itoa(long value, char *str, int base);
+int strcmp(const char *l, const char *r);
+void strcpy(char *dst, const char *src);
+void strcat(char *dst, const char *src);
 
 #ifdef __cplusplus
 }

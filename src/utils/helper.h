@@ -11,8 +11,10 @@
 #endif /* #ifdef __cplusplus */
 
 /* Note that we're using clangd for IDE, but gcc for compilation. */
-#if defined(__has_cpp_attribute) && __has_cpp_attribute(assume)
-#  define assume(...) [[assume(__VA_ARGS__)]]
+#ifdef __has_cpp_attribute
+#  if __has_cpp_attribute(assume)
+#     define assume(...) [[assume(__VA_ARGS__)]]
+#  endif
 #endif
 #ifndef assume
 #  if defined(__clang__)
@@ -29,6 +31,9 @@ C void kputs(const char *s);
 C void kputch(char c);
 
 C [[noreturn]] void panic(const char *s);
+
+C uint32_t rev_endian(uint32_t x);
+C uint64_t rev_endian64(uint64_t x);
 
 #define CSRW(reg, value) __asm__ volatile("csrw " #reg ", %0" :: "r"(value))
 #define CSRR(reg, value) __asm__ volatile("csrr %0, " #reg : "=r"(value))

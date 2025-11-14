@@ -1,8 +1,10 @@
 #include "ptable.h"
 #include "../utils/plic.h"
 #include "../utils/libc.h"
+#include "../fdt/fdt.h"
 
 using os::operator""_mb;
+using os::operator""_kb;
 
 namespace {
 
@@ -136,6 +138,11 @@ C void init_pagetable() {
   // Now set up the mapping of UART.
   // We will allocate a single 2MB page for it.
   pmap(UART_BASE, UART_BASE, MAP_2MB, PTE_RW | PTE_G | PTE_V | PTE_A | PTE_D);
+
+  // Also set up the mapping for FDT.
+  fdt_header_t *fdt = fdt_pos();
+  for (unsigned i = 0; i < os::roundup<4_kb>(rev_endian(fdt->totalsize)); i += 4_kb)
+    pmap((pa_t) fdt + i, (va_t) fdt + i, MAP_4KB, PTE_R | PTE_G | PTE_V);
 
   /* Move the root address into satp, and tell it we're using */
   /* virtual addresses now. */

@@ -8,6 +8,7 @@ import tempfile;
 import multiprocessing as mp;
 import time;
 import shutil;
+import json;
 from pathlib import Path;
 
 mp.set_start_method("fork")
@@ -29,13 +30,13 @@ COMPILER = "riscv64-unknown-elf-g++"
 AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
-  "-Wall", "-Wextra", "-Wuninitialized", "-Wstrict-aliasing",
+  "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
-  "-Wall", "-Wextra", "-Wuninitialized", "-Wstrict-aliasing",
+  "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
@@ -46,6 +47,7 @@ SFLAGS = [
 LDFLAGS = ["-T", "link.ld", "-nostdlib", "-mcmodel=medany"]
 CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
+INITRAMFS_PATH = SRC_DIR / "fs/init"
 
 def hash_file(path):
   h = hashlib.sha256()
@@ -57,6 +59,9 @@ def find_files() -> tuple[list[Path], list[Path]]:
   cpp_files = []
   h_files = []
   for path in SRC_DIR.rglob("*"):
+    if path.is_relative_to(INITRAMFS_PATH):
+      print(f"skipped {path}")
+      continue
     if path.suffix in [".cpp", ".c", ".s"]:
       cpp_files.append(path)
     elif path.suffix == ".h":
@@ -134,17 +139,20 @@ def get_all_includes(src_path: Path, visited=None) -> set[Path]:
   include_hashes[resolved_path] = file_hash
   return includes
 
+flagmap = {
+  ".cpp": CXXFLAGS,
+  ".c" : CFLAGS,
+  ".s" : SFLAGS
+}
+
+def get_flags(path: Path):
+  return flagmap[path.suffix]
+
 # Note that the type of counter is not easily representable.
-def compile_cpp(src_path: Path, obj_path: Path):
+def compile_file(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
   src = str(src_path)
-  if src.endswith(".cpp"):
-    flags = CXXFLAGS
-  elif src.endswith(".s"):
-    flags = SFLAGS
-  else:
-    flags = CFLAGS
-  proc.check_call([COMPILER, *flags, "-o", str(obj_path), src])
+  proc.check_call([COMPILER, *get_flags(src_path), "-o", str(obj_path), src])
 
 def archive_objects(obj_files, lib_path: Path):
   if lib_path.exists():
@@ -165,7 +173,25 @@ def link_libraries(lib_files, output_binary):
     os._exit(1)
   
 
+def build_initramfs():
+  tasks: list[tuple[Path, Path]] = []
+  cache = load_cache()
+  for file in INITRAMFS_PATH.rglob("*"):
+    obj_dir = BUILD_DIR / "initramfs"
+    obj_path = obj_dir / (file.stem)
+    if needs_recompile(file, obj_path, cache, dependencies={}):
+      tasks.append((file, obj_path))
+  total = len(tasks)
+  file_prompt = "file" if total == 1 else "files"
+  if total > 0:
+    print(f"Bundling {total} {file_prompt}")
+  with mp.Pool() as pool:
+    pool.starmap(compile_file, tasks)
+  proc.check_call(f"find {obj_dir} -print0 | cpio --null -oH newc > {BUILD_DIR}/initramfs.cpio 2> /dev/null", shell=True)
+
 def build():
+  build_initramfs()
+
   global include_cache, include_hashes
   include_cache_data = load_include_cache()
   include_cache = include_cache_data.get("cache", {})
@@ -173,6 +199,20 @@ def build():
 
   cpp_files, _ = find_files()
   cache = load_cache()
+
+  # Generate compile_commands.json.
+  commands = []
+  for file in cpp_files:
+    absolute = str(file.absolute())
+    flags = [x for x in get_flags(file) if x not in ["-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"]]
+    commands.append({
+      "directory": os.path.abspath("."),
+      "file": absolute,
+      "command": f"clang++ {' '.join(flags)} -c {absolute}"
+    })
+    
+  with open("compile_commands.json", "w") as conf:
+    json.dump(commands, conf, indent=2)
 
   # Step 1: Compile .cpp to .o
   obj_files: list[tuple[Path, Path]] = []
@@ -198,7 +238,7 @@ def build():
   if total > 0:
     print(f"Compiling {total} {file_prompt}")
   with mp.Pool() as pool:
-    pool.starmap(compile_cpp, tasks)
+    pool.starmap(compile_file, tasks)
   
   save_cache(cache)
 
@@ -233,5 +273,5 @@ if __name__ == "__main__":
     exit(0)
 
   if args.run:
-    proc.check_call(f"qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel", shell=True)
+    proc.check_call(f"qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel -initrd {BUILD_DIR}/initramfs.cpio", shell=True)
   print("Run finished.")

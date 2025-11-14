@@ -33,5 +33,6 @@ void interrupt_handler(void *sp, reg_t scause, reg_t stval, void *sepc) {
       printk("exception: scause = %ld, stval = %ld, sepc = %p\n", scause, stval, sepc);
       break;
     }
+    panic("exception ocurred in kernel");
   }
 }
