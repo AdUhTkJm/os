@@ -29,6 +29,9 @@ void interrupt_handler(void *sp, reg_t scause, reg_t stval, void *sepc) {
     case 13: /* Load page fault */
       printk("exception: load page fault at %p when executing %p\n", (void*) stval, sepc);
       break;
+    case 15: /* Store page fault */
+      printk("exception: store page fault at %p when executing %p\n", (void*) stval, sepc);
+      break;
     default:
       printk("exception: scause = %ld, stval = %ld, sepc = %p\n", scause, stval, sepc);
       break;

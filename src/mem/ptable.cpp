@@ -1,4 +1,5 @@
 #include "ptable.h"
+#include "kalloc.h"
 #include "../utils/plic.h"
 #include "../utils/libc.h"
 #include "../fdt/fdt.h"
@@ -8,21 +9,23 @@ using os::operator""_kb;
 
 namespace {
 
-struct TLBRefreshGuard {
-  ~TLBRefreshGuard() {
-    __asm__ volatile(
-      "sfence.vma zero, zero\n"
-      ::: "memory"
-    );
-  }
-};
+bool is_leaf(pte_t pte) {
+  return pte & PTE_RWX;
+}
+
+bool is_valid(pte_t pte) {
+  return pte & PTE_V;
+}
 
 }
 
 C void build_pagelist();
 
 C int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
-  TLBRefreshGuard guard;
+  os::TLBRefreshGuard guard(va);
+  // The maximum allowed for Sv39.
+  if (va >= 0x7ffffffffful)
+    return 1;
 
   // The flags must occupy bits 0.. PTE_PPN_OFFSET-1.
   // Hence this check.
@@ -46,7 +49,7 @@ C int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   // When the page table is invalid, allocate a 4KB frame for L1 page table.
   // Note that in kernel, physical address and virtual address is identical.
   // So no worries about which we use.
-  if (!(pte_l2 & PTE_V)) {
+  if (!is_valid(pte_l2)) {
     pt_l1 = (pte_t *) pframe();
     // Populate the L2 page table entry. It should record physical address
     // of the L1 page table.
@@ -54,7 +57,7 @@ C int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   }
 
   // When the table is valid but is leaf, split it.
-  if (pte_l2 & PTE_RWX) {
+  if (is_leaf(pte_l2)) {
     // Still, create a L1 page table.
     pt_l1 = (pte_t *) pframe();
 
@@ -90,12 +93,12 @@ C int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   pte_t &pte_l1 = pt_l1[VA_LVL1(va)];
   pte_t *pt_l0 = nullptr;
 
-  if (!(pte_l1 & PTE_V)) {
+  if (!is_valid(pte_l1)) {
     pt_l0 = (pte_t *) pframe();
     pte_l1 = (PA_AS_PPN(pt_l0) << PTE_PPN_OFFSET) | PTE_V;
   }
 
-  if (pte_l1 & PTE_RWX) {
+  if (is_leaf(pte_l1)) {
     pt_l0 = (pte_t *) pframe();
     auto orig_pa = PPN_AS_PA(PTE_PPN(pte_l1));
     for (int i = 0; i < 512; i++) {
@@ -118,6 +121,54 @@ C int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   pt_l0[VA_LVL0(va)] = l0;
 
   return 0;
+}
+
+C unmap_ret_t punmap(va_t va, int mode) {
+  if (mode > 2 || mode < 0)
+    return { 0, UNMAP_SIZE_MISMATCH };
+
+  os::TLBRefreshGuard guard(va);
+  auto &pte_l2 = __pt_root[VA_LVL2(va)];
+
+  if (!is_valid(pte_l2))
+    return { 0, UNMAP_NO_MAPPING };
+
+  if (mode == MAP_1GB) {
+    if (!is_leaf(pte_l2))
+      return { 0, UNMAP_SIZE_MISMATCH };
+
+    unmap_ret_t result = { PPN_AS_PA(PTE_PPN(pte_l2)), UNMAP_OK };
+    pte_l2 = 0;
+    return result;
+  }
+  if (is_leaf(pte_l2))
+    return { 0, UNMAP_SIZE_MISMATCH };
+
+  auto *pt_l1 = (pte_t *) PPN_AS_PA(PTE_PPN(pte_l2));
+  pte_t &pte_l1 = pt_l1[VA_LVL1(va)];
+
+  if (!is_valid(pte_l1))
+    return { 0, UNMAP_NO_MAPPING };
+
+  if (mode == MAP_2MB) {
+    if (!is_leaf(pte_l1))
+      return { 0, UNMAP_SIZE_MISMATCH };
+
+    unmap_ret_t result = { PPN_AS_PA(PTE_PPN(pte_l1)), UNMAP_OK };
+    pte_l1 = 0;
+    return result;
+  }
+  if (!is_leaf(pte_l1))
+    return { 0, UNMAP_SIZE_MISMATCH };
+
+  auto *pt_l0 = (pte_t *) PPN_AS_PA(PTE_PPN(pte_l1));
+  pte_t &pte_l0 = pt_l0[VA_LVL0(va)];
+  if (!is_valid(pte_l0))
+    return { 0, UNMAP_NO_MAPPING };
+
+  unmap_ret_t result = { PPN_AS_PA(PTE_PPN(pte_l0)), UNMAP_OK };
+  pte_l0 = 0;
+  return result;
 }
 
 C void init_pagetable() {

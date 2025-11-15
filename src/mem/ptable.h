@@ -14,9 +14,9 @@ https://five-embeddev.com/riscv-priv-isa-manual/Priv-v1.12/supervisor.html#sec:s
 /* Page table entry. */
 typedef uint64_t pte_t;
 /* Virtual address. */
-typedef uint64_t va_t;
+typedef uintptr_t va_t;
 /* Physical address. */
-typedef uint64_t pa_t;
+typedef uintptr_t pa_t;
 
 extern pte_t __pt_root[];
 
@@ -66,10 +66,6 @@ extern pte_t __pt_root[];
 #define MAP_4KB 0
 
 C void init_pagetable();
-/* Gives a free 4KB physical frame. Note this expects a physical address. */
-C void *pframe();
-/* Frees a 4KB physical frame. Note this expects a physical address. */
-C void pfree(void *p);
 
 /*
 Maps the given physical address into virtual address, with specified size.
@@ -80,7 +76,46 @@ Returns:
 */
 C int pmap(pa_t pa, va_t va, int mode, unsigned flags);
 
+typedef enum {
+  UNMAP_OK,
+  UNMAP_NO_MAPPING,
+  UNMAP_SIZE_MISMATCH,
+} unmap_status_t;
+
+typedef struct {
+  pa_t pa;
+  unmap_status_t status;
+} unmap_ret_t;
+
+/*
+Unmaps the given virtual address. If it is mapped to some physical address,
+then the address must span the specified size. Otherwise, the behaviour is
+undefined.
+Returns the physical address that this table is previously mapped to. If
+there is no such address, returns 0.
+*/
+C unmap_ret_t punmap(va_t va, int mode);
+
 /* Gives a virtually consecutive memory region of size `size`. */
 C void *kalloc(size_t size);
+
+#ifdef __cplusplus
+namespace os {
+
+struct TLBRefreshGuard {
+  va_t flushed;
+
+  TLBRefreshGuard(): flushed(0) {}
+  explicit TLBRefreshGuard(va_t va): flushed(va) {}
+  ~TLBRefreshGuard() {
+    __asm__ volatile(
+      "sfence.vma %0, zero\n"
+      :: "r"(flushed) : "memory"
+    );
+  }
+};
+
+}
+#endif
 
 #endif

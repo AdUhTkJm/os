@@ -47,6 +47,87 @@ constexpr bool is_same_v = is_same<T, U>::value;
 template<typename T, typename U>
 concept same_as = is_same_v<T, U>;
 
+template<typename T>
+struct is_integral {
+  constexpr static bool value = requires (T t, T *p, void (*f)(T)) {
+    f(0);
+    reinterpret_cast<T>(t);
+    p + t;
+  };
+};
+
+template<typename T>
+constexpr bool is_integral_v = is_integral<T>::value;
+
+template<typename T>
+struct is_floating_point {
+  constexpr static bool value = is_same_v<T, float> || is_same_v<T, double> || is_same_v<T, long double>;
+};
+
+template<typename T>
+constexpr bool is_floating_point_v = is_floating_point<T>::value;
+
+template<typename T>
+struct is_pointer {
+  constexpr static bool value = false;
+};
+
+template<typename T>
+struct is_pointer<T *> {
+  constexpr static bool value = false;
+};
+
+template<typename T>
+struct is_pointer<T * const> {
+  constexpr static bool value = false;
+};
+
+template<typename T>
+struct is_pointer<T * const volatile> {
+  constexpr static bool value = false;
+};
+
+template<typename T>
+struct is_pointer<T * volatile> {
+  constexpr static bool value = false;
+};
+
+template<typename T>
+constexpr bool is_pointer_v = is_pointer<T>::value;
+
+// Note that std::nullptr_t is no longer there.
+template<typename T>
+struct is_scalar {
+  constexpr static bool value = __is_enum(T) || is_integral_v<T> || is_floating_point_v<T> || is_pointer_v<T>;
+};
+
+template<typename T>
+constexpr bool is_scalar_v = is_scalar<T>::value;
+
+template<typename T>
+constexpr bool is_pod_v = __is_standard_layout(T) && __is_trivial(T);
+
+template<typename T> struct remove_pointer { using type = T; };
+template<typename T> struct remove_pointer<T*> { using type = T; };
+template<typename T> struct remove_pointer<T* const> { using type = T; };
+template<typename T> struct remove_pointer<T* volatile> { using type = T; };
+template<typename T> struct remove_pointer<T* const volatile> { using type = T; };
+template<typename T> using remove_pointer_t = remove_pointer<T>::type;
+
+template <typename T> struct remove_reference { using type = T; };
+template <typename T> struct remove_reference<T&> { using type = T; };
+template <typename T> struct remove_reference<T&&> { using type = T; };
+template <typename T> using remove_reference_t = typename remove_reference<T>::type;
+
+template <typename T>
+constexpr T&& forward(remove_reference_t<T>& arg) noexcept {
+  return static_cast<T&&>(arg);
+}
+template <class T>
+constexpr T&& forward(remove_reference_t<T>&& arg) noexcept {
+  return static_cast<T&&>(arg);
+}
+
 }
 
 #endif

@@ -3,9 +3,14 @@
 
 #include "sbi.h"
 
+#if !defined(__clang__) && !defined(__GNUC__)
+#error This OS kernel must be compiled with clang or GNUC.
+#endif
+
 #ifdef __cplusplus
 #  define C extern "C"
-#  include "helper.hpp"
+// #include must be together for the build script to detect dependencies.
+#include "helper.hpp"
 #else
 #  define C
 #endif /* #ifdef __cplusplus */

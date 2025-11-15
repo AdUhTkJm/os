@@ -9,10 +9,16 @@ unsigned strlen(const char *s) {
   return result;
 }
 
-void *memset(void *p, int v, unsigned long size) {
+void *memset(void *p, int v, size_t size) {
   while (size--)
-    *(char*)p++ = v;
+    *(char*) p++ = v;
   return p;
+}
+
+void *memcpy(void *dst, const void *src, size_t size) {
+  while (size--)
+    *(char*) dst++ = *(char*) src++;
+  return dst;
 }
 
 char *itoa(long value, char *str, int base) {
@@ -159,4 +165,71 @@ void strcpy(char *dst, const char *src) {
 void strcat(char *dst, const char *src) {
   char *p = dst + strlen(dst);
   strcpy(p, src);
+}
+
+int memcmp(const void *l, const void *r, size_t n) {
+  const unsigned char *a = (const unsigned char *)l;
+  const unsigned char *b = (const unsigned char *)r;
+
+  for (size_t i = 0; i < n; i++) {
+    if (a[i] != b[i])
+      return (int) a[i] - (int) b[i];
+  }
+  return 0;
+}
+
+int strncmp(const char *l, const char *r, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    unsigned char a = l[i];
+    unsigned char b = r[i];
+
+    if (a != b)
+      return a - b;
+    if (a == '\0')
+      return 0;
+  }
+  return 0;
+}
+
+int isspace(int c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+}
+
+unsigned long strtoul(const char *s, char **endptr, int base) {
+  unsigned long result = 0;
+  int digit;
+
+  while (isspace(*s))
+    s++;
+
+  if ((base == 0 || base == 16) && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+    s += 2;
+    base = 16;
+  } else if (base == 0 && s[0] == '0') {
+    base = 8;
+  } else if (base == 0) {
+    base = 10;
+  }
+
+  while (*s) {
+    if (*s >= '0' && *s <= '9')
+      digit = *s - '0';
+    else if (*s >= 'A' && *s <= 'Z')
+      digit = *s - 'A' + 10;
+    else if (*s >= 'a' && *s <= 'z')
+      digit = *s - 'a' + 10;
+    else
+      break;
+
+    if (digit >= base)
+      break;
+
+    result = result * base + digit;
+    s++;
+  }
+
+  if (endptr)
+    *endptr = (char *)s;
+
+  return result;
 }
