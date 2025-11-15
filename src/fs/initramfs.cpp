@@ -2,6 +2,7 @@
 #include "../fdt/fdt.h"
 #include "../utils/libc.h"
 #include "../mem/ptable.h"
+#include "../proc/elf.h"
 
 using os::operator""_kb;
 
@@ -13,7 +14,7 @@ uint32_t read_int(void *p) {
 
 // Note that we can't allow global constructor/destructors,
 // because __dso_handle and __cxa_atexit in libgcc is not present.
-os::static_storage<os::hashmap<const char *, cpio_newc_header_t>> cpio_fs;
+os::static_storage<os::hashmap<const char *, cpio_newc_header_t*>> cpio_fs;
 
 size_t as_int(const char *p) {
   char size[9];
@@ -34,7 +35,6 @@ C void build_initramfs() {
   // Read the device tree and find the chosen node.
   initrd_start = (char *) (uintptr_t) read_int(pstart);
   initrd_end = (char *) (uintptr_t) read_int(pend);
-  printk("initramfs: [%p - %p]\n", initrd_start, initrd_end);
   unsigned size = initrd_end - initrd_start;
   for (unsigned i = 0; i < os::roundup<4_kb>(size); i += 4_kb)
     pmap((pa_t) initrd_start + i, (va_t) initrd_start + i, MAP_4KB, PTE_RWX | PTE_V | PTE_G);
@@ -50,14 +50,17 @@ C void build_initramfs() {
     if (strcmp(name, "TRAILER!!!") == 0)
       break;
     
-    files[name] = *cpio;
+    files[name] = cpio;
     name = os::roundup<4>(name + as_int(cpio->namesize));
     name = os::roundup<4>(name + as_int(cpio->filesize));
     cpio = (cpio_newc_header_t *) name;
   }
 
-  printk("files count: %d\n", files.size());
-  for (const auto &[x, header] : files) {
-    printk("name: %s, filesize: %ld bytes\n", x, as_int(header.filesize));
-  }
+  printk("Initramfs mounted [%p - %p]. File count: %d.\n", initrd_start, initrd_end, files.size());
+  for (const auto &[x, header] : files)
+    printk("  - %s (%ld bytes)\n", x, as_int(header->filesize));
+  
+  cpio_newc_header_t *init_cpio = files["build/initramfs/init"];
+  char *init = os::roundup<4>((char *) (init_cpio + 1) + as_int(init_cpio->namesize));
+  load_elf(init);
 }

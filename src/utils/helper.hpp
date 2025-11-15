@@ -145,7 +145,78 @@ concept hashmap_valid_key =
     { a == b } -> os::same_as<bool>;
   });
 
-template<hashmap_valid_key K, typename V>
+template<typename T, typename K>
+concept hasher = requires(const T t, K k) {
+  T();
+  { t(k) } -> os::same_as<uint64_t>;
+};
+
+template<typename T, typename K>
+concept comparator = requires(const T t, K k) {
+  T();
+  { t(k, k) } -> os::same_as<bool>;
+};
+
+namespace detail {
+
+template<class K>
+struct fnv_1a {
+  uint64_t operator()(const K &key) const {
+    const uint64_t FNV_PRIME = 0x100000001b3ul;
+    const uint64_t FNV_OFFSET_BASIS = 0xcbf29ce484222325ul;
+
+    uint64_t hash = FNV_OFFSET_BASIS;
+    unsigned char *p = (unsigned char *) &key;
+    for (unsigned i = 0; i < sizeof(K); i++) {
+      hash *= FNV_PRIME;
+      hash ^= p[i];
+    }
+
+    return hash;
+  };
+};
+
+template<>
+struct fnv_1a<const char *> {
+  uint64_t operator()(const char *const &key) const {
+    const uint64_t FNV_PRIME = 0x100000001b3ul;
+    const uint64_t FNV_OFFSET_BASIS = 0xcbf29ce484222325ul;
+
+    uint64_t hash = FNV_OFFSET_BASIS;
+    // Note that this iterates over the string content,
+    // while the generic implementation iterates over bytes
+    // of the pointer itself.
+    for (unsigned char *p = (unsigned char *) key; *p; p++) {
+      hash *= FNV_PRIME;
+      hash ^= *p;
+    }
+
+    return hash;
+  };
+};
+
+template<class K>
+struct equal {
+  bool operator()(const K &l, const K &r) const {
+    return l == r;
+  }
+};
+
+template<>
+struct equal<const char*> {
+  bool operator()(const char *const &l, const char * const &r) const {
+    return strcmp(l, r) == 0;
+  }
+};
+
+}
+
+// This hashmap makes the following assumption:
+//   if Eq()(a, b) returns true, then Hash()(a) == Hash()(b).
+//
+// Moreover, if a key is present in the table, it can't be modified in some
+// way that makes either Eq() or Hash() gives a different result.
+template<hashmap_valid_key K, typename V, hasher<K> Hash = detail::fnv_1a<K>, comparator<K> Eq = detail::equal<K>>
 class hashmap {
 private:
   using hash_t = uint64_t;
@@ -164,6 +235,8 @@ private:
   entry* table = nullptr;
   size_t cap = 0;
   size_t sz = 0;
+  Hash hasher;
+  Eq eq;
 
   hash_t hash(const K& key) const;
   entry* find_slot(const K& key) const;
@@ -172,7 +245,7 @@ public:
   using value_type = pair<K, V>;
 
   class iterator {
-    hashmap<K, V> *parent = nullptr;
+    hashmap<K, V, Hash, Eq> *parent = nullptr;
     size_t i = 0;
 
     void advance() {
@@ -214,6 +287,7 @@ public:
   bool erase(const K &key);
   void reserve(size_t len);
   bool contains(const K& key);
+  int count(const K& key) { return contains(key); }
 
   V &operator[](const K &key);
 
@@ -226,30 +300,18 @@ public:
 
 // We use FNV-1a. See: https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
 
-template<hashmap_valid_key K, typename V>
-hashmap<K, V>::hash_t hashmap<K, V>::hash(const K &key) const {
-  const hash_t FNV_PRIME = 0x100000001b3ul;
-  const hash_t FNV_OFFSET_BASIS = 0xcbf29ce484222325ul;
-
-  hash_t hash = FNV_OFFSET_BASIS;
-  // This is iterated for each byte of data.
-  // We assume that the 
-  unsigned char *p = (unsigned char *) &key;
-  for (unsigned i = 0; i < sizeof(K); i++) {
-    hash *= FNV_PRIME;
-    hash ^= p[i];
-  }
-
-  return hash % cap;
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+hashmap<K, V, Hash, Eq>::hash_t hashmap<K, V, Hash, Eq>::hash(const K &key) const {
+  return hasher(key) % cap;
 }
 
-template<hashmap_valid_key K, typename V>
-typename hashmap<K, V>::entry* hashmap<K, V>::find_slot(const K &key) const {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+typename hashmap<K, V, Hash, Eq>::entry* hashmap<K, V, Hash, Eq>::find_slot(const K &key) const {
   size_t start = hash(key), i = start;
 
   do {
     entry& current = table[i];
-    if (current.state == Occupied && current.key == key)
+    if (current.state == Occupied && eq(current.key, key))
       return &current;
     if (current.state == Empty) {
       return nullptr;
@@ -260,8 +322,8 @@ typename hashmap<K, V>::entry* hashmap<K, V>::find_slot(const K &key) const {
   return nullptr;
 }
 
-template<hashmap_valid_key K, typename V>
-typename hashmap<K, V>::iterator hashmap<K, V>::insert(const K &key, const V &value) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+typename hashmap<K, V, Hash, Eq>::iterator hashmap<K, V, Hash, Eq>::insert(const K &key, const V &value) {
   if (sz >= cap * 3 / 4)
     reserve(cap * 2);
 
@@ -269,7 +331,7 @@ typename hashmap<K, V>::iterator hashmap<K, V>::insert(const K &key, const V &va
 
   do {
     entry& cur = table[i];
-    if (cur.state == Occupied && cur.key == key) {
+    if (cur.state == Occupied && eq(cur.key, key)) {
       cur.value = value;
       return iterator(this, i);
     }  
@@ -284,8 +346,8 @@ typename hashmap<K, V>::iterator hashmap<K, V>::insert(const K &key, const V &va
   // unreachable.
 }
 
-template<hashmap_valid_key K, typename V>
-bool hashmap<K, V>::erase(const K& key) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+bool hashmap<K, V, Hash, Eq>::erase(const K& key) {
   if (entry* slot = find_slot(key)) {
     slot->state = Tombstone;
     sz--;
@@ -294,8 +356,8 @@ bool hashmap<K, V>::erase(const K& key) {
   return false;
 }
 
-template<hashmap_valid_key K, typename V>
-void hashmap<K, V>::reserve(size_t len) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
   if (len < cap)
     return;
 
@@ -317,30 +379,30 @@ void hashmap<K, V>::reserve(size_t len) {
   vfree(old_table);
 }
 
-template<hashmap_valid_key K, typename V>
-hashmap<K, V>::hashmap(size_t capacity) : cap(max(16ul, capacity)), sz(0) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+hashmap<K, V, Hash, Eq>::hashmap(size_t capacity) : cap(max(16ul, capacity)), sz(0) {
   table = (entry*) vmalloc(capacity * sizeof(entry));
   for (size_t i = 0; i < capacity; ++i)
     table[i].state = Empty;
 }
 
-template<hashmap_valid_key K, typename V>
-hashmap<K, V>::~hashmap() {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+hashmap<K, V, Hash, Eq>::~hashmap() {
   vfree(table);
 }
 
-template<hashmap_valid_key K, typename V>
-V &hashmap<K, V>::at(const K &key) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+V &hashmap<K, V, Hash, Eq>::at(const K &key) {
   return find_slot(key)->value;
 }
 
-template<hashmap_valid_key K, typename V>
-bool hashmap<K, V>::contains(const K &key) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+bool hashmap<K, V, Hash, Eq>::contains(const K &key) {
   return (bool) find_slot(key);
 }
 
-template<hashmap_valid_key K, typename V>
-V &hashmap<K, V>::operator[](const K &key) {
+template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
+V &hashmap<K, V, Hash, Eq>::operator[](const K &key) {
   if (!contains(key))
     return (*insert(key, V())).second;
 
