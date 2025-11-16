@@ -2,6 +2,7 @@
 #define INITRAMFS_H
 
 #include "../utils/helper.h"
+#include "vfs.h"
 
 /*
 For CPIO format, refer to https://man.archlinux.org/man/cpio.5.en.
@@ -27,7 +28,17 @@ struct cpio_newc_header_t {
 
 static_assert(sizeof(cpio_newc_header_t) == 110);
 
-void build_initramfs();
+void mount_initramfs();
+
+class initramfs_inode : public inode {
+  void *data;
+public:
+  initramfs_inode(inode *parent, filetype type, const string &name, size_t size, void *data):
+    inode(parent, type, name, size), data(data) {}
+
+  size_t read(size_t offset, void *buf, size_t len) override;
+  size_t write(size_t offset, const void *buf, size_t len) override;
+};
 
 }
 

@@ -1,10 +1,14 @@
 #include "sbi.h"
 #include "libc.h"
 #include "helper.h"
+#include "../mem/ptable.h"
 
 C void kputs(const char *s) {
   unsigned len = strlen(s);
-  sbi_console_write(len, s);
+  auto *pa = (const char *) os::to_pa((va_t) s);
+  [[unlikely]] if ((pa_t) pa == -1ul)
+    panic("kputs failed");
+  sbi_console_write(len, pa);
 }
 
 C void kputch(char c) {

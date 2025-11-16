@@ -233,3 +233,20 @@ unsigned long strtoul(const char *s, char **endptr, int base) {
 
   return result;
 }
+
+const char *strstr(const char *haystack, const char *needle) {
+  if (!*needle)
+    return haystack;
+
+  for (const char *h = haystack; *h; h++) {
+    if (*h == *needle) {
+      const char *h_ptr = h;
+      const char *n_ptr = needle;
+      while (*n_ptr && *h_ptr == *n_ptr)
+        h_ptr++, n_ptr++;
+      if (!*n_ptr)
+        return h;
+    }
+  }
+  return NULL;
+}

@@ -2,7 +2,8 @@
 #define ELF_H
 
 #include "../utils/helper.h"
-#include "../fs/fd.h"
+#include "../fs/vfs.h"
+#include "pcb.h"
 
 /*
 See linux manual, elf(5).
@@ -31,6 +32,10 @@ Also see https://gist.github.com/x0nu11byt3/bcb35c3de461e5fb66173071a2379779.
 #ifndef EM_MACHINE
 #  define EM_MACHINE 0 /* Fallback for x86 (mainly for IDE). */
 #endif
+
+#define PF_X		(1 << 0)	/* Segment is executable */
+#define PF_W		(1 << 1)	/* Segment is writable */
+#define PF_R		(1 << 2)	/* Segment is readable */
 
 namespace os {
 
@@ -73,12 +78,7 @@ struct elf_phdr_t {
   uint64_t p_align;
 };
 
-/*
-Return code:
- - 0: Success
- - 1: Malformed ELF
-*/
-int load_elf(file *content);
+pcb_t *load_elf(file *content);
 
 }
 

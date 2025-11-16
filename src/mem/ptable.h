@@ -100,6 +100,8 @@ there is no such address, returns 0.
 */
 unmap_ret_t punmap(va_t va, int mode);
 
+pa_t to_pa(va_t va);
+
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);
 

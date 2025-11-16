@@ -12,8 +12,7 @@ namespace {
 
 struct Frame {
   Frame *next;
-  unsigned refcnt;
-  char w[PAGE_SIZE - 12];
+  char w[PAGE_SIZE - 8];
 };
 
 Frame *free_head;
@@ -41,8 +40,6 @@ size_t vm_find_range(size_t total) {
 }
 
 void *vm_alloc_pages(size_t total, int flags) {
-  os::TLBRefreshGuard guard;
-
   if (!total)
     return nullptr;
   size_t index = vm_find_range(total);
@@ -63,7 +60,7 @@ void *vm_alloc_pages(size_t total, int flags) {
       return nullptr;
     }
     pmap((pa_t) frame, base + i * PAGE_SIZE, MAP_4KB, flags);
-    vmmap[index + i] = 0;
+    vmmap[index + i] = 1;
   }
   return (void *) base;
 }
@@ -88,12 +85,11 @@ void build_pagelist() {
   // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
   // single `sd`.
   Frame *begin = (Frame*)__builtin_assume_aligned(__kernel_end, 8);
-  Frame *end = begin + 0x4000;
+  Frame *end = begin + 0x2000;
 
-  for (Frame *p = begin; p != end; p++) {
+  for (Frame *p = begin; p != end; p++)
     p->next = p + 1;
-    p->refcnt = 0;
-  }
+  
   (end - 1)->next = nullptr;
   free_head = begin;
 }
@@ -103,17 +99,14 @@ void *os::pframe() {
     panic("out of memory");
 
   Frame *result = free_head;
-  result->refcnt++;
   free_head = free_head->next;
   return result;
 }
 
 void os::pfree(void *p) {
   auto *frame = (Frame *)p;
-  if (!--frame->refcnt) {
-    frame->next = free_head;
-    free_head = frame;
-  }
+  frame->next = free_head;
+  free_head = frame;
 }
 
 void *os::vmalloc(size_t len) {
@@ -124,6 +117,9 @@ void *os::vmalloc(size_t len) {
 }
 
 void os::vfree(void *p) {
-  size_t pagecount = *((size_t *) p - 1);
-  vm_free_pages(p, pagecount);
+  if (!p)
+    return;
+  void *meta = (size_t *) p - 1;
+  size_t pagecount = *(size_t *) meta;
+  vm_free_pages(meta, pagecount);
 }

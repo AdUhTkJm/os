@@ -3,15 +3,13 @@
 
 #include "../utils/helper.h"
 #include "../mem/ptable.h"
-#include "vma.h"
+#include "../mem/vma.h"
 
 namespace os {
 
-typedef enum {
-  PROC_RUNNING,
-  PROC_SUSPEND,
-  PROC_READY,
-} process_status_t;
+enum process_state {
+  Running, Sleeping, Ready
+};
 
 typedef struct {
   reg_t ra;
@@ -51,12 +49,20 @@ typedef struct {
 static_assert(sizeof(regframe_t) == 31 * 8);
 #endif
 
-struct pcb {
-  int pid;
-  process_status_t status;
-  regframe_t *frame;
-  pa_t pt_root;
-  os::vector<vma> vma;
+class process_file_table {
+  os::hashmap<int, file*> open;
+public:
+  int allocate(file *f);
+  void deallocate(int fd);
+};
+
+struct pcb_t {
+  int pid;                // Process id.
+  process_state status;   // Process status (running, sleeping etc.)
+  pa_t pt_root;           // Root page table entry.
+  va_t sp;                // Process stack top.
+  va_t entry;             // Program entry point.
+  os::vector<vma_t> vma;   // VMAs.
 };
 
 }

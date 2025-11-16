@@ -14,6 +14,6 @@ void kernel_main() {
   printk("PLIC enabled.\n");
   os::init_pagetable();
   printk("Page table initialized.\n");
-  os::build_initramfs();
+  os::mount_initramfs();
   for (;;) ;
 }

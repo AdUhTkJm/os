@@ -32,6 +32,10 @@
 #  define assume(...)
 #endif
 
+#define __assert0(x, line) do { if (!(x)) panic(__FILE__ ":" #line ": assertion failed: " #x); } while (0)
+#define __assert1(x, line) __assert0(x, line)
+#define assert(x) __assert1(x, __LINE__)
+
 C void kputs(const char *s);
 C void kputch(char c);
 

@@ -159,7 +159,7 @@ unmap_ret_t os::punmap(va_t va, int mode) {
     pte_l1 = 0;
     return result;
   }
-  if (!is_leaf(pte_l1))
+  if (is_leaf(pte_l1))
     return { 0, UNMAP_SIZE_MISMATCH };
 
   auto *pt_l0 = (pte_t *) PPN_AS_PA(PTE_PPN(pte_l1));
@@ -204,4 +204,32 @@ void os::init_pagetable() {
     "sfence.vma zero, zero\n"
     :: "r"(satp_val) : "memory"
   );
+}
+
+pa_t os::to_pa(va_t va) {
+  pte_t pte_l2 = __pt_root[VA_LVL2(va)];
+  if (!is_valid(pte_l2))
+    return -1ul;
+  if (is_leaf(pte_l2))
+    return PPN_AS_PA(PTE_PPN(pte_l2))
+      + (VA_LVL1(va) << 21)
+      + (VA_LVL0(va) << 12)
+      + VA_OFFSET(va);
+
+  pte_t *pt_l1 = (pte_t *) PPN_AS_PA(PTE_PPN(pte_l2));
+  pte_t pte_l1 = pt_l1[VA_LVL1(va)];
+
+  if (!is_valid(pte_l1))
+    return -1ul;
+  if (is_leaf(pte_l1))
+    return PPN_AS_PA(PTE_PPN(pte_l1))
+      + (VA_LVL0(va) << 12)
+      + VA_OFFSET(va);
+
+  pte_t *pt_l0 = (pte_t *) PPN_AS_PA(PTE_PPN(pte_l1));
+  pte_t pte_l0 = pt_l0[VA_LVL0(va)];
+  if (!is_valid(pte_l0))
+    return -1ul;
+
+  return PPN_AS_PA(PTE_PPN(pte_l0)) + VA_OFFSET(va);
 }

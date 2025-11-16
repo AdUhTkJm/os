@@ -2,8 +2,7 @@
 #define VMA_H
 
 #include "../utils/helper.h"
-#include "../fs/fd.h"
-#include <syscall.h>
+#include "../fs/vfs.h"
 
 #define PROT_READ      0x1
 #define PROT_WRITE     0x2
@@ -15,10 +14,10 @@
 
 namespace os {
 
-struct vma {
-  uintptr_t start, end;
+struct vma_t {
+  uintptr_t begin, end;
   int prot, flags;
-  file *file;
+  file *backup;
   size_t offset;
 };
 
