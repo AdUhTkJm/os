@@ -6,8 +6,9 @@
 /*
 For CPIO format, refer to https://man.archlinux.org/man/cpio.5.en.
 */
+namespace os {
 
-typedef struct {
+struct cpio_newc_header_t {
   char magic[6];
   char ino[8];
   char mode[8];
@@ -22,12 +23,12 @@ typedef struct {
   char rdevminor[8];
   char namesize[8];
   char check[8];
-} cpio_newc_header_t;
+};
 
-#ifdef __cplusplus
 static_assert(sizeof(cpio_newc_header_t) == 110);
-#endif
 
-C void build_initramfs();
+void build_initramfs();
+
+}
 
 #endif

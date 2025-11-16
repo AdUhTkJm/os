@@ -2,6 +2,8 @@
 #include "../utils/helper.h"
 #include "../utils/plic.h"
 
+namespace os {
+
 void interrupt_handler(void *sp, reg_t scause, reg_t stval, void *sepc) {
   (void) sp;
   if (scause < 0) {
@@ -12,7 +14,7 @@ void interrupt_handler(void *sp, reg_t scause, reg_t stval, void *sepc) {
       sbi_set_timer(rv_rdtime() + 5000000);
       break;
     case 9: /* PLIC interrupt */
-      handle_plic_interrupt();
+      os::handle_plic_interrupt();
       break;
     default:
       printk("interrupt: scause = %ld, stval = %ld, sepc = %p\n", scause & 0xff, stval, sepc);
@@ -38,4 +40,6 @@ void interrupt_handler(void *sp, reg_t scause, reg_t stval, void *sepc) {
     }
     panic("exception ocurred in kernel");
   }
+}
+
 }

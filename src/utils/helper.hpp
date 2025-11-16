@@ -6,19 +6,15 @@
 #include "helper_meta.hpp"
 #include "libc.h"
 
-extern "C" {
-
-void *vmalloc(size_t len);
-void vfree(void *p);
-
-}
-
 // Placement new.
 inline void* operator new(size_t, void* ptr) noexcept {
   return ptr;
 }
 
 namespace os {
+
+void *vmalloc(size_t len);
+void vfree(void *p);
 
 template<class T>
 constexpr T max(const T& a, const T& b) {
@@ -48,6 +44,11 @@ inline constexpr uint64_t operator""_gb(unsigned long long literal) {
 template<uint64_t V, class T> requires ((V & (V - 1)) == 0)
 constexpr T roundup(T x) {
   return (T) ((((uintptr_t) x) + (V - 1)) & -V);
+}
+
+template<uint64_t V, class T> requires ((V & (V - 1)) == 0)
+constexpr T rounddown(T x) {
+  return (T) (((uintptr_t) x) & -V);
 }
 
 template<class T, class U>
@@ -218,9 +219,6 @@ struct equal<const char*> {
 // way that makes either Eq() or Hash() gives a different result.
 template<hashmap_valid_key K, typename V, hasher<K> Hash = detail::fnv_1a<K>, comparator<K> Eq = detail::equal<K>>
 class hashmap {
-private:
-  using hash_t = uint64_t;
-
   enum node_state {
     Empty, Occupied, Tombstone
   };
@@ -238,7 +236,7 @@ private:
   Hash hasher;
   Eq eq;
 
-  hash_t hash(const K& key) const;
+  uint64_t hash(const K& key) const;
   entry* find_slot(const K& key) const;
 public:
   using key_type = K;
@@ -301,7 +299,7 @@ public:
 // We use FNV-1a. See: https://en.wikipedia.org/wiki/Fowler%E2%80%93Noll%E2%80%93Vo_hash_function
 
 template<hashmap_valid_key K, typename V, hasher<K> Hash, comparator<K> Eq>
-hashmap<K, V, Hash, Eq>::hash_t hashmap<K, V, Hash, Eq>::hash(const K &key) const {
+uint64_t hashmap<K, V, Hash, Eq>::hash(const K &key) const {
   return hasher(key) % cap;
 }
 
@@ -408,6 +406,55 @@ V &hashmap<K, V, Hash, Eq>::operator[](const K &key) {
 
   return find_slot(key)->value;
 }
+
+template<typename V>
+class vector {
+  size_t cap, sz;
+  V *data;
+public:
+  vector(): cap(0), sz(0), data(nullptr) {}
+  vector(V v, size_t sz): sz(sz) {
+    cap = roundup<4>(sz);
+    data = (V *) vmalloc(sizeof(V) * cap);
+    for (size_t i = 0; i < sz; i++)
+      data[i] = v;
+  }
+  ~vector() { vfree(data); }
+
+  using reference = V&;
+  using const_reference = const V&;
+  using iterator = V*;
+  using const_iterator = const V*;
+
+  iterator begin() { return data; }
+  iterator end() { return data + sz; }
+
+  void push_back(const V &v) {
+    if (sz == cap)
+      reserve(cap < 16 ? 16 : cap * 2);
+    data[sz++] = v;
+  }
+  void pop_back() { sz--; }
+
+  void reserve(size_t newcap) {
+    if (newcap <= cap)
+      return;
+
+    V *newdata = (V *) vmalloc(sizeof(V) * newcap);
+    for (size_t i = 0; i < sz; i++)
+      newdata[i] = data[i];
+    vfree(data);
+    data = newdata;
+    cap = newcap;
+  }
+
+  V &back() { return data[sz - 1]; }
+  const V &back() const { return data[sz - 1]; }
+  size_t size() const { return sz; }
+  size_t capacity() const { return cap; }
+  V &operator[](size_t i) { return data[i]; }
+  const V &operator[](size_t i) const { return data[i]; }
+};
 
 }
 

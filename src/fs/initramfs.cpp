@@ -14,7 +14,7 @@ uint32_t read_int(void *p) {
 
 // Note that we can't allow global constructor/destructors,
 // because __dso_handle and __cxa_atexit in libgcc is not present.
-os::static_storage<os::hashmap<const char *, cpio_newc_header_t*>> cpio_fs;
+os::static_storage<os::hashmap<const char *, os::cpio_newc_header_t*>> cpio_fs;
 
 size_t as_int(const char *p) {
   char size[9];
@@ -25,7 +25,7 @@ size_t as_int(const char *p) {
 
 }
 
-C void build_initramfs() {
+void os::build_initramfs() {
   char *initrd_start, *initrd_end;
   void *pstart = query_fdt("/chosen", "linux,initrd-start");
   void *pend = query_fdt("/chosen", "linux,initrd-end");
@@ -62,5 +62,7 @@ C void build_initramfs() {
   
   cpio_newc_header_t *init_cpio = files["build/initramfs/init"];
   char *init = os::roundup<4>((char *) (init_cpio + 1) + as_int(init_cpio->namesize));
-  load_elf(init);
+  initramfs_inode inode(init, as_int(init_cpio->filesize));
+  // auto ret = load_elf(inode);
+  // printk("ret = %d\n", ret);
 }

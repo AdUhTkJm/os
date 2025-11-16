@@ -2,6 +2,10 @@
 #define PCB_H
 
 #include "../utils/helper.h"
+#include "../mem/ptable.h"
+#include "vma.h"
+
+namespace os {
 
 typedef enum {
   PROC_RUNNING,
@@ -47,10 +51,14 @@ typedef struct {
 static_assert(sizeof(regframe_t) == 31 * 8);
 #endif
 
-typedef struct {
+struct pcb {
   int pid;
   process_status_t status;
   regframe_t *frame;
-} pcb_t;
+  pa_t pt_root;
+  os::vector<vma> vma;
+};
+
+}
 
 #endif

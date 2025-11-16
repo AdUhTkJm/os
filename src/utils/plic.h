@@ -14,7 +14,11 @@
 #define PLIC_THRESHOLD_S_OFFSET 0x201000
 #define PLIC_CLAIM_S_OFFSET 0x201004
 
-C void init_plic();
-C void handle_plic_interrupt();
+namespace os {
+
+void init_plic();
+void handle_plic_interrupt();
+
+}
 
 #endif

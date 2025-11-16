@@ -65,7 +65,11 @@ extern pte_t __pt_root[];
 #define MAP_2MB 1
 #define MAP_4KB 0
 
-C void init_pagetable();
+#define PAGE_SIZE 4096
+
+namespace os {
+
+void init_pagetable();
 
 /*
 Maps the given physical address into virtual address, with specified size.
@@ -74,7 +78,7 @@ Returns:
   - 0 for success.
   - 1 for invalid argument.
 */
-C int pmap(pa_t pa, va_t va, int mode, unsigned flags);
+int pmap(pa_t pa, va_t va, int mode, unsigned flags);
 
 typedef enum {
   UNMAP_OK,
@@ -94,13 +98,10 @@ undefined.
 Returns the physical address that this table is previously mapped to. If
 there is no such address, returns 0.
 */
-C unmap_ret_t punmap(va_t va, int mode);
+unmap_ret_t punmap(va_t va, int mode);
 
 /* Gives a virtually consecutive memory region of size `size`. */
-C void *kalloc(size_t size);
-
-#ifdef __cplusplus
-namespace os {
+void *kalloc(size_t size);
 
 struct TLBRefreshGuard {
   va_t flushed;
@@ -116,6 +117,4 @@ struct TLBRefreshGuard {
 };
 
 }
-#endif
-
 #endif

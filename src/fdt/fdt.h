@@ -3,6 +3,8 @@
 
 #include "../utils/helper.h"
 
+namespace os {
+
 /*
 For specification, see https://devicetree-specification.readthedocs.io/en/latest.
 
@@ -26,11 +28,10 @@ typedef struct {
   uint64_t size;
 } fdt_memrsv_t;
 
-C void read_fdt(int hart_id, fdt_header_t *fdt);
-C void *query_fdt(const char *device, const char *prop);
-C fdt_header_t *fdt_pos();
+void read_fdt(int hart_id, fdt_header_t *fdt);
+void *query_fdt(const char *device, const char *prop);
+fdt_header_t *fdt_pos();
 
-#ifdef __cplusplus
 enum class WalkResult {
   Interrupt, Continue
 };
@@ -39,6 +40,7 @@ template<class T> requires requires(char *device, char *propname, void *property
   { os::declval<T>()(device, propname, property, len) } -> os::same_as<WalkResult>;
 }
 void query_fdt(T visitor);
-#endif
+
+}
 
 #endif

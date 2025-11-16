@@ -2,10 +2,11 @@
 #include "kalloc.h"
 #include "../utils/libc.h"
 
-constexpr int PAGE_SIZE = 4096;
 // Reserved kernel virtual memory size.
 constexpr size_t VM_SIZE = 1 << 30;
 constexpr va_t VM_BASE = 0xff0000000ul;
+
+using namespace os;
 
 namespace {
 
@@ -80,14 +81,14 @@ void vm_free_pages(void *va, size_t total) {
 
 }
 
-C void build_pagelist() {
-  // Grab 32MB of memory. The linker script guarantees alignment.
+void build_pagelist() {
+  // Grab 64MB of memory. The linker script guarantees alignment.
   //
   // We use __builtin_assume_aligned, or otherwise the final
   // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
   // single `sd`.
   Frame *begin = (Frame*)__builtin_assume_aligned(__kernel_end, 8);
-  Frame *end = begin + 0x2000;
+  Frame *end = begin + 0x4000;
 
   for (Frame *p = begin; p != end; p++) {
     p->next = p + 1;
@@ -97,7 +98,7 @@ C void build_pagelist() {
   free_head = begin;
 }
 
-C void *pframe() {
+void *os::pframe() {
   if (!free_head)
     panic("out of memory");
 
@@ -107,7 +108,7 @@ C void *pframe() {
   return result;
 }
 
-C void pfree(void *p) {
+void os::pfree(void *p) {
   auto *frame = (Frame *)p;
   if (!--frame->refcnt) {
     frame->next = free_head;
@@ -115,14 +116,14 @@ C void pfree(void *p) {
   }
 }
 
-C void *vmalloc(size_t len) {
+void *os::vmalloc(size_t len) {
   size_t pagecount = os::roundup<PAGE_SIZE>(len + sizeof(size_t)) / PAGE_SIZE;
   size_t *p = (size_t *) vm_alloc_pages(pagecount, PTE_RW | PTE_V);
   *p = pagecount;
   return p + 1;
 }
 
-C void vfree(void *p) {
+void os::vfree(void *p) {
   size_t pagecount = *((size_t *) p - 1);
   vm_free_pages(p, pagecount);
 }

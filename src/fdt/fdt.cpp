@@ -1,9 +1,11 @@
 #include "fdt.h"
 #include "../utils/libc.h"
 
+using os::WalkResult;
+
 namespace {
 
-fdt_header_t *fdt;
+os::fdt_header_t *fdt;
 
 const int BEGIN_NODE = 1;
 const int END_NODE = 2;
@@ -63,7 +65,7 @@ WalkResult parse_node(char *&p, T visitor, const char *path = "") {
 
 }
 
-C void *query_fdt(const char *device, const char *prop) {
+void *os::query_fdt(const char *device, const char *prop) {
   char *p = (char *) fdt + rev_endian(fdt->off_dt_struct);
   void *ptr = nullptr;
   auto result = parse_node(p, [&](const char *cdev, const char *cprop, void *property, int len) {
@@ -79,7 +81,7 @@ C void *query_fdt(const char *device, const char *prop) {
   return ptr;
 }
 
-C void read_fdt(int hart_id, fdt_header_t *fdt) {
+void os::read_fdt(int hart_id, os::fdt_header_t *fdt) {
   (void) hart_id;
   if (rev_endian(fdt->magic) != 0xd00dfeed)
     panic("device tree corrupted: magic number error");
@@ -88,6 +90,6 @@ C void read_fdt(int hart_id, fdt_header_t *fdt) {
   ::fdt = fdt;
 }
 
-C fdt_header_t *fdt_pos() {
+os::fdt_header_t *os::fdt_pos() {
   return fdt;
 }

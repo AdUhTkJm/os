@@ -1,10 +1,11 @@
 .global sbicall
-.global rv_rdtime
+.global _Z9rv_rdtimev
 
 sbicall:
   ecall
   ret
 
-rv_rdtime:
+# long rv_rdtime();
+_Z9rv_rdtimev:
   rdtime a0
   ret

@@ -4,7 +4,7 @@
 
 // See https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc
 
-void init_plic() {
+void os::init_plic() {
   // Set priority of interrupt #10 to 1.
   *(volatile unsigned*)(PLIC_BASE + UART0_IRQ * 4) = 1;
   // Enable interrupt #10.
@@ -16,7 +16,7 @@ void init_plic() {
   *(volatile unsigned char*)(UART_BASE) = 0;
 }
 
-void handle_plic_interrupt() {
+void os::handle_plic_interrupt() {
   // Claim the interrupt to get the IRQ ID.
   unsigned irq = *(volatile unsigned*)(PLIC_BASE + PLIC_CLAIM_S_OFFSET);
 

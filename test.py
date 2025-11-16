@@ -60,7 +60,6 @@ def find_files() -> tuple[list[Path], list[Path]]:
   h_files = []
   for path in SRC_DIR.rglob("*"):
     if path.is_relative_to(INITRAMFS_PATH):
-      print(f"skipped {path}")
       continue
     if path.suffix in [".cpp", ".c", ".s"]:
       cpp_files.append(path)
@@ -148,11 +147,15 @@ flagmap = {
 def get_flags(path: Path):
   return flagmap[path.suffix]
 
-# Note that the type of counter is not easily representable.
 def compile_file(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
   src = str(src_path)
   proc.check_call([COMPILER, *get_flags(src_path), "-o", str(obj_path), src])
+
+def compile_initramfs(src_path: Path, obj_path: Path):
+  obj_path.parent.mkdir(parents=True, exist_ok=True)
+  proc.check_call([COMPILER, "-ffreestanding", "-nostdlib",
+  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64", "-o", str(obj_path),  str(src_path)])
 
 def archive_objects(obj_files, lib_path: Path):
   if lib_path.exists():
@@ -186,7 +189,7 @@ def build_initramfs():
   if total > 0:
     print(f"Bundling {total} {file_prompt}")
   with mp.Pool() as pool:
-    pool.starmap(compile_file, tasks)
+    pool.starmap(compile_initramfs, tasks)
   proc.check_call(f"find {obj_dir} -print0 | cpio --null -oH newc > {BUILD_DIR}/initramfs.cpio 2> /dev/null", shell=True)
 
 def build():
