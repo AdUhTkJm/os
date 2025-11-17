@@ -5,7 +5,7 @@ using os::WalkResult;
 
 namespace {
 
-os::fdt_header_t *fdt;
+os::fdt::header *pfdt;
 
 const int BEGIN_NODE = 1;
 const int END_NODE = 2;
@@ -14,7 +14,7 @@ const int NOP = 4;
 const int END = 9;
 
 uint32_t read_int(char *p) {
-  return rev_endian(*(uint32_t *) p);
+  return to_big_endian(*(uint32_t *) p);
 }
 
 void skip_nop(char *&p) {
@@ -39,7 +39,7 @@ WalkResult parse_node(char *&p, T visitor, const char *path = "") {
   p = os::roundup<4>(p);
   strcat(fullpath, device);
 
-  auto stroffset = rev_endian(fdt->off_dt_strings);
+  auto stroffset = to_big_endian(pfdt->off_dt_strings);
   for (skip_nop(p); read_int(p) == BEGIN_PROP; skip_nop(p)) {
     p += 4;
 
@@ -47,7 +47,7 @@ WalkResult parse_node(char *&p, T visitor, const char *path = "") {
     uint32_t nameoff = read_int(p + 4);
     p += 8;
 
-    auto result = visitor(fullpath, (char *) fdt + stroffset + nameoff, p, len);
+    auto result = visitor(fullpath, (char *) pfdt + stroffset + nameoff, p, len);
     if (result == WalkResult::Interrupt)
       return WalkResult::Interrupt;
 
@@ -65,8 +65,10 @@ WalkResult parse_node(char *&p, T visitor, const char *path = "") {
 
 }
 
-void *os::query_fdt(const char *device, const char *prop) {
-  char *p = (char *) fdt + rev_endian(fdt->off_dt_struct);
+namespace os::fdt {
+
+void *query(const char *device, const char *prop) {
+  char *p = (char *) pfdt + to_big_endian(pfdt->off_dt_struct);
   void *ptr = nullptr;
   auto result = parse_node(p, [&](const char *cdev, const char *cprop, void *property, int len) {
     (void) len;
@@ -81,15 +83,28 @@ void *os::query_fdt(const char *device, const char *prop) {
   return ptr;
 }
 
-void os::read_fdt(int hart_id, os::fdt_header_t *fdt) {
+void read(int hart_id, header *fdt) {
   (void) hart_id;
-  if (rev_endian(fdt->magic) != 0xd00dfeed)
+  if (to_big_endian(fdt->magic) != 0xd00dfeed)
     panic("device tree corrupted: magic number error");
-  if (rev_endian(fdt->version) < 17)
+  if (to_big_endian(fdt->version) < 17)
     panic("device tree version too low");
-  ::fdt = fdt;
+  ::pfdt = fdt;
 }
 
-os::fdt_header_t *os::fdt_pos() {
-  return fdt;
+vector<memrsv> reserved() {
+  vector<memrsv> result;
+  for (auto *rsvmap = (memrsv*) ((char *) pfdt + to_big_endian(pfdt->off_mem_rsvmap));; rsvmap++) {
+    if (rsvmap->address == 0 && rsvmap->size == 0)
+      break;
+
+    result.push_back(*rsvmap);
+  }
+  return result;
+}
+
+header *pos() {
+  return pfdt;
+}
+
 }

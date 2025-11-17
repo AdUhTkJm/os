@@ -20,7 +20,7 @@ C void panic(const char *s) {
   sbi_system_reset();
 }
 
-C uint32_t rev_endian(uint32_t x) {
+C uint32_t to_big_endian(uint32_t x) {
   unsigned byte0 = x & 0xff;
   unsigned byte1 = (x >> 8) & 0xff;
   unsigned byte2 = (x >> 16) & 0xff;

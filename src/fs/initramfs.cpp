@@ -10,7 +10,7 @@ using os::operator""_kb;
 namespace {
 
 uint32_t read_int(void *p) {
-  return rev_endian(*(uint32_t *) p);
+  return to_big_endian(*(uint32_t *) p);
 }
 
 size_t as_int(const char *p) {
@@ -37,8 +37,8 @@ size_t initramfs_inode::write(size_t, const void *, size_t) {
 
 void mount_initramfs() {
   char *initrd_start, *initrd_end;
-  void *pstart = query_fdt("/chosen", "linux,initrd-start");
-  void *pend = query_fdt("/chosen", "linux,initrd-end");
+  void *pstart = fdt::query("/chosen", "linux,initrd-start");
+  void *pend = fdt::query("/chosen", "linux,initrd-end");
   if (!pstart || !pend)
     panic("device tree: cannot find initrd");
   
@@ -79,7 +79,6 @@ void mount_initramfs() {
         // The file is still unrecorded.
         auto filetype = as_int(cpio->mode) & 0x40000 ? inode::Dir : inode::File;
         cur->add_child(k = new initramfs_inode(cur, filetype, name, filesize, data));
-        printk("add child: %s, %s\n", cur->name.c_str(), name.c_str());
       }
       cur = k;
     }

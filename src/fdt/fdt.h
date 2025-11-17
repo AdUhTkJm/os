@@ -5,6 +5,14 @@
 
 namespace os {
 
+enum class WalkResult {
+  Interrupt, Continue
+};
+
+}
+
+namespace os::fdt {
+
 /*
 For specification, see https://devicetree-specification.readthedocs.io/en/latest.
 
@@ -21,25 +29,21 @@ typedef struct {
   uint32_t boot_cpuid_phys;
   uint32_t size_dt_strings;
   uint32_t size_dt_struct;
-} fdt_header_t;
+} header;
 
 typedef struct {
   uint64_t address;
   uint64_t size;
-} fdt_memrsv_t;
+} memrsv;
 
-void read_fdt(int hart_id, fdt_header_t *fdt);
-void *query_fdt(const char *device, const char *prop);
-fdt_header_t *fdt_pos();
+void read(int hart_id, header *fdt);
+void *query(const char *device, const char *prop);
 
-enum class WalkResult {
-  Interrupt, Continue
-};
+// Returns the pointer to the device tree.
+header *pos();
 
-template<class T> requires requires(char *device, char *propname, void *property, int len) {
-  { os::declval<T>()(device, propname, property, len) } -> os::same_as<WalkResult>;
-}
-void query_fdt(T visitor);
+// Read reserved memory.
+vector<memrsv> reserved();
 
 }
 

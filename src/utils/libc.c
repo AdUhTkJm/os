@@ -250,3 +250,19 @@ const char *strstr(const char *haystack, const char *needle) {
   }
   return NULL;
 }
+
+static size_t seed = 0x9e3779b97f4a7c15ull;
+void srand(unsigned s) {
+  seed = s;
+}
+
+size_t __rand64() {
+  seed ^= seed >> 12;
+  seed ^= seed << 25;
+  seed ^= seed >> 27;
+  return seed = (seed * 0x2545F4914F6CDD1Dull) >> 32;
+}
+
+int rand() {
+  return __rand64();
+}

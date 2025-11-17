@@ -15,6 +15,9 @@ void *vmalloc(size_t len);
 /* Free a chunk of memory allocated by `vmalloc`. */
 void vfree(void *p);
 
+// Initialize the bitmap allocator.
+void init_pm_allocator();
+
 }
 
 #endif

@@ -40,7 +40,6 @@ int file::close() {
 }
 
 inode *vfs::lookup(const string &path) {
-  printk("looking up: %s\n", path.c_str());
   // We assume the first mounted FS is the root of the entire VFS.
   if (mounts.empty())
     return nullptr;

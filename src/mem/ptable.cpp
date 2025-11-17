@@ -20,9 +20,11 @@ bool is_valid(pte_t pte) {
 
 }
 
-void build_pagelist();
+void build_page_list();
 
-int os::pmap(pa_t pa, va_t va, int mode, unsigned flags) {
+namespace os {
+
+int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   os::TLBRefreshGuard guard(va);
   // The maximum allowed for Sv39.
   if (va >= 0x7ffffffffful)
@@ -124,7 +126,7 @@ int os::pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   return 0;
 }
 
-unmap_ret_t os::punmap(va_t va, int mode) {
+unmap_ret_t punmap(va_t va, int mode) {
   if (mode > 2 || mode < 0)
     return { 0, UNMAP_SIZE_MISMATCH };
 
@@ -172,9 +174,9 @@ unmap_ret_t os::punmap(va_t va, int mode) {
   return result;
 }
 
-void os::init_pagetable() {
+void init_pagetable() {
   // Initialize the free-list allocator for physical addresses.
-  build_pagelist();
+  build_page_list();
 
   // We give 128MB for kernel by identity-mapping. (64 * 2MB pages.)
   va_t kernel_va = 0x80000000ul;
@@ -192,8 +194,8 @@ void os::init_pagetable() {
   pmap(UART_BASE, UART_BASE, MAP_2MB, PTE_RW | PTE_G | PTE_V | PTE_A | PTE_D);
 
   // Also set up the mapping for FDT.
-  os::fdt_header_t *fdt = os::fdt_pos();
-  for (unsigned i = 0; i < os::roundup<4_kb>(rev_endian(fdt->totalsize)); i += 4_kb)
+  os::fdt::header *fdt = os::fdt::pos();
+  for (unsigned i = 0; i < os::roundup<4_kb>(to_big_endian(fdt->totalsize)); i += 4_kb)
     pmap((pa_t) fdt + i, (va_t) fdt + i, MAP_4KB, PTE_R | PTE_G | PTE_V);
 
   /* Move the root address into satp, and tell it we're using */
@@ -206,7 +208,7 @@ void os::init_pagetable() {
   );
 }
 
-pa_t os::to_pa(va_t va) {
+pa_t to_pa(va_t va) {
   pte_t pte_l2 = __pt_root[VA_LVL2(va)];
   if (!is_valid(pte_l2))
     return -1ul;
@@ -232,4 +234,6 @@ pa_t os::to_pa(va_t va) {
     return -1ul;
 
   return PPN_AS_PA(PTE_PPN(pte_l0)) + VA_OFFSET(va);
+}
+
 }

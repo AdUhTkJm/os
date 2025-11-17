@@ -7,7 +7,7 @@ _start:
   # After OpenSBI finishes setup, a0 will be hart ID and a1 will be
   # the location of flattened device tree (FDT).
   # Now we read the FDT.
-  call _ZN2os8read_fdtEiPNS_12fdt_header_tE # os::read_fdt(int i, os::fdt_heaer_t *t);
+  call _ZN2os3fdt4readEiPNS0_6headerE # os::fdt::read(int i, os::fdt::header *t);
 
   # Set up interrupt vectors.
   # On interrupt, the CPU does the following:

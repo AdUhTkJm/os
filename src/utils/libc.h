@@ -22,6 +22,9 @@ void strcpy(char *dst, const char *src);
 void strcat(char *dst, const char *src);
 unsigned long strtoul(const char *s, char **endptr, int base);
 const char *strstr(const char *haystack, const char *needle);
+void srand(unsigned);
+size_t __rand64();
+int rand();
 
 #ifdef __cplusplus
 }

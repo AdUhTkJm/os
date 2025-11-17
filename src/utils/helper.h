@@ -41,7 +41,7 @@ C void kputch(char c);
 
 C [[noreturn]] void panic(const char *s);
 
-C uint32_t rev_endian(uint32_t x);
+C uint32_t to_big_endian(uint32_t x);
 C uint64_t rev_endian64(uint64_t x);
 
 #define CSRW(reg, value) __asm__ volatile("csrw " #reg ", %0" :: "r"(value))
