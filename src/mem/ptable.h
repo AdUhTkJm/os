@@ -18,8 +18,6 @@ typedef uintptr_t va_t;
 /* Physical address. */
 typedef uintptr_t pa_t;
 
-extern pte_t __pt_root[];
-
 #define PTE_V (1ul << 0) /* Valid */
 #define PTE_R (1ul << 1)
 #define PTE_W (1ul << 2)
@@ -38,7 +36,7 @@ extern pte_t __pt_root[];
 #define PTE_PPN0(x) (((x) >> 10) & 0x1ff)
 #define PTE_PPN1(x) (((x) >> 19) & 0x1ff)
 #define PTE_PPN2(x) (((x) >> 28) & 0x3ffffff)
-#define PPN_AS_PA(x) (((pa_t) x) << 12)
+#define PPN_AS_PA(x) ((pa_t) (x) << 12)
 
 #define PTE_PPN_OFFSET 10
 #define PTE_PPN0_OFFSET 10
@@ -67,9 +65,10 @@ extern pte_t __pt_root[];
 
 #define PAGE_SIZE 4096
 
-namespace os {
+// Map every address to higher-half.
+#define KERNEL_OFFSET 0xffff'ffc0'0000'0000ul
 
-void init_pagetable();
+namespace os {
 
 /*
 Maps the given physical address into virtual address, with specified size.
@@ -91,6 +90,8 @@ typedef struct {
   unmap_status_t status;
 } unmap_ret_t;
 
+extern pte_t *pt_root;
+
 /*
 Unmaps the given virtual address. If it is mapped to some physical address,
 then the address must span the specified size. Otherwise, the behaviour is
@@ -100,7 +101,21 @@ there is no such address, returns 0.
 */
 unmap_ret_t punmap(va_t va, int mode);
 
+// Sv39 requires that the virtual address is sign-extended on bit 38 (highest bit).
+inline constexpr va_t sext(va_t x) {
+  return (((x >> 38) & 1) ? x | 0xffff'ff80'0000'0000 : x);
+}
+
+// This is a direct mapping from PA to VA, that works on the whole kernel.
+// The to_pa() function actually walks the table.
+// This must be always_inline, because it is called both before and after
+// setting up the page table.
+[[gnu::always_inline]] inline constexpr va_t as_va(pa_t pa) {
+  return pa + KERNEL_OFFSET;
+}
+
 pa_t to_pa(va_t va);
+inline pa_t to_pa(void *va) { return to_pa((va_t) va); }
 
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);

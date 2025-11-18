@@ -1,5 +1,6 @@
 #include "fdt.h"
 #include "../utils/libc.h"
+#include "../mem/ptable.h"
 
 using os::WalkResult;
 
@@ -85,11 +86,15 @@ void *query(const char *device, const char *prop) {
 
 void read(int hart_id, header *fdt) {
   (void) hart_id;
-  if (to_big_endian(fdt->magic) != 0xd00dfeed)
+  pfdt = fdt;
+}
+
+void check() {
+  printk("%p\n", to_big_endian(pfdt->magic));
+  if (to_big_endian(pfdt->magic) != 0xd00dfeed)
     panic("device tree corrupted: magic number error");
-  if (to_big_endian(fdt->version) < 17)
+  if (to_big_endian(pfdt->version) < 17)
     panic("device tree version too low");
-  ::pfdt = fdt;
 }
 
 vector<memrsv> reserved() {

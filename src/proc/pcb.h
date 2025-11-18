@@ -7,8 +7,11 @@
 
 namespace os {
 
+constexpr va_t stack_top = 0x3f0'000'000ul;
+constexpr size_t stack_size = 8_mb;
+
 enum process_state {
-  Running, Sleeping, Ready
+  Init, Running, Sleeping, Ready
 };
 
 typedef struct {
@@ -62,8 +65,12 @@ struct pcb_t {
   pa_t pt_root;           // Root page table entry.
   va_t sp;                // Process stack top.
   va_t entry;             // Program entry point.
-  os::vector<vma_t> vma;   // VMAs.
+  os::vector<vma_t> vma;  // VMAs.
 };
+
+void init(pcb_t &pcb);
+void destruct(pcb_t &pcb);
+void activate(pcb_t &pcb);
 
 }
 

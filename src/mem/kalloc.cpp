@@ -5,7 +5,7 @@
 
 // Reserved kernel virtual memory size.
 constexpr size_t VM_SIZE = 1 << 30;
-constexpr va_t VM_BASE = 0xff0000000ul;
+constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 
 // The entire physical memory space we're able to manage. (16 GB.)
 constexpr va_t MAX_PA_SIZE = 1ull << 34;
@@ -18,15 +18,15 @@ using namespace os;
 
 namespace {
 
-struct Frame {
-  Frame *next;
+struct frame_t {
+  pa_t next;
   char w[PAGE_SIZE - 8];
 };
 
-Frame *free_head;
+pa_t free_head;
 
 // No extra paddings.
-static_assert(sizeof(Frame) == PAGE_SIZE);
+static_assert(sizeof(frame_t) == PAGE_SIZE);
 
 // 1 for occupied, 0 for free.
 os::bitmap<VM_SIZE / PAGE_SIZE> vmmap;
@@ -86,17 +86,17 @@ void *vm_alloc_pages(size_t total, int flags) {
   uintptr_t base = VM_BASE + index * PAGE_SIZE;
 
   for (size_t i = 0; i < total; ++i) {
-    void *frame = pframe();
+    pa_t frame = pframe();
     // Out of physical memory. Free all obtained memory.
     if (!frame) {
       for (size_t j = 0; j < i; ++j) {
         auto [pa, status] = punmap(base + j * PAGE_SIZE, MAP_4KB);
-        pfree((void *) pa);
+        pfree(pa);
         vmmap[index + j] = 0;
       }
       return nullptr;
     }
-    pmap((pa_t) frame, base + i * PAGE_SIZE, MAP_4KB, flags);
+    pmap(frame, base + i * PAGE_SIZE, MAP_4KB, flags);
     vmmap[index + i] = 1;
   }
   // Round-robin allocate.
@@ -110,7 +110,7 @@ void vm_free_pages(void *va, size_t total) {
   for (size_t i = 0; i < total; ++i) {
     uintptr_t v = base + i * PAGE_SIZE;
     auto [p, status] = punmap(v, MAP_4KB);
-    pfree((void *) p);
+    pfree(p);
     vmmap[index + i] = 0;
   }
 }
@@ -129,51 +129,36 @@ void mark_reserved() {
 
 }
 
-void build_page_list() {
-  // Grab 64MB of memory. The linker script guarantees alignment.
-  //
-  // We use __builtin_assume_aligned, or otherwise the final
-  // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
-  // single `sd`.
-  Frame *begin = (Frame*)__builtin_assume_aligned(__kernel_end, 8);
-  Frame *end = begin + FREE_LIST_SIZE;
-
-  for (Frame *p = begin; p != end; p++)
-    p->next = p + 1;
-  
-  (end - 1)->next = nullptr;
-  free_head = begin;
-}
-
 namespace os {
 
-void *pframe() {
+pa_t pframe() {
   if (!free_head && !pminit)
     panic("out of memory");
   // Free-list part.
   if (free_head) {
-    Frame *result = free_head;
-    free_head = free_head->next;
-    return result;
+    pa_t pa = free_head;
+    frame_t *head = (frame_t *) as_va(free_head);
+    free_head = (pa_t) head->next;
+    return pa;
   }
 
   // Bitmap part.
   static int pm_from = 0;
   size_t index = find_consecutive(vmmap, 1, pm_from);
   if (index == -1ul)
-    return nullptr;
+    return 0;
 
   vmmap[index] = 1;
   pm_from++;
-  return (void *) (index * PAGE_SIZE);
+  return index * PAGE_SIZE;
 }
 
-void pfree(void *p) {
+void pfree(pa_t p) {
   // This region is managed by free list allocator.
-  if (p >= __kernel_end && p <= __kernel_end + FREE_LIST_SIZE) {
-    auto *frame = (Frame *)p;
+  if (p >= (pa_t) __kernel_end && p <= (pa_t) __kernel_end + FREE_LIST_SIZE) {
+    auto *frame = (frame_t *) as_va(p);
     frame->next = free_head;
-    free_head = frame;
+    free_head = to_pa(frame);
   }
 
   // This is managed by the bitmap allocator.
@@ -196,9 +181,25 @@ void vfree(void *p) {
   vm_free_pages(meta, pagecount);
 }
 
-void init_pm_allocator() {
+void init_bitmap_kalloc() {
   pminit = true;
   mark_reserved();
+}
+
+void init_freelist_kalloc() {
+  // Grab 64MB of memory. The linker script guarantees alignment.
+  //
+  // We use __builtin_assume_aligned, or otherwise the final
+  // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
+  // single `sd`.
+  pa_t begin = to_pa(__kernel_end);
+  pa_t end = begin + FREE_LIST_SIZE * PAGE_SIZE;
+
+  for (pa_t p = begin; p != end; p += PAGE_SIZE)
+    ((frame_t *) as_va(p))->next = p + PAGE_SIZE;
+  
+  ((frame_t *) as_va(end - 1))->next = 0;
+  free_head = begin;
 }
 
 }

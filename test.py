@@ -16,7 +16,7 @@ mp.set_start_method("fork")
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--run", action="store_true")
 parser.add_argument("--rebuild", action="store_true")
-parser.add_argument("-d", "--objdump", type=str)
+parser.add_argument("-d", "--objdump", action="store_true")
 
 args = parser.parse_args()
 
@@ -269,9 +269,10 @@ if __name__ == "__main__":
 
   build()
   if args.objdump:
-    proc.run(f"riscv64-unknown-elf-objdump -d {args.objdump}", shell=True)
+    proc.run(f"riscv64-unknown-elf-objdump -D build/kernel > temp/kernel.s", shell=True)
     exit(0)
 
   if args.run:
-    proc.check_call(f"qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel -initrd {BUILD_DIR}/initramfs.cpio", shell=True)
+    # -d in_asm -D qemu.log
+    proc.check_call(f"qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel -initrd {BUILD_DIR}/initramfs.cpio", shell=True)
   print("Run finished.")

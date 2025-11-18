@@ -42,7 +42,7 @@ char *itoa(long value, char *str, int base) {
   return str;
 }
 
-static char *itoa_u(unsigned long value, char *str, int base) {
+char *itoa_u(unsigned long value, char *str, int base) {
   char *p = str, *q = str;
   do {
     int tmp = value % base;

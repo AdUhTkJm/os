@@ -12,7 +12,7 @@ C void kputs(const char *s) {
 }
 
 C void kputch(char c) {
-  sbi_console_write(1, &c);
+  sbi_console_write(1, (const char*) os::to_pa(&c));
 }
 
 C void panic(const char *s) {

@@ -15,8 +15,8 @@ pcb_t *load_elf(file *content) {
     return nullptr;
 
   pcb_t pcb;
+  pcb.status = Init;
   pcb.entry = header.e_entry;
-  pcb.pt_root = (pa_t) pframe();
 
   content->seek(header.e_phoff, file::begin);
   // The random offset.
@@ -28,10 +28,8 @@ pcb_t *load_elf(file *content) {
     elf_phdr_t phdr;
     content->read(&phdr, sizeof(phdr));
     if (phdr.p_type == PT_LOAD) {
-      if (phdr.p_memsz < phdr.p_filesz) {
-        pfree((void *) pcb.pt_root);
+      if (phdr.p_memsz < phdr.p_filesz)
         return nullptr;
-      }
     
       // Read the content of the mapped section.
       auto before = content->seek(phdr.p_offset, file::begin);
@@ -53,11 +51,10 @@ pcb_t *load_elf(file *content) {
       };
       pcb.vma.push_back(vma);
 
-      // Eagerly copy pages.
-
       vfree(text);
     }
   }
+  init(pcb);
   return 0;
 }
 

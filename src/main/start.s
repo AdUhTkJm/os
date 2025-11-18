@@ -1,13 +1,18 @@
-.section .text
+.section .text.low
 .global _start
 
 _start:
-  la sp, __stack_top
+  csrw stvec, zero
+  li t0, 1074794496
+  slli t0, t0, 1 # 0x80202000
+  # Store information for FDT.
+  sd a0, 8(t0)
+  sd a1, 16(t0)
+  j _Z11kernel_mainv
 
-  # After OpenSBI finishes setup, a0 will be hart ID and a1 will be
-  # the location of flattened device tree (FDT).
-  # Now we read the FDT.
-  call _ZN2os3fdt4readEiPNS0_6headerE # os::fdt::read(int i, os::fdt::header *t);
+.section .text.high
+_start_high:
+  la sp, __stack_top
 
   # Set up interrupt vectors.
   # On interrupt, the CPU does the following:
@@ -34,14 +39,15 @@ _start:
   li a0, 32
   csrs sie, a0
   rdtime a0
-  li a1, 5000000
-  add a0, a0, a1
-  li a7, 0x54494D45 # "TIMER"
-  li a6, 0 # set_timer
-  ecall
+  # li a1, 5000000
+  # add a0, a0, a1
+  # li a7, 0x54494D45 # "TIMER"
+  # li a6, 0 # set_timer
+  # ecall
 
-  j _Z11kernel_mainv # void kernel_main()
+  j _Z9main_highv # void main_high();
 
+.section .text
 .align 4
 stvec_pos:
   # We must save all registers for a seamless recover.

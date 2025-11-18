@@ -39,6 +39,9 @@ typedef struct {
 void read(int hart_id, header *fdt);
 void *query(const char *device, const char *prop);
 
+// Check that FDT is well-formed.
+void check();
+
 // Returns the pointer to the device tree.
 header *pos();
 

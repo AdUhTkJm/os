@@ -14,6 +14,7 @@ void *memset(void *p, int v, size_t size);
 void *memcpy(void *dst, const void *src, size_t n);
 int printk(const char *fmt, ...);
 char *itoa(long value, char *str, int base);
+char *itoa_u(unsigned long value, char *str, int base);
 int isspace(int c);
 int strcmp(const char *l, const char *r);
 int memcmp(const void *l, const void *r, size_t n);

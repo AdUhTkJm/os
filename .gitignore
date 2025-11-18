@@ -2,3 +2,4 @@ build/
 temp/
 compile_commands.json
 .cache
+qemu.log

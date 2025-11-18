@@ -49,11 +49,15 @@ C uint64_t rev_endian64(uint64_t x);
 #define CSRS(reg, value) __asm__ volatile("csrs " #reg ", %0" :: "r"(value))
 #define CSRC(reg, value) __asm__ volatile("csrc " #reg ", %0" :: "r"(value))
 
+#define MV(reg, value) __asm__ volatile("mv " #reg ", %0" :: "r"(value))
+#define RD(reg, value) __asm__ volatile("mv %0, " #reg : "=r"(value))
+
 extern char __text_begin[], __text_end[];
 extern char __rodata_begin[], __rodata_end[];
 extern char __data_begin[], __data_end[];
 extern char __bss_begin[], __bss_end[];
-extern char __stack_top[], __kernel_end[];
+extern char __stack_top[];
+extern char __kernel_begin[], __kernel_end[];
 
 extern reg_t rv_rdtime();
 
