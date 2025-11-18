@@ -5,9 +5,7 @@
 
 C void kputs(const char *s) {
   unsigned len = strlen(s);
-  auto *pa = (const char *) os::to_pa((va_t) s);
-  [[unlikely]] if ((pa_t) pa == -1ul)
-    panic("kputs failed");
+  auto *pa = (const char *) os::to_pa(s);
   sbi_console_write(len, pa);
 }
 

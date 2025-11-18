@@ -2,6 +2,7 @@
 #define FDT_H
 
 #include "../utils/helper.h"
+#include "../mem/ptable.h"
 
 namespace os {
 
@@ -36,7 +37,7 @@ typedef struct {
   uint64_t size;
 } memrsv;
 
-void read(int hart_id, header *fdt);
+void read(int hart_id, pa_t fdt);
 void *query(const char *device, const char *prop);
 
 // Check that FDT is well-formed.

@@ -84,13 +84,12 @@ void *query(const char *device, const char *prop) {
   return ptr;
 }
 
-void read(int hart_id, header *fdt) {
+void read(int hart_id, pa_t fdt) {
   (void) hart_id;
-  pfdt = fdt;
+  pfdt = (header *) as_va(fdt);
 }
 
 void check() {
-  printk("%p\n", to_big_endian(pfdt->magic));
   if (to_big_endian(pfdt->magic) != 0xd00dfeed)
     panic("device tree corrupted: magic number error");
   if (to_big_endian(pfdt->version) < 17)

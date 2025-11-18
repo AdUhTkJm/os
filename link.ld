@@ -13,26 +13,28 @@ SECTIONS {
 
   . = 0xffffffc080203000;
   __kernel_begin = .;
-  /* The .text.high section is linked to the high VMA, but loaded at LMA_START */
   .text.high : AT(LMA_START) {
     *(.text.high)
   }
 
-  LMA_NEXT = LOADADDR(.text.high) + SIZEOF(.text.high);
+  . = ALIGN(8);
+  LMA_NEXT = . - VIRT_OFFSET;
   .text : AT(LMA_NEXT) {
     __text_begin = .;
     *(.text*)
     __text_end = .;
   }
 
-  LMA_NEXT = LOADADDR(.text) + SIZEOF(.text);
+  . = ALIGN(8);
+  LMA_NEXT = . - VIRT_OFFSET;
   .rodata : AT(LMA_NEXT) {
     __rodata_begin = .;
     *(.rodata* .srodata*)
     __rodata_end = .;
   }
 
-  LMA_NEXT = LOADADDR(.rodata) + SIZEOF(.rodata);
+  . = ALIGN(8);
+  LMA_NEXT = . - VIRT_OFFSET;
   .data : AT(LMA_NEXT) {
     __data_begin = .;
     *(.sdata .sdata.* .gnu.linkonce.s.*)

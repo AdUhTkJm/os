@@ -49,22 +49,22 @@ void init_timer();
 void main_high() {
   memset(__bss_begin, 0, __bss_end - __bss_begin);
   pt_root = (pte_t *) as_va((pa_t) 0x80201000);
+  punmap((va_t) 0x80000000ul, MAP_1GB);
   printk("Page table initialized.\n");
   os::init_freelist_kalloc();
   printk("Allocator initialized.\n");
   os::init_plic();
   printk("PLIC enabled.\n");
+  sbi_set_timer(rv_rdtime() + 5000000);
+  printk("Timer enabled.\n");
 
-  // init_timer();
-  // printk("Timer enabled.\n");
-
-  auto *pfdt = (fdt::header *) as_va(0x80202010);
+  pa_t pfdt = *(pa_t *) as_va(0x80202010);
   int hart_id = *(uint64_t *) as_va(0x80202008);
   fdt::read(hart_id, pfdt);
   fdt::check();
-  // printk("FDT checked at %p.\n", fdt::pos());
-  // os::init_bitmap_kalloc();
-  // printk("Bitmap allocator initialized.\n");
-  // os::mount_initramfs();
+  printk("FDT checked at %p.\n", fdt::pos());
+  os::init_bitmap_kalloc();
+  printk("Bitmap allocator initialized.\n");
+  os::mount_initramfs();
   for (;;) ;
 }
