@@ -13,13 +13,13 @@ public:
   vector(): cap(0), sz(0), data(nullptr) {}
   vector(V v, size_t sz): sz(sz) {
     cap = roundup<4>(sz);
-    data = (V *) vmalloc(sizeof(V) * cap);
+    data = new V[cap];
     for (size_t i = 0; i < sz; i++)
       data[i] = v;
   }
-  ~vector() { vfree(data); }
+  ~vector() { delete[] data; }
   vector(const vector &other): cap(other.cap), sz(other.sz) {
-    data = (V *) vmalloc(sizeof(V) * cap);
+    data = new V[cap];
     for (size_t i = 0; i < sz; i++)
       data[i] = other[i];
   }
@@ -28,8 +28,8 @@ public:
   }
 
   vector &operator=(const vector &other) {
-    vfree(data);
-    data = (V *) vmalloc(sizeof(V) * cap);
+    delete[] data;
+    data = new V[cap];
     for (size_t i = 0; i < sz; i++)
       data[i] = other[i];
   }
@@ -57,10 +57,10 @@ public:
     if (newcap <= cap)
       return;
 
-    V *newdata = (V *) vmalloc(sizeof(V) * newcap);
+    V *newdata = new V[newcap];
     for (size_t i = 0; i < sz; i++)
       newdata[i] = data[i];
-    vfree(data);
+    delete[] data;
     data = newdata;
     cap = newcap;
   }

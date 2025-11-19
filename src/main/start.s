@@ -38,22 +38,17 @@ _start_high:
   # Enable the timer interrupt (bit 5) in sie.
   li a0, 32
   csrs sie, a0
-  rdtime a0
-  # li a1, 5000000
-  # add a0, a0, a1
-  # li a7, 0x54494D45 # "TIMER"
-  # li a6, 0 # set_timer
-  # ecall
-
   j _Z9main_highv # void main_high();
 
 .section .text
+.global _ZN2os15context_restoreEl
+
 .align 4
 stvec_pos:
   # We must save all registers for a seamless recover.
   # To do this, we preserve the current value of `sp` in `sscratch`.
   csrw sscratch, sp
-  addi sp, sp, -128
+  addi sp, sp, -248
   sd ra, 0(sp)
   sd gp, 8(sp)
   sd tp, 16(sp)
@@ -94,6 +89,7 @@ stvec_pos:
   # os::interrupt_handler(void *, long, long, void *)
   call _ZN2os17interrupt_handlerEPvllS0_ 
 
+_ZN2os15context_restoreEl:
   ld ra, 0(sp)
   ld gp, 8(sp)
   ld tp, 16(sp)

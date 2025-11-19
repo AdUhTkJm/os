@@ -18,6 +18,8 @@ inline void *operator new(size_t, void* ptr) noexcept {
 // Normal new.
 void *operator new(size_t len);
 void operator delete(void *ptr, size_t);
+void *operator new[](size_t len);
+void operator delete[](void *ptr);
 
 namespace os {
 

@@ -187,7 +187,7 @@ def build_initramfs():
     print(f"Bundling {total} {file_prompt}")
   with mp.Pool() as pool:
     pool.starmap(compile_initramfs, tasks)
-  proc.check_call(f"cd {obj_dir} && find . -printf '/%P\n' | cpio --absolute-filenames -oH newc > ../initramfs.cpio 2> /dev/null", shell=True)
+  proc.check_call(f"cd {obj_dir} && echo 'init' | cpio -oH newc > ../initramfs.cpio 2> /dev/null", shell=True)
 
 def build():
   build_initramfs()

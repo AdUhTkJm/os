@@ -4,10 +4,12 @@
 #include "../utils/helper.h"
 #include "../mem/ptable.h"
 #include "../mem/vma.h"
+#include "../mem/kalloc.h"
 
 namespace os {
 
-constexpr va_t stack_top = 0x3f0'000'000ul;
+// Near the highest address in the lower-half space.
+constexpr va_t stack_top = 0x3f'f000'0000ul;
 constexpr size_t stack_size = 8_mb;
 
 enum process_state {
@@ -59,18 +61,26 @@ public:
   void deallocate(int fd);
 };
 
-struct pcb_t {
+struct pcb_t : os::intrusive_list_node<pcb_t> {
   int pid;                // Process id.
   process_state status;   // Process status (running, sleeping etc.)
   pa_t pt_root;           // Root page table entry.
   va_t sp;                // Process stack top.
   va_t entry;             // Program entry point.
   os::vector<vma_t> vma;  // VMAs.
+
+  ~pcb_t() {
+    pfree(pt_root);
+  }
 };
 
-void init(pcb_t &pcb);
-void destruct(pcb_t &pcb);
-void activate(pcb_t &pcb);
+void init(pcb_t *pcb);
+void destruct(pcb_t *pcb);
+
+// Run the process for the first time.
+[[noreturn]] void activate(pcb_t *pcb, int argc, char **argv, char **envp);
+// Switch to the process.
+[[noreturn]] void switch_to(pcb_t *pcb, void *sp);
 
 }
 

@@ -21,7 +21,7 @@ void main_high();
 
 namespace os {
 
-pte_t *pt_root;
+pte_t *pt_root, *kernel_pt_root;
 
 int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   os::TLBRefreshGuard guard(va);

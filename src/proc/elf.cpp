@@ -13,8 +13,10 @@ pcb_t *load_elf(file *content) {
     return nullptr;
   if (header.e_machine != EM_MACHINE)
     return nullptr;
+  printk("Basic check good\n");
 
-  pcb_t pcb;
+  pcb_t *pcb_p = new pcb_t;
+  auto &pcb = *pcb_p;
   pcb.status = Init;
   pcb.entry = header.e_entry;
 
@@ -54,8 +56,8 @@ pcb_t *load_elf(file *content) {
       vfree(text);
     }
   }
-  init(pcb);
-  return 0;
+  init(pcb_p);
+  return pcb_p;
 }
 
 }

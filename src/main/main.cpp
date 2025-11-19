@@ -5,6 +5,8 @@
 #include "../fs/initramfs.h"
 #include "../mem/kalloc.h"
 #include "../fdt/fdt.h"
+#include "../proc/elf.h"
+#include "../fs/vfs.h"
 
 using namespace os;
 
@@ -48,15 +50,13 @@ void init_timer();
 
 void main_high() {
   memset(__bss_begin, 0, __bss_end - __bss_begin);
-  pt_root = (pte_t *) as_va((pa_t) 0x80201000);
+  kernel_pt_root = pt_root = (pte_t *) as_va((pa_t) 0x80201000);
   punmap((va_t) 0x80000000ul, MAP_1GB);
   printk("Page table initialized.\n");
   os::init_freelist_kalloc();
   printk("Allocator initialized.\n");
   os::init_plic();
   printk("PLIC enabled.\n");
-  sbi_set_timer(rv_rdtime() + 5000000);
-  printk("Timer enabled.\n");
 
   pa_t pfdt = *(pa_t *) as_va(0x80202010);
   int hart_id = *(uint64_t *) as_va(0x80202008);
@@ -66,5 +66,15 @@ void main_high() {
   os::init_bitmap_kalloc();
   printk("Bitmap allocator initialized.\n");
   os::mount_initramfs();
+  
+  file *init = vfs_static->open("/init", O_RDONLY);
+  if (!init)
+    panic("initramfs: cannot find /init");
+  if (!load_elf(init))
+    panic("load_elf: cannot load /init");
+
+  sbi_set_timer(rv_rdtime() + 5000000);
+  // Note that scheduler will start working after enabling timer.
+  printk("Timer enabled.\n");
   for (;;) ;
 }

@@ -8,6 +8,7 @@
 #include "stl/hashtable.h"
 #include "stl/string.h"
 #include "stl/bitmap.h"
+#include "stl/list.h"
 
 namespace os {
 
@@ -20,6 +21,9 @@ private:
 public:
   T &operator*() {
     return *(T*) storage;
+  }
+  T *operator->() {
+    return (T*) storage;
   }
 
   template<typename ...Args>

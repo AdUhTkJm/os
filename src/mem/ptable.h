@@ -90,7 +90,10 @@ typedef struct {
   unmap_status_t status;
 } unmap_ret_t;
 
+// The active pt_root, virtual address.
 extern pte_t *pt_root;
+// The kernel's pt_root.
+extern pte_t *kernel_pt_root;
 
 /*
 Unmaps the given virtual address. If it is mapped to some physical address,

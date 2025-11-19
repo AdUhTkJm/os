@@ -2,11 +2,33 @@
 #include "../utils/helper.h"
 #include "../utils/plic.h"
 #include "../mem/kalloc.h"
+#include "../proc/schedule.h"
 
 namespace {
 
+using namespace os;
+
 void on_load_miss(void *va) {
+  printk("Load miss: %p", va);
   auto pa = os::pframe();
+  auto &pcb = *scheduler.get_active();
+  size_t i = 0;
+  for (; i < pcb.vma.size(); i++) {
+    const auto &vma = pcb.vma[i];
+    if (pa <= vma.end && pa >= vma.begin)
+      break;
+  }
+  if (i == pcb.vma.size()) {
+    printk("Unmapped address %p. Terminate the process.\n", va);
+    os::destruct(&pcb);
+    return;
+  }
+  const auto &vma = pcb.vma[i];
+  int flags = PTE_V;
+  if (vma.prot & PROT_EXEC) flags |= PTE_X;
+  if (vma.prot & PROT_READ) flags |= PTE_R;
+  if (vma.prot & PROT_WRITE) flags |= PTE_W;
+  os::pmap(pa, (va_t) va, MAP_4KB, flags);
 }
 
 }
@@ -21,10 +43,11 @@ void interrupt_handler(void *sp, reg_t scause, reg_t stval, void *sepc) {
   if (scause < 0) {
     int kind = scause & 0xff;
     switch (kind) {
-    case 5: /* Timer interrupt */
+    case 5: // Timer interrupt
       sbi_set_timer(rv_rdtime() + 5000000);
+      switch_to(scheduler.choose(), sp);
       break;
-    case 9: /* PLIC interrupt */
+    case 9: // PLIC interrupt
       os::handle_plic_interrupt();
       break;
     default:

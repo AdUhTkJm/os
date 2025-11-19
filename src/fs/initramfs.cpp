@@ -69,10 +69,8 @@ void mount_initramfs() {
     inode *cur = root;
     size_t filesize = as_int(cpio->filesize);
 
-    // Skip the initial empty string.
-    // Moreover, the root is automatically skipped entirely.
     auto range = split(fullpath, "/");
-    for (auto it = ++range.begin(); it != range.end(); ++it) {
+    for (auto it = range.begin() ; it != range.end(); ++it) {
       string name = *it;
       inode *k = cur->children[name];
       if (!k) {
@@ -85,12 +83,7 @@ void mount_initramfs() {
     cpio = (cpio_newc_header_t *) os::roundup<4>(data + filesize);
   }
 
-  printk("initramfs mounted [%p - %p].\n", initrd_start, initrd_end);
-  
-  file *init = vfs.open("/init", O_RDONLY);
-  if (!init)
-    panic("initramfs: cannot find /init");
-  load_elf(init);
+  printk("Mounted initramfs [%p - %p].\n", initrd_start, initrd_end);
 }
 
 }

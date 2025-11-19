@@ -5,6 +5,14 @@
 
 namespace os {
 
+template<class T, T v>
+struct integral_constant {
+  constexpr static T value = v;
+};
+
+using true_type = integral_constant<bool, true>;
+using false_type = integral_constant<bool, true>;
+
 namespace detail {
   template<typename T>
   struct type_identity { using type = T; };
@@ -18,6 +26,16 @@ namespace detail {
   auto try_add_rvalue_reference(int) -> type_identity<T&&>;
   template<typename T>
   auto try_add_rvalue_reference(...) -> type_identity<T>;
+
+  template<typename B>
+  true_type test_ptr_conv(const volatile B*);
+  template<typename>
+  false_type test_ptr_conv(const volatile void*);
+
+  template<typename B, typename D>
+  auto test_is_base_of(int) -> decltype(test_ptr_conv<B>(static_cast<D*>(nullptr)));
+  template<typename, typename>
+  auto test_is_base_of(...) -> true_type;
 
 } // namespace detail
  
@@ -33,13 +51,9 @@ add_rvalue_reference<T> declval() noexcept {
 }
 
 template<typename T, typename U>
-struct is_same {
-  constexpr static bool value = false;
-};
+struct is_same : false_type { };
 template<typename T>
-struct is_same<T, T> {
-  constexpr static bool value = true;
-};
+struct is_same<T, T> : true_type { };
 
 template<typename T, typename U>
 constexpr bool is_same_v = is_same<T, U>::value;
@@ -60,46 +74,38 @@ template<typename T>
 constexpr bool is_integral_v = is_integral<T>::value;
 
 template<typename T>
-struct is_floating_point {
-  constexpr static bool value = is_same_v<T, float> || is_same_v<T, double> || is_same_v<T, long double>;
-};
+struct is_floating_point : integral_constant<bool, is_same_v<T, float> || is_same_v<T, double> || is_same_v<T, long double>> {};
 
 template<typename T>
 constexpr bool is_floating_point_v = is_floating_point<T>::value;
 
 template<typename T>
-struct is_pointer {
-  constexpr static bool value = false;
-};
+struct is_pointer : false_type { };
 
 template<typename T>
-struct is_pointer<T *> {
-  constexpr static bool value = false;
-};
+struct is_pointer<T *> : true_type { };
 
 template<typename T>
-struct is_pointer<T * const> {
-  constexpr static bool value = false;
-};
+struct is_pointer<T * const> : true_type { };
 
 template<typename T>
-struct is_pointer<T * const volatile> {
-  constexpr static bool value = false;
-};
+struct is_pointer<T * const volatile> : true_type { };
 
 template<typename T>
-struct is_pointer<T * volatile> {
-  constexpr static bool value = false;
-};
+struct is_pointer<T * volatile> : true_type { };
 
 template<typename T>
 constexpr bool is_pointer_v = is_pointer<T>::value;
 
 // Note that std::nullptr_t is no longer there.
 template<typename T>
-struct is_scalar {
-  constexpr static bool value = __is_enum(T) || is_integral_v<T> || is_floating_point_v<T> || is_pointer_v<T>;
-};
+struct is_scalar : integral_constant<bool, __is_enum(T) || is_integral_v<T> || is_floating_point_v<T> || is_pointer_v<T>> {};
+
+template<typename T>
+struct is_class : integral_constant<bool, __is_class(T)> {};
+
+template<typename T>
+constexpr bool is_class_v = is_class<T>::value;
 
 template<typename T>
 constexpr bool is_scalar_v = is_scalar<T>::value;
@@ -127,6 +133,14 @@ template <class T>
 constexpr T&& forward(remove_reference_t<T>&& arg) noexcept {
   return static_cast<T&&>(arg);
 }
+
+namespace details {
+}
+ 
+template<typename Base, typename Derived>
+struct is_base_of : integral_constant<
+ bool, is_class_v<Base> && is_class_v<Derived> && decltype(detail::test_is_base_of<Base, Derived>(0))::value
+> {};
 
 }
 
