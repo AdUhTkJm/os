@@ -25,11 +25,36 @@
 
 namespace os {
 
+class inode;
+class file {
+public:
+  inode *node;
+  size_t offset;
+  int flags;
+  int refcnt = 0;
+  enum whence {
+    begin, current
+  };
+
+  file() {}
+  file(inode *node, int flags): node(node), offset(0), flags(flags) {}
+
+  virtual size_t read(void *buf, size_t len);
+  virtual size_t write(const void *buf, size_t len);
+  virtual size_t seek(long pos, whence whence);
+  virtual int close();
+};
+
+
 class inode {
 public:
   virtual ~inode() = default;
   virtual size_t read(size_t offset, void* buf, size_t len) = 0;
   virtual size_t write(size_t offset, const void* buf, size_t len) = 0;
+
+  // Return 0 for success, and negative values for error.
+  virtual int onclose() { return 0; }
+  virtual int onseek(long, file::whence) { return 0; }
 
   void add_child(inode *child);
 
@@ -43,26 +68,6 @@ public:
   inode() {}
   inode(inode *parent, filetype type, const string &name, size_t size):
     name(name), parent(parent), size(size), type(type) {}
-};
-
-class file {
-public:
-  inode *node;
-  size_t offset;
-  int flags;
-  int refcnt = 0;
-
-  enum whence {
-    begin, current
-  };
-
-  file() {}
-  file(inode *node, int flags): node(node), offset(0), flags(flags) {}
-
-  virtual size_t read(void *buf, size_t len);
-  virtual size_t write(const void *buf, size_t len);
-  virtual size_t seek(long pos, whence whence);
-  virtual int close();
 };
 
 struct mount {

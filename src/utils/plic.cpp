@@ -2,10 +2,14 @@
 #include "libc.h"
 #include "helper.h"
 #include "../mem/ptable.h"
+#include "../utils/stl/ring_buffer.h"
+
+namespace os {
+
+static_storage<ring_buffer<char>> console_input_buf;
 
 // See https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc
-
-void os::init_plic() {
+void init_plic() {
   // Set priority of interrupt #10 to 1.
   *(volatile unsigned*) as_va(PLIC_BASE + UART0_IRQ * 4) = 1;
   // Enable interrupt #10.
@@ -17,7 +21,7 @@ void os::init_plic() {
   *(volatile unsigned char*) as_va(UART_BASE) = 0;
 }
 
-void os::handle_plic_interrupt() {
+void handle_plic_interrupt() {
   // Claim the interrupt to get the IRQ ID.
   unsigned irq = *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET);
 
@@ -25,6 +29,7 @@ void os::handle_plic_interrupt() {
     // Read the register.
     char c = *(volatile unsigned char*) as_va(UART_BASE + UART_RBR);
     *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET) = irq;
+    console_input_buf->push_back<noblock>(c);
     
     // Ctrl+C
     if (c == 0x03) {
@@ -33,4 +38,6 @@ void os::handle_plic_interrupt() {
   } else if (irq != 0) {
     *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET) = irq;
   }
+}
+
 }

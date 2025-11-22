@@ -143,13 +143,13 @@ struct TLBRefreshGuard {
   }
 };
 
-struct EnableWriteToUserMemory {
-  EnableWriteToUserMemory() {
+struct EnableAccessToUserMemory {
+  EnableAccessToUserMemory() {
     __asm__ volatile(
       "csrs sstatus, %0"
     :: "r"(1 << 18));
   }
-  ~EnableWriteToUserMemory() {
+  ~EnableAccessToUserMemory() {
     __asm__ volatile(
       "csrc sstatus, %0"
     :: "r"(1 << 18));

@@ -14,7 +14,7 @@ constexpr size_t user_stack_size = 8_mb;
 constexpr size_t kstack_size = 8_kb;
 
 enum process_state {
-  Init, Running, Sleeping, Ready
+  Init, Running, Sleeping, Ready, Zombie, Dead
 };
 
 struct trapframe {
@@ -30,6 +30,7 @@ static_assert(sizeof(trapframe) == 256);
 class process_file_table {
   os::hashmap<int, file*> open;
 public:
+  file *operator[](int x) { return open.count(x) ? open[x] : nullptr; }
   int allocate(file *f);
   void deallocate(int fd);
 };
@@ -41,22 +42,31 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   va_t ksp;               // Kernel stack for this process.
   va_t pc;                // Program counter.
   os::vector<vma_t> vma;  // VMAs.
+  pcb_t *parent;          // Parent.
+  int ret;                // Return value.
+  process_file_table ftbl;// Process file table.
 
   ~pcb_t() {
     pfree(pt_root);
-    vfree((void *) ksp);
+    vfree(1 + (trapframe *) ksp);
   }
 };
+/*
+Note for ksp:
+  It actually does not point to top of the kernel stack.
+  It points to the place after trap frame, i.e.
+
+  [ra tp gp ... t6 sepc sstatus | <stack>]
+                                |----------- ksp
+*/
 
 static_assert(offsetof(pcb_t, ksp) == 32);
 
 void init(pcb_t *pcb);
-void destruct(pcb_t *pcb);
+void terminate(pcb_t *pcb, int ret);
 
-// Run the process for the first time.
-void activate(pcb_t *pcb, int argc, char **argv, char **envp);
-// Switch to the process.
-void switch_to(pcb_t *pcb);
+// Set up the returning from the trap handler.
+void trap_return_setup(pcb_t *pcb);
 
 }
 

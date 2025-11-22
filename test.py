@@ -179,6 +179,8 @@ def build_initramfs():
   tasks: list[tuple[Path, Path]] = []
   cache = load_cache()
   for file in INITRAMFS_PATH.rglob("*"):
+    if file.is_dir():
+      continue
     obj_dir = BUILD_DIR / "initramfs"
     obj_path = obj_dir / (file.stem)
     if needs_recompile(file, obj_path, cache, dependencies={}):

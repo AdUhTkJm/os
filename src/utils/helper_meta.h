@@ -133,14 +133,20 @@ template <class T>
 constexpr T&& forward(remove_reference_t<T>&& arg) noexcept {
   return static_cast<T&&>(arg);
 }
-
-namespace details {
-}
  
 template<typename Base, typename Derived>
 struct is_base_of : integral_constant<
  bool, is_class_v<Base> && is_class_v<Derived> && decltype(detail::test_is_base_of<Base, Derived>(0))::value
 > {};
+
+template<bool B, typename T, typename U>
+struct conditional { using type = T; };
+
+template<typename T, typename U>
+struct conditional<false, T, U> { using type = U; };
+
+template<bool B, typename T, typename U>
+using conditional_t = conditional<B, T, U>::type;
 
 }
 

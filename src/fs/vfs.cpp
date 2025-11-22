@@ -22,6 +22,8 @@ size_t file::write(const void *buf, size_t len) {
 }
 
 size_t file::seek(long pos, whence whence) {
+  if (auto ret = node->onseek(pos, whence); ret != 0)
+    return ret;
   size_t before = offset;
   switch (whence) {
   case begin:
@@ -35,8 +37,7 @@ size_t file::seek(long pos, whence whence) {
 }
 
 int file::close() {
-  // Do nothing?
-  return 0;
+  return node->onclose();
 }
 
 inode *vfs::lookup(const string &path) {

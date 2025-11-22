@@ -9,7 +9,7 @@ namespace {
 using namespace os;
 
 void on_miss(void *va) {
-  EnableWriteToUserMemory enabler;
+  EnableAccessToUserMemory enabler;
 
   printk("Page fault at: %p\n", va);
   auto *pcb = scheduler.active;
@@ -23,7 +23,7 @@ void on_miss(void *va) {
   }
   if (i == pcb->vma.size()) {
     printk("Unmapped address %p. Terminate the process.\n", va);
-    os::destruct(pcb);
+    os::terminate(pcb, -127);
     return;
   }
   auto pa = os::pframe();
@@ -40,17 +40,32 @@ void on_miss(void *va) {
     return;
   SeekGuard guard(vma.backup, vma.offset);
   vma.backup->read(va_page, PAGE_SIZE);
-  printk("ksp = %p\n", pcb->ksp);
-  printk("trapframe sepc = %p\n", ((trapframe*)pcb->ksp)->sepc);
 }
 
-void syscall(trapframe *ksp) {
-  auto a7 = ksp->regs[15]; // a7 is x15.
+long syscall(trapframe *ksp) {
+  auto a7 = ksp->regs[15];
+  auto a0 = ksp->regs[8];
+  auto a1 = ksp->regs[9];
+  auto a2 = ksp->regs[10];
+  auto pcb = scheduler.active;
+  ksp->sepc += 4;
   switch (a7) {
+  case 64: {
+    // write(fd, buf, len)
+    auto file = pcb->ftbl[a0];
+    if (!file)
+      return -1;
+    EnableAccessToUserMemory guard;
+    return file->write((const void*) a1, a2);
+  }
+  case 93:
+    // exit(ret_code)
+    os::terminate(pcb, a0);
+    return 0;
   default:
     printk("unknown syscall: %d\n", a7);
+    return -1;
   }
-  ksp->sepc += 4;
 }
 
 }
@@ -64,10 +79,12 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
   if (scause < 0) {
     int kind = scause & 0xff;
     switch (kind) {
-    case 5: // Timer interrupt
+    case 5: { // Timer interrupt
       sbi_set_timer(rv_rdtime() + 3000000);
-      switch_to(scheduler.choose());
+      scheduler.yield(/*sleepy=*/false); // TODO: check time slice
+      scheduler.dispatch();
       break;
+    }
     case 9: // PLIC interrupt
       os::handle_plic_interrupt();
       break;
@@ -101,11 +118,14 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
     switch (scause) {
     case 2: // Invalid instruction
       printk("exception (user): invalid instruction %p when executing %p\n", stval, sepc);
-      destruct(scheduler.active);
+      os::terminate(scheduler.active, -127);
       break;
-    case 8: // System call
-      syscall((trapframe *) scheduler.active->ksp);
+    case 8: { // System call
+      auto pcb = scheduler.active;
+      auto trap = (trapframe *) pcb->ksp;
+      trap->regs[8] = syscall(trap); // a0
       break;
+    }
     case 12: // Instruction page fault
     case 13: // Load page fault
     case 15: // Store page fault

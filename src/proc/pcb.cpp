@@ -51,21 +51,19 @@ void init(pcb_t *pcb) {
   scheduler.add(pcb);
 }
 
-void destruct(pcb_t *pcb) {
+void terminate(pcb_t *pcb, int ret) {
   scheduler.erase(pcb);
-  delete pcb;
+  pcb->ksp = Zombie;
+  pcb->ret = ret;
 }
 
-void activate(pcb_t *pcb, int argc, char **argv, char **envp) {
-  (void) argc, (void) argv, (void) envp;
-  printk("activated, entry = %p\n", pcb->pc);
+static void first_time_setup(pcb_t *pcb) {
   pcb->status = Running;
   // Construct a trap frame on the kernel stack.
   // Note that stack grows downwards, so we self-decrement
   // and leave the space for it.
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
-  printk("trapframe = %p, sepc = %p\n", trap, trap->sepc);
   int sstatus; CSRR(sstatus, sstatus);
   // User process with interrupt enabled.
   trap->sstatus = (sstatus & ~(1 << 8)) | (1 << 5);
@@ -73,14 +71,13 @@ void activate(pcb_t *pcb, int argc, char **argv, char **envp) {
   pt_root = (pte_t *) as_va(pcb->pt_root);
 }
 
-void switch_to(pcb_t *pcb) {
+void trap_return_setup(pcb_t *pcb) {
   pcb_t *active = scheduler.active;
-  active->status = Ready;
   CSRR(sepc, active->pc);
   scheduler.active = pcb;
 
   [[unlikely]] if (pcb->status == Init) {
-    activate(pcb, 0, nullptr, nullptr);
+    first_time_setup(pcb);
     return;
   }
 

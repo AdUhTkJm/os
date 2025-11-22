@@ -2,20 +2,28 @@
 #define SCHEDULE_H
 
 #include "pcb.h"
+#include "../lock/lock.h"
 
 namespace os {
 
-// In order to let assembly access it, we should make it standard-layout.
-// So we're not using `private` here even if we should do.
 struct scheduler_t {
   os::intrusive_list<pcb_t> sleep, ready;
-  pcb_t *active;
+  pcb_t *active = nullptr;
+  spinlock *lock = nullptr;
+
+  // No global constructor is allowed. Hence this explicit init.
+  void init() { lock = new spinlock; }
   
   void add(pcb_t *pcb);
-  // Choose the next process to schedule.
-  // Does not modify `active`.
-  pcb_t *choose();
+  // Chooses the next process to schedule, and switches to it.
+  void dispatch();
   void erase(pcb_t *pcb);
+
+  // Puts the current active process to sleep.
+  // When sleepy = false, puts it to ready state instead.
+  void yield(bool sleepy = true);
+
+  void wakeup(pcb_t *pcb);
 };
 
 static_assert(offsetof(scheduler_t, active) == 48);

@@ -2,6 +2,7 @@
 #define UTILITY_H
 
 #include "../libc.h"
+#include "../helper_meta.h"
 
 // Placement new.
 inline void *operator new(size_t, void* ptr) noexcept {
@@ -11,8 +12,10 @@ inline void *operator new(size_t, void* ptr) noexcept {
 // Normal new.
 void *operator new(size_t len);
 void operator delete(void *ptr, size_t);
+void operator delete(void *ptr);
 void *operator new[](size_t len);
 void operator delete[](void *ptr);
+void operator delete[](void *ptr, size_t);
 
 namespace os {
 
@@ -56,6 +59,12 @@ struct pair {
   T first;
   U second;
 };
+
+using block = void;
+using noblock = bool;
+
+template<class T>
+concept blockspec = is_same_v<T, block> || is_same_v<T, noblock>;
 
 }
 

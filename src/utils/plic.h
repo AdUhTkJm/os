@@ -2,6 +2,7 @@
 #define PLIC_H
 
 #include "helper.h"
+#include "../utils/stl/ring_buffer.h"
 
 #define PLIC_BASE 0x0C000000
 #define UART0_IRQ 10
@@ -18,6 +19,8 @@ namespace os {
 
 void init_plic();
 void handle_plic_interrupt();
+
+extern static_storage<ring_buffer<char>> console_input_buf;
 
 }
 

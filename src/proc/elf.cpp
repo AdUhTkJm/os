@@ -17,7 +17,6 @@ pcb_t *load_elf(file *content) {
   pcb_t *pcb = new pcb_t;
   pcb->status = Init;
   pcb->pc = header.e_entry;
-  printk("entry = %p\n", pcb->pc);
 
   content->seek(header.e_phoff, file::begin);
   // The random offset.

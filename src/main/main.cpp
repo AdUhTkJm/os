@@ -47,13 +47,14 @@ void kernel_main() {
   for (;;) ;
 }
 
-void init_timer();
-
 void main_high() {
   memset(__bss_begin, 0, __bss_end - __bss_begin);
   kernel_pt_root = pt_root = (pte_t *) as_va((pa_t) 0x80201000);
   punmap((va_t) 0x80000000ul, MAP_1GB);
   printk("Page table initialized.\n");
+
+  os::init_freelist_kalloc();
+  printk("Allocator initialized.\n");
 
   boot_pcb.construct();
   RD(sp, boot_pcb->ksp);
@@ -61,8 +62,6 @@ void main_high() {
   scheduler.active = &boot_pcb;
   printk("Kernel stack set up, with stack top = %p.\n", boot_pcb->ksp);
 
-  os::init_freelist_kalloc();
-  printk("Allocator initialized.\n");
   os::init_plic();
   printk("PLIC enabled.\n");
 
@@ -75,6 +74,7 @@ void main_high() {
   printk("Bitmap allocator initialized.\n");
   os::mount_initramfs();
   
+  scheduler.init();
   file *init = vfs_static->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
