@@ -76,6 +76,16 @@ struct vfs {
   file *open(const string &path, int flags);
 };
 
+class SeekGuard {
+  size_t pos;
+  file *f;
+public:
+  SeekGuard(file *f, int offset, file::whence whence = file::begin): f(f) {
+    pos = f->seek(offset, whence);
+  }
+  ~SeekGuard() { f->seek(pos, file::begin); }
+};
+
 extern os::static_storage<vfs> vfs_static;
 
 }

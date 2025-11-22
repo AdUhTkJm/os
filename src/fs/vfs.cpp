@@ -11,13 +11,13 @@ void inode::add_child(inode *child) {
 
 size_t file::read(void *buf, size_t len) {
   auto ret = node->read(offset, buf, len);
-  offset += len;
+  offset += ret;
   return ret;
 }
 
 size_t file::write(const void *buf, size_t len) {
   auto ret = node->write(offset, buf, len);
-  offset += len;
+  offset += ret;
   return ret;
 }
 

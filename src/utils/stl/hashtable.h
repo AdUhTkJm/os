@@ -156,7 +156,7 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
 
   auto oldcap = cap;
   cap = len;
-  auto new_table = (entry*) vmalloc(cap * sizeof(entry));
+  auto new_table = new entry[cap];
   for (size_t i = 0; i < cap; ++i)
     new_table[i].state = Empty;
 
@@ -169,19 +169,19 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
       insert(key, value);
   }
 
-  vfree(old_table);
+  delete old_table;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq>::hashmap(size_t capacity) : cap(max(16ul, capacity)), sz(0) {
-  table = (entry*) vmalloc(capacity * sizeof(entry));
+  table = new entry[capacity];
   for (size_t i = 0; i < capacity; ++i)
     table[i].state = Empty;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq>::~hashmap() {
-  vfree(table);
+  delete table;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>

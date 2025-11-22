@@ -7,6 +7,7 @@
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
 #include "../fs/vfs.h"
+#include "../proc/schedule.h"
 
 using namespace os;
 
@@ -53,6 +54,13 @@ void main_high() {
   kernel_pt_root = pt_root = (pte_t *) as_va((pa_t) 0x80201000);
   punmap((va_t) 0x80000000ul, MAP_1GB);
   printk("Page table initialized.\n");
+
+  boot_pcb.construct();
+  RD(sp, boot_pcb->ksp);
+  boot_pcb->pid = 0;
+  scheduler.active = &boot_pcb;
+  printk("Kernel stack set up, with stack top = %p.\n", boot_pcb->ksp);
+
   os::init_freelist_kalloc();
   printk("Allocator initialized.\n");
   os::init_plic();
@@ -73,8 +81,7 @@ void main_high() {
   if (!load_elf(init))
     panic("load_elf: cannot load /init");
 
-  sbi_set_timer(rv_rdtime() + 5000000);
-  // Note that scheduler will start working after enabling timer.
+  sbi_set_timer(rv_rdtime() + 3000000);
   printk("Timer enabled.\n");
   for (;;) ;
 }

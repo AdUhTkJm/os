@@ -11,14 +11,14 @@ class string {
   size_t len;
 public:
   string(): string("") {}
-  /* implicit */ string(const char *q): p((char *) vmalloc(strlen(q) + 1)), len(strlen(q)) {
+  /* implicit */ string(const char *q): p(new char[strlen(q) + 1]), len(strlen(q)) {
     strcpy(p, q);
   }
-  string(const char *q, size_t sz): p((char *) vmalloc(sz + 1)), len(sz) {
+  string(const char *q, size_t sz): p(new char[sz + 1]), len(sz) {
     memcpy(p, q, sz);
     p[sz] = 0;
   }
-  string(const string &other): p((char *) vmalloc(other.len + 1)), len(other.len) {
+  string(const string &other): p(new char[other.len + 1]), len(other.len) {
     strcpy(p, other.p);
   }
   string(string &&other): p(other.p), len(other.len) {
@@ -30,21 +30,21 @@ public:
     if (this == &other)
       return *this;
 
-    vfree(p);
-    p = (char *) vmalloc(other.len + 1);
+    delete[] p;
+    p = new char[other.len + 1];
     strcpy(p, other.p);
     len = other.len;
     return *this;
   }
 
   string &operator=(string &&other) {
-    vfree(p);
+    delete[] p;
     p = other.p; other.p = nullptr;
     len = other.len;
     return *this;
   }
 
-  ~string() { vfree(p); }
+  ~string() { delete[] p; }
 
   size_t size() const { return len; };
   const char *c_str() const { return p; }
@@ -69,8 +69,6 @@ public:
 struct string_view {
   const char *start = nullptr;
   size_t sz = 0;
-
-  // This allocates new memory by vmalloc, and must be freed.
 
   bool empty() const { return sz == 0; }
   size_t size() const { return sz; }

@@ -52,7 +52,8 @@ C inline sbiret_t sbi_set_timer(reg_t value) {
 
 C [[noreturn]] inline void sbi_system_reset() {
   sbicall(0, 0, 0, 0, 0, 0, SBI_SYSTEM_RESET);
-} // NOLINT (Suppress warning of "noreturn")
+  __builtin_unreachable();
+}
 
 #ifndef __cplusplus
 #undef inline

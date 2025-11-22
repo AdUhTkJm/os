@@ -1,4 +1,5 @@
 #include "utility.h"
+#include "../../mem/kalloc.h"
 
 void *operator new(size_t len) {
   return os::vmalloc(len);

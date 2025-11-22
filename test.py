@@ -17,6 +17,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--run", action="store_true")
 parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
+parser.add_argument("-a", "--assembly", action="store_true")
 
 args = parser.parse_args()
 
@@ -35,6 +36,7 @@ CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
+  "-Wno-invalid-offsetof",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 SFLAGS = [
@@ -274,5 +276,6 @@ if __name__ == "__main__":
 
   if args.run:
     # -d in_asm -D qemu.log
-    proc.check_call(f"qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel -initrd {BUILD_DIR}/initramfs.cpio", shell=True)
+    asm = "-d in_asm -D qemu.log" if args.assembly else ""
+    proc.check_call(f"qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel -initrd {BUILD_DIR}/initramfs.cpio {asm}", shell=True)
   print("Run finished.")

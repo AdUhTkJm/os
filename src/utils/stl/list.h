@@ -17,8 +17,8 @@ concept intrusive_capable = is_base_of<intrusive_list_node<T>, T>::value;
 
 template<intrusive_capable T>
 class intrusive_list {
-  T *head, *tail;
-  size_t sz;
+  T *head = nullptr, *tail = nullptr;
+  size_t sz = 0;
 
   intrusive_list_node<T> *into(T *node) {
     return static_cast<intrusive_list_node<T> *>(node);
@@ -26,7 +26,6 @@ class intrusive_list {
 public:
   using iterator = intrusive_list_node<T>*;
 
-  intrusive_list(): head(nullptr), tail(nullptr), sz(0) { }
   bool empty() const { return !head; }
 
   void push_back(T* node) {

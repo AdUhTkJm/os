@@ -3,21 +3,22 @@
 namespace os {
 
 scheduler_t scheduler;
+static_storage<pcb_t> boot_pcb;
 
 void scheduler_t::add(pcb_t *pcb) {
-  assert(pcb->status == Ready);
+  assert(pcb->status == Init);
   ready.push_back(pcb);
 }
 
 // Implement better scheduling later. This is round-robin.
 pcb_t *scheduler_t::choose() {
   if (!ready.size())
-    panic("no ready process in queue!");
-  if (active)
-    ready.push_back(active);
-  active = ready.begin();
+    panic("scheduler: no ready process in queue!");
+  assert(active);
+  ready.push_back(active);
+  auto next = ready.begin();
   ready.pop_front();
-  return active;
+  return next;
 }
 
 void scheduler_t::erase(pcb_t *pcb) {

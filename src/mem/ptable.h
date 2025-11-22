@@ -78,6 +78,9 @@ Returns:
   - 1 for invalid argument.
 */
 int pmap(pa_t pa, va_t va, int mode, unsigned flags);
+inline int pmap(pa_t pa, const void *va, int mode, unsigned flags) {
+  return pmap(pa, (va_t) va, mode, flags);
+}
 
 typedef enum {
   UNMAP_OK,
@@ -103,6 +106,7 @@ Returns the physical address that this table is previously mapped to. If
 there is no such address, returns 0.
 */
 unmap_ret_t punmap(va_t va, int mode);
+inline unmap_ret_t punmap(const void *va, int mode) { return punmap((va_t) va, mode); }
 
 // Sv39 requires that the virtual address is sign-extended on bit 38 (highest bit).
 inline constexpr va_t sext(va_t x) {
@@ -120,6 +124,9 @@ inline constexpr va_t sext(va_t x) {
 pa_t to_pa(va_t va);
 inline pa_t to_pa(const void *va) { return to_pa((va_t) va); }
 
+int pte_flags(va_t va);
+inline int pte_flags(const void *va) { return pte_flags((va_t) va); }
+
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);
 
@@ -133,6 +140,19 @@ struct TLBRefreshGuard {
       "sfence.vma %0, zero\n"
       :: "r"(flushed) : "memory"
     );
+  }
+};
+
+struct EnableWriteToUserMemory {
+  EnableWriteToUserMemory() {
+    __asm__ volatile(
+      "csrs sstatus, %0"
+    :: "r"(1 << 18));
+  }
+  ~EnableWriteToUserMemory() {
+    __asm__ volatile(
+      "csrc sstatus, %0"
+    :: "r"(1 << 18));
   }
 };
 

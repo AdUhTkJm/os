@@ -166,7 +166,7 @@ void pfree(pa_t p) {
   pmmap[base / PAGE_SIZE] = 0;
 }
 
-void *vmalloc(size_t len) {
+void *vmalloc_impl(size_t len) {
   size_t pagecount = os::roundup<PAGE_SIZE>(len + sizeof(size_t)) / PAGE_SIZE;
   size_t *p = (size_t *) vm_alloc_pages(pagecount, PTE_RW | PTE_V);
   *p = pagecount;
@@ -176,7 +176,10 @@ void *vmalloc(size_t len) {
 void vfree(void *p) {
   if (!p)
     return;
-  void *meta = (size_t *) p - 1;
+  auto q = (size_t *) p;
+  [[unlikely]] while (!*q)
+    q--;
+  size_t *meta = q - 1;
   size_t pagecount = *(size_t *) meta;
   vm_free_pages(meta, pagecount);
 }

@@ -25,6 +25,9 @@ public:
   T *operator->() {
     return (T*) storage;
   }
+  T *operator&() {
+    return (T*) storage;
+  }
 
   template<typename ...Args>
   void construct(Args ...args) {

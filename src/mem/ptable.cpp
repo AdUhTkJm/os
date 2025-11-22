@@ -202,4 +202,27 @@ pa_t to_pa(va_t va) {
   return PPN_AS_PA(PTE_PPN(pte_l0)) + VA_OFFSET(va);
 }
 
+int pte_flags(va_t va) {
+  pte_t pte_l2 = pt_root[VA_LVL2(va)];
+  if (!is_valid(pte_l2))
+    return -1;
+  if (is_leaf(pte_l2))
+    return PTE_FLAGS(pte_l2);
+
+  pte_t *pt_l1 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l2)));
+  pte_t pte_l1 = pt_l1[VA_LVL1(va)];
+
+  if (!is_valid(pte_l1))
+    return -1;
+  if (is_leaf(pte_l1))
+    return PTE_FLAGS(pte_l1);
+
+  pte_t *pt_l0 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l1)));
+  pte_t pte_l0 = pt_l0[VA_LVL0(va)];
+  if (!is_valid(pte_l0))
+    return -1;
+
+  return PTE_FLAGS(pte_l0);
+}
+
 }

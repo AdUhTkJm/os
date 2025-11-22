@@ -3,13 +3,6 @@
 
 #include "../libc.h"
 
-namespace os {
-
-void *vmalloc(size_t len);
-void vfree(void *p);
-
-}
-
 // Placement new.
 inline void *operator new(size_t, void* ptr) noexcept {
   return ptr;

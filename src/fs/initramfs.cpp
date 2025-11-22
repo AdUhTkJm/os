@@ -5,8 +5,6 @@
 #include "../mem/ptable.h"
 #include "../proc/elf.h"
 
-using os::operator""_kb;
-
 namespace {
 
 uint32_t read_int(void *p) {
@@ -25,14 +23,16 @@ size_t as_int(const char *p) {
 namespace os {
 
 size_t initramfs_inode::read(size_t offset, void *buf, size_t len) {
-  len = min(size - offset, len);
-  memcpy(buf, (char *) data + offset, len);
-  return len;
+  ssize_t l = min(long(size) - long(offset), long(len));
+  if (l <= 0)
+    return 0;
+  memcpy(buf, (char *) data + offset, l);
+  return l;
 }
 
 // This is read-only.
 size_t initramfs_inode::write(size_t, const void *, size_t) {
-  return -1ul;
+  return 0;
 }
 
 void mount_initramfs() {
@@ -43,12 +43,8 @@ void mount_initramfs() {
     panic("device tree: cannot find initrd");
   
   // Read the device tree and find the chosen node.
-  initrd_start = (char *) (uintptr_t) read_int(pstart);
-  initrd_end = (char *) (uintptr_t) read_int(pend);
-  auto map_begin = os::rounddown<4_kb>(initrd_start);
-  unsigned size = initrd_end - map_begin;
-  for (unsigned i = 0; i < os::roundup<4_kb>(size); i += 4_kb)
-    pmap((pa_t) map_begin + i, (va_t) map_begin + i, MAP_4KB, PTE_RWX | PTE_V | PTE_G);
+  initrd_start = (char *) as_va(read_int(pstart));
+  initrd_end = (char *) as_va(read_int(pend));
   
   // Initialize the initramfs and register it in vfs.
   vfs_static.construct();

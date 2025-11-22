@@ -13,12 +13,11 @@ pcb_t *load_elf(file *content) {
     return nullptr;
   if (header.e_machine != EM_MACHINE)
     return nullptr;
-  printk("Basic check good\n");
 
-  pcb_t *pcb_p = new pcb_t;
-  auto &pcb = *pcb_p;
-  pcb.status = Init;
-  pcb.entry = header.e_entry;
+  pcb_t *pcb = new pcb_t;
+  pcb->status = Init;
+  pcb->pc = header.e_entry;
+  printk("entry = %p\n", pcb->pc);
 
   content->seek(header.e_phoff, file::begin);
   // The random offset.
@@ -51,13 +50,13 @@ pcb_t *load_elf(file *content) {
         .begin = begin, .end = end, .prot = prot, .flags = MAP_PRIVATE,
         .backup = content, .offset = phdr.p_offset
       };
-      pcb.vma.push_back(vma);
+      pcb->vma.push_back(vma);
 
       vfree(text);
     }
   }
-  init(pcb_p);
-  return pcb_p;
+  init(pcb);
+  return pcb;
 }
 
 }
