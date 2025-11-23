@@ -20,6 +20,8 @@ public:
   T *operator->() { return (T*) data; }
   T *operator&() { return (T*) data; }
   bool valid() const { return present; }
+  bool operator!() const { return !present; }
+  operator bool() const { return present; }
 };
 
 }

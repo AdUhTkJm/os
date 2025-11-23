@@ -2,24 +2,22 @@
 #define CONSOLEFS_H
 
 #include "vfs.h"
+#include "../proc/pcb.h"
+#include "../utils/stl/ring_buffer.h"
 
 namespace os {
 
-class stdin_inode : public inode {
-  os::vector<char> buffer;
+class console_inode : public inode {
+  os::list<pcb_t *> wait;
+  spinlock lock;
 public:
   size_t read(size_t offset, void *buf, size_t len) override;
-  size_t write(size_t, const void*, size_t) override { return 0; }
+  size_t write(size_t, const void*, size_t) override;
+
+  void wake();
 };
 
-// Note that stdout and stderr share the same inode type.
-// The buffering different is handled by libc, rather than here.
-class stdout_inode : public inode {
-  os::vector<char> buffer;
-public:
-  size_t read(size_t, void*, size_t) override { return 0; }
-  size_t write(size_t offset, const void *buf, size_t len) override;
-};
+extern static_storage<console_inode> tty0;
 
 }
 

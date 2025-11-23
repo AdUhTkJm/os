@@ -52,8 +52,10 @@ void init(pcb_t *pcb) {
 }
 
 void terminate(pcb_t *pcb, int ret) {
+  // Currently, without the idle process, the termination would fail.
+  panic("terminate: not yet implemented");
+  
   scheduler.erase(pcb);
-  pcb->ksp = Zombie;
   pcb->ret = ret;
 }
 

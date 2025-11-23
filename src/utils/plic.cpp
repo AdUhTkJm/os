@@ -3,6 +3,7 @@
 #include "helper.h"
 #include "../mem/ptable.h"
 #include "../utils/stl/ring_buffer.h"
+#include "../fs/consolefs.h"
 
 namespace os {
 
@@ -29,7 +30,8 @@ void handle_plic_interrupt() {
     // Read the register.
     char c = *(volatile unsigned char*) as_va(UART_BASE + UART_RBR);
     *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET) = irq;
-    console_input_buf->push_back<noblock>(c);
+    console_input_buf->push_back(c);
+    tty0->wake();
     
     // Ctrl+C
     if (c == 0x03) {

@@ -49,6 +49,7 @@ long syscall(trapframe *ksp) {
   auto a2 = ksp->regs[10];
   auto pcb = scheduler.active;
   ksp->sepc += 4;
+  printk("syscall %ld\n", a7);
   switch (a7) {
   case 64: {
     // write(fd, buf, len)
@@ -82,7 +83,6 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
     case 5: { // Timer interrupt
       sbi_set_timer(rv_rdtime() + 3000000);
       scheduler.yield(/*sleepy=*/false); // TODO: check time slice
-      scheduler.dispatch();
       break;
     }
     case 9: // PLIC interrupt

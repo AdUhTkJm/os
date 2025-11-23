@@ -87,7 +87,48 @@ public:
 
 template<class T>
 class list {
+  struct node {
+    T data;
+    node *next, *prev;
+  };
 
+  node *head = nullptr, *tail = nullptr;
+  size_t sz = 0;
+public:
+  ~list() {
+    for (node *p = head; p != tail;) {
+      auto next = p->next;
+      delete p;
+      p = next;
+    }
+  }
+
+  void push_back(const T &item) {
+    node *n = new node { item, nullptr, nullptr };
+    if (!tail) {
+      head = tail = n;
+      return;
+    }
+    tail->next = n;
+    n->prev = tail;
+    tail = n;
+  }
+
+  void pop_front() {
+    if (!head)
+      return;
+    node *n = head;
+    head = head->next;
+    if (!head)
+      tail = nullptr;
+    delete n;
+  }
+
+  T front() { return head->data; }
+  T back() { return tail->data; }
+
+  bool empty() const { return sz == 0; }
+  size_t size() const { return sz; }
 };
 
 }

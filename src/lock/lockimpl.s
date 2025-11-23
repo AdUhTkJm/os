@@ -10,5 +10,5 @@ _ZN2os8spinlock12acquire_implEPi:
   ret
 
 _ZN2os8spinlock12release_implEPi:
-  amoand.w.rl zero, zero, (a0)
+  amoswap.w.rl zero, zero, (a0)
   ret

@@ -24,6 +24,8 @@ struct scheduler_t {
   void yield(bool sleepy = true);
 
   void wakeup(pcb_t *pcb);
+private:
+  void dispatch_impl();
 };
 
 static_assert(offsetof(scheduler_t, active) == 48);

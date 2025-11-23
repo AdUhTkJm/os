@@ -58,7 +58,7 @@ void main_high() {
 
   boot_pcb.construct();
   RD(sp, boot_pcb->ksp);
-  boot_pcb->pid = 0;
+  boot_pcb->pid = -1; // This is not a valid process.
   scheduler.active = &boot_pcb;
   printk("Kernel stack set up, with stack top = %p.\n", boot_pcb->ksp);
 

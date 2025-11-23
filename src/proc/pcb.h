@@ -35,6 +35,13 @@ public:
   void deallocate(int fd);
 };
 
+union syscall_progress {
+  struct read {
+    int cur; // Current offset from buf.
+  } read;
+
+};
+
 struct pcb_t : os::intrusive_list_node<pcb_t> {
   int pid;                // Process id.
   process_state status;   // Process status (running, sleeping etc.)
@@ -44,7 +51,9 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
   int ret;                // Return value.
+  bool prog_valid;        // Whether the syscall progress is valid. See below.
   process_file_table ftbl;// Process file table.
+  syscall_progress prog;  // System call progress, for resuming blocking syscalls.
 
   ~pcb_t() {
     pfree(pt_root);
