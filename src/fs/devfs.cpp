@@ -74,9 +74,9 @@ void mount_dev() {
   cast<devroot>(root->node)->record("tty0", &*tty0);
   auto dentry = vfs->lookup("/dev");
   if (!dentry)
-    panic("!dentry");
-  printk("mount: %s, %s\n", dentry->name.c_str(), dentry->parent->name.c_str());
-  vfs->mount("dev", root, dentry);
+    panic("devfs: cannot find /dev");
+  
+  vfs->mount("dev", dentry, root);
 }
 
 }

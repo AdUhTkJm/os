@@ -38,15 +38,13 @@ pcb_t *load_elf(file *content) {
       content->seek(before, file::begin);
 
       va_t va = phdr.p_vaddr + offset;
-      va_t begin = os::rounddown<PAGE_SIZE>(va);
-      va_t end = os::roundup<PAGE_SIZE>(va + phdr.p_memsz);
 
       int prot = 0;
       if (phdr.p_flags & PF_R) prot |= PROT_READ;
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma_t vma = {
-        .begin = begin, .end = end, .prot = prot, .flags = MAP_PRIVATE,
+        .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE,
         .backup = content, .offset = phdr.p_offset
       };
       pcb->vma.push_back(vma);

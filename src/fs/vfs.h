@@ -113,7 +113,6 @@ public:
   string name;
   inode *node;
   class fs *fs;
-  unsigned refcnt = 0;
 
   dentry(const string &name, inode *node, dentry *parent = nullptr):
     parent(parent), name(name), node(node), fs(node->fs) {}

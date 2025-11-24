@@ -89,7 +89,6 @@ void mount_initramfs() {
       break;
 
     char *data = os::roundup<4>(fullpath + as_int(cpio->namesize));
-    printk("loaded: %s\n", fullpath);
 
     auto *cur = cast<initramfs_inode>(root);
     size_t filesize = as_int(cpio->filesize);
@@ -97,7 +96,7 @@ void mount_initramfs() {
     auto range = split(fullpath, "/");
     for (auto it = range.begin() ; it != range.end(); ++it) {
       string name = *it;
-      auto filetype = as_int(cpio->mode) & 0x40000 ? inode::Dir : inode::File;
+      auto filetype = as_int(cpio->mode) & 040000 /*Octal*/ ? inode::Dir : inode::File;
       cur = cur->load(name, filetype, filesize, data);
     }
     cpio = (cpio_newc_header_t *) os::roundup<4>(data + filesize);

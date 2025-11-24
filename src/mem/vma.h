@@ -21,8 +21,12 @@ struct vma_t {
   size_t offset;
 };
 
-void vma_map(void *addr, size_t length, int prot, int flags, int fd, size_t offset);
-void vma_unmap();
+// Map according to the current process's VMA.
+// Terminates the process when the pointer is not in any VMA.
+void vma_map_current(void *va);
+
+// Map a range. Only maps the addresses that are currently unmapped.
+void vma_map_current(void *from, void *to);
 
 }
 

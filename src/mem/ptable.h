@@ -124,6 +124,7 @@ inline constexpr va_t sext(va_t x) {
 pa_t to_pa(va_t va);
 inline pa_t to_pa(const void *va) { return to_pa((va_t) va); }
 
+// Returns -1 when the PTE is not valid.
 int pte_flags(va_t va);
 inline int pte_flags(const void *va) { return pte_flags((va_t) va); }
 

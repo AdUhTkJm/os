@@ -9,37 +9,8 @@ namespace {
 using namespace os;
 
 void on_miss(void *va) {
-  EnableAccessToUserMemory enabler;
-
   printk("Page fault at: %p\n", va);
-  auto *pcb = scheduler.active;
-
-  va_t addr = (va_t) va;
-  size_t i = 0;
-  for (; i < pcb->vma.size(); i++) {
-    const auto &vma = pcb->vma[i];
-    if (addr <= vma.end && addr >= vma.begin)
-      break;
-  }
-  if (i == pcb->vma.size()) {
-    printk("Unmapped address %p. Terminate the process.\n", va);
-    os::terminate(pcb, -127);
-    return;
-  }
-  auto pa = os::pframe();
-  const auto &vma = pcb->vma[i];
-  int flags = PTE_V | PTE_U | PTE_RWX;
-  if (vma.prot & PROT_EXEC) flags |= PTE_X;
-  if (vma.prot & PROT_READ) flags |= PTE_R;
-  if (vma.prot & PROT_WRITE) flags |= PTE_W;
-  auto va_page = rounddown<4_kb>(va);
-  os::pmap(pa, va_page, MAP_4KB, flags);
-
-  // Copy the contents if it exists.
-  if (!vma.backup)
-    return;
-  SeekGuard guard(vma.backup, vma.offset);
-  vma.backup->read(va_page, PAGE_SIZE);
+  vma_map_current(va);
 }
 
 long syscall(trapframe *ksp) {
@@ -51,15 +22,17 @@ long syscall(trapframe *ksp) {
   ksp->sepc += 4;
   printk("syscall %ld\n", a7);
   switch (a7) {
-  case 64: {
+  case 1: {
     // write(fd, buf, len)
     auto file = pcb->ftbl[a0];
     if (!file)
       return -1;
+    auto buf = (void *) a1;
+    vma_map_current(buf, (char*) buf + a2);
     EnableAccessToUserMemory guard;
-    return file->write((const void*) a1, a2);
+    return file->write(buf, a2);
   }
-  case 93:
+  case 60:
     // exit(ret_code)
     os::terminate(pcb, a0);
     return 0;

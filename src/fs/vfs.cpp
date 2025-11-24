@@ -35,7 +35,7 @@ result file::close() {
 
 dentry* vfs::check_mount(dentry* cur) {
   for (const auto& m : mounts) {
-    if (m.host == cur)
+    if (m.host->node == cur->node)
       return m.root;
   }
   return nullptr;
@@ -54,7 +54,6 @@ dentry *vfs::lookup(const string &path) {
   for (auto name : split(path, "/")) {
     if (!cur || cur->node->type != inode::Dir)
       return nullptr;
-    auto v = cur->node->list();
 
     if (dentry *root = check_mount(cur))
       cur = root;
@@ -68,8 +67,10 @@ dentry *vfs::lookup(const string &path) {
     }
 
     auto pair = os::pair { cur->node, name };
-    if (dcache.count(pair))
-      return dcache[pair];
+    if (dcache.count(pair)) {
+      cur = dcache[pair];
+      continue;
+    }
 
     if (auto inode = cur->node->lookup(name)) {
       cur = new dentry(name, inode, cur);
