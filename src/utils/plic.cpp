@@ -3,7 +3,7 @@
 #include "helper.h"
 #include "../mem/ptable.h"
 #include "../utils/stl/ring_buffer.h"
-#include "../fs/consolefs.h"
+#include "../fs/devfs.h"
 
 namespace os {
 
@@ -20,6 +20,9 @@ void init_plic() {
   *(volatile unsigned char*) as_va(UART_BASE + UART_LCR) = 0x03;
   *(volatile unsigned char*) as_va(UART_BASE + 1) = 1;
   *(volatile unsigned char*) as_va(UART_BASE) = 0;
+  
+  devfs.construct();
+  tty0.construct("tty0");
 }
 
 void handle_plic_interrupt() {

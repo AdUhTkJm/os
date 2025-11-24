@@ -48,6 +48,15 @@ void init(pcb_t *pcb) {
   // Copy the kernel's level 2 root table.
   // We only need to shallow copy.
   memcpy((void *) as_va(pcb->pt_root), kernel_pt_root, PAGE_SIZE);
+
+  // Open stdin, stdout and stderr.
+  // Note they are different files, but point to the same place.
+  auto tty0 = vfs->lookup("/dev/tty0");
+  if (!tty0)
+    panic("no console!");
+  for (int i = 0; i < 3; i++)
+    pcb->ftbl.open[i] = new file(tty0->node, O_RDWR);
+
   scheduler.add(pcb);
 }
 

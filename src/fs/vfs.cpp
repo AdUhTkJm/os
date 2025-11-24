@@ -2,12 +2,7 @@
 
 namespace os {
 
-static_storage<vfs> vfs_static;
-
-void inode::add_child(inode *child) {
-  child->parent = this;
-  children[child->name] = child;
-}
+static_storage<class vfs> vfs;
 
 size_t file::read(void *buf, size_t len) {
   auto ret = node->read(offset, buf, len);
@@ -22,8 +17,6 @@ size_t file::write(const void *buf, size_t len) {
 }
 
 size_t file::seek(long pos, whence whence) {
-  if (auto ret = node->onseek(pos, whence); ret != 0)
-    return ret;
   size_t before = offset;
   switch (whence) {
   case begin:
@@ -36,11 +29,19 @@ size_t file::seek(long pos, whence whence) {
   return before;
 }
 
-int file::close() {
+result file::close() {
   return node->onclose();
 }
 
-inode *vfs::lookup(const string &path) {
+dentry* vfs::check_mount(dentry* cur) {
+  for (const auto& m : mounts) {
+    if (m.host == cur)
+      return m.root;
+  }
+  return nullptr;
+}
+
+dentry *vfs::lookup(const string &path) {
   // We assume the first mounted FS is the root of the entire VFS.
   if (mounts.empty())
     return nullptr;
@@ -48,38 +49,52 @@ inode *vfs::lookup(const string &path) {
   if (path == "/")
     return mounts[0].root;
 
-  inode *current = mounts[0].root;
-  if (!current || current->type != inode::Dir)
-    return nullptr;
+  dentry *cur = mounts[0].root;
 
   for (auto name : split(path, "/")) {
+    if (!cur || cur->node->type != inode::Dir)
+      return nullptr;
+    auto v = cur->node->list();
+
+    if (dentry *root = check_mount(cur))
+      cur = root;
+
     if (name == "" || name == ".")
       continue;
 
     if (name == "..") {
-      if (!(current = current->parent))
+      if (!(cur = cur->parent))
         return nullptr;
     }
 
-    if (current->children.count(name)) {
-      current = current->children[name];
-      // TODO: switch according to mount point.
+    auto pair = os::pair { cur->node, name };
+    if (dcache.count(pair))
+      return dcache[pair];
+
+    if (auto inode = cur->node->lookup(name)) {
+      cur = new dentry(name, inode, cur);
+      dcache[pair] = cur;
       continue;
     }
 
     return nullptr;
   }
-  return current;
+  return cur;
 }
 
 file *vfs::open(const string &path, int flags) {
-  inode *node = lookup(path);
-  if (!node)
+  dentry *dentry = lookup(path);
+  if (!dentry)
     return nullptr;
 
-  file *f = new file(node, flags);
-  node->refcnt++;
+  file *f = new file(dentry->node, flags);
+  dentry->node->refcnt++;
   return f;
+}
+
+void vfs::mount(const string &fsname, dentry *host, dentry *root) {
+  (void) fsname;
+  mounts.push_back({ host, root });
 }
 
 }

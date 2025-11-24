@@ -26,59 +26,120 @@
 namespace os {
 
 class inode;
+class dentry;
+
+class fs {
+public:
+  dentry *root;
+
+  // Get a free inode in the FS.
+  // This will allocate new memory.
+  virtual inode *get();
+  // Mark the inode as unused in the FS.
+  // Note that this will not recycle the inode.
+  virtual void erase(inode *);
+};
+
 class file {
 public:
   inode *node;
   size_t offset;
   int flags;
-  int refcnt = 0;
+  unsigned refcnt = 0;
   enum whence {
     begin, current
   };
 
   file() {}
-  file(inode *node, int flags): node(node), offset(0), flags(flags) {}
+  file(inode *node, int flags): node(node), offset(0), flags(flags) { }
 
-  virtual size_t read(void *buf, size_t len);
-  virtual size_t write(const void *buf, size_t len);
-  virtual size_t seek(long pos, whence whence);
-  virtual int close();
+  size_t read(void *buf, size_t len);
+  size_t write(const void *buf, size_t len);
+  size_t seek(long pos, whence whence);
+  result close();
 };
-
 
 class inode {
 public:
+  const uint64_t rtti;
+
+  enum filetype { File, Dir, Link };
+
   virtual ~inode() = default;
   virtual size_t read(size_t offset, void* buf, size_t len) = 0;
   virtual size_t write(size_t offset, const void* buf, size_t len) = 0;
 
-  // Return 0 for success, and negative values for error.
-  virtual int onclose() { return 0; }
-  virtual int onseek(long, file::whence) { return 0; }
+  virtual result onclose() { return result::success; }
 
-  void add_child(inode *child);
+  // Creates a new, empty file.
+  virtual result create(const string &name, filetype ty) = 0;
+  // Looks up a child with the given name.
+  virtual inode *lookup(const string &name) = 0;
+  // List all children.
+  virtual os::vector<inode *> list() = 0;
 
-  os::hashmap<string, inode *> children;
   string name;
-  inode *parent;
   size_t size;
-  enum filetype { File, Dir } type;
-  int refcnt = 0;
+  filetype type;
+  unsigned refcnt = 0;
+  class fs *fs;
 
-  inode() {}
-  inode(inode *parent, filetype type, const string &name, size_t size):
-    name(name), parent(parent), size(size), type(type) {}
+  inode(class fs *fs, uint64_t rtti): rtti(rtti), fs(fs) {}
 };
 
-struct mount {
-  inode *root;
-  const char *fs_type;
+template<class T>
+class inode_impl : public inode {
+  constexpr static const char *__name() { return __PRETTY_FUNCTION__; }
+  constexpr static uint64_t __hash(const char *const &key) {
+    uint64_t hash = os::detail::FNV_OFFSET_BASIS;
+    for (const char *p = key; *p; p++) {
+      hash *= os::detail::FNV_PRIME;
+      hash ^= *p;
+    }
+    return hash;
+  };
+  constexpr static uint64_t ID = __hash(__name());
+public:
+  inode_impl(class fs *fs): inode(fs, ID) {}
+  static bool classof(inode *p) {
+    return p->rtti == ID;
+  }
 };
 
-struct vfs {
-  vector<mount> mounts;
-  inode *lookup(const string &path);
+// Directory entry, as a cache.
+class dentry {
+public:
+  dentry *parent;
+  string name;
+  inode *node;
+  class fs *fs;
+  unsigned refcnt = 0;
+
+  dentry(const string &name, inode *node, dentry *parent = nullptr):
+    parent(parent), name(name), node(node), fs(node->fs) {}
+};
+
+class vfs {
+  struct mount {
+    // The path in the host filesystem.
+    dentry *host;
+    // The root of the mounted filesystem.
+    dentry *root;
+  };
+
+  os::vector<struct mount> mounts;
+  dentry *root = nullptr;
+  // TODO: make it an LRU cache.
+  os::hashmap<pair<inode*, string>, dentry*> dcache;
+
+  dentry *check_mount(dentry *cur);
+public:
+  vfs(dentry *root): root(root) { }
+
+  dentry *lookup(const string &path);
   file *open(const string &path, int flags);
+
+  void mount(const string &fsname, dentry *host, dentry *root);
 };
 
 class SeekGuard {
@@ -91,7 +152,7 @@ public:
   ~SeekGuard() { f->seek(pos, file::begin); }
 };
 
-extern os::static_storage<vfs> vfs_static;
+extern os::static_storage<vfs> vfs;
 
 }
 

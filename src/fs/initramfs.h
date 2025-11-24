@@ -30,14 +30,34 @@ static_assert(sizeof(cpio_newc_header_t) == 110);
 
 void mount_initramfs();
 
-class initramfs_inode : public inode {
+class initramfs_inode : public inode_impl<initramfs_inode> {
   void *data;
+  os::hashmap<string, inode *> children;
+
+  initramfs_inode *load(const string &name, filetype ty, size_t sz, void *ptr);
+  friend void mount_initramfs();
 public:
-  initramfs_inode(inode *parent, filetype type, const string &name, size_t size, void *data):
-    inode(parent, type, name, size), data(data) {}
+  using inode_impl::inode_impl;
 
   size_t read(size_t offset, void *buf, size_t len) override;
   size_t write(size_t offset, const void *buf, size_t len) override;
+  result create(const string &name, filetype ty) override;
+  inode *lookup(const string &name) override;
+  vector<inode*> list() override;
+};
+
+class initramfs : public fs {
+public:
+  initramfs() {
+    auto rootnode = new initramfs_inode(this);
+    rootnode->type = inode::Dir;
+    rootnode->name = "";
+    rootnode->size = 0;
+    root = new class dentry("", rootnode);
+  }
+
+  initramfs_inode *get() override { return new initramfs_inode(this); }
+  void erase(inode *) override { }
 };
 
 }

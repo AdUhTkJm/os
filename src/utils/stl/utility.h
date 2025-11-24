@@ -58,6 +58,10 @@ template<class T, class U>
 struct pair {
   T first;
   U second;
+
+  bool operator==(const pair<T, U> &other) const {
+    return first == other.first && second == other.second;
+  }
 };
 
 using block = void;
@@ -65,6 +69,8 @@ using noblock = bool;
 
 template<class T>
 concept blockspec = is_same_v<T, block> || is_same_v<T, noblock>;
+
+enum class result : bool { success, failure };
 
 }
 

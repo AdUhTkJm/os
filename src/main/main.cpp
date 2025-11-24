@@ -2,11 +2,11 @@
 #include "../utils/libc.h"
 #include "../utils/plic.h"
 #include "../mem/ptable.h"
-#include "../fs/initramfs.h"
 #include "../mem/kalloc.h"
+#include "../fs/initramfs.h"
+#include "../fs/devfs.h"
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
-#include "../fs/vfs.h"
 #include "../proc/schedule.h"
 
 using namespace os;
@@ -62,9 +62,6 @@ void main_high() {
   scheduler.active = &boot_pcb;
   printk("Kernel stack set up, with stack top = %p.\n", boot_pcb->ksp);
 
-  os::init_plic();
-  printk("PLIC enabled.\n");
-
   pa_t pfdt = *(pa_t *) as_va(0x80202010);
   int hart_id = *(uint64_t *) as_va(0x80202008);
   fdt::read(hart_id, pfdt);
@@ -73,9 +70,13 @@ void main_high() {
   os::init_bitmap_kalloc();
   printk("Bitmap allocator initialized.\n");
   os::mount_initramfs();
+
+  os::init_plic();
+  printk("PLIC enabled.\n");
+  os::mount_dev();
   
   scheduler.init();
-  file *init = vfs_static->open("/init", O_RDONLY);
+  file *init = vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
   if (!load_elf(init))

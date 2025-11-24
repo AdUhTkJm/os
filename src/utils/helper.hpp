@@ -10,14 +10,14 @@
 #include "stl/bitmap.h"
 #include "stl/list.h"
 
-namespace os {
+extern "C" [[noreturn]] void panic(const char *);
 
+namespace os {
 
 template<class T>
 class static_storage {
 private:
   alignas(T) char storage[sizeof(T)];
-  bool init = false;
 public:
   T &operator*() {
     return *(T*) storage;
@@ -28,18 +28,38 @@ public:
   T *operator&() {
     return (T*) storage;
   }
+  /* implicit */ operator T*() {
+    return (T*) storage;
+  }
 
   template<typename ...Args>
   void construct(Args ...args) {
     new (storage) T(args...);
-    init = true;
   }
 
   void destroy() {
     (**this).~T();
-    init = false;
   }
 };
+
+template<class T, class U> requires (is_base_of<U, T>::value)
+bool isa(U *t) {
+  return T::classof(t);
+}
+
+template<class T, class U> requires (is_base_of<U, T>::value)
+T *cast(U *t) {
+  if (!isa<T>(t))
+    panic("cast: invalid cast");
+  return (T*) t;
+}
+
+template<class T, class U> requires (is_base_of<U, T>::value)
+T *dyn_cast(U *t) {
+  if (!isa<T>(t))
+    return nullptr;
+  return cast<T>(t);
+}
 
 }
 

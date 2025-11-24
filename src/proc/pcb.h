@@ -27,19 +27,22 @@ struct trapframe {
 static_assert(sizeof(trapframe) == 256);
 #endif
 
-class process_file_table {
+struct process_file_table {
   os::hashmap<int, file*> open;
-public:
+
   file *operator[](int x) { return open.count(x) ? open[x] : nullptr; }
   int allocate(file *f);
   void deallocate(int fd);
+  ~process_file_table() {
+    for (auto [_, f] : open)
+      delete f;
+  }
 };
 
 union syscall_progress {
   struct read {
     int cur; // Current offset from buf.
   } read;
-
 };
 
 struct pcb_t : os::intrusive_list_node<pcb_t> {
@@ -59,6 +62,8 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
     pfree(pt_root);
     vfree(1 + (trapframe *) ksp);
   }
+  void open_file(const string &name);
+  void close_file(const string &name);
 };
 /*
 Note for ksp:
