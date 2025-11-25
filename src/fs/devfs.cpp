@@ -59,6 +59,8 @@ size_t console_inode::write(size_t offset, const void *buf, size_t len) {
 
 void console_inode::wake() {
   synchronized syn(lock);
+  if (!wait.size())
+    return;
   scheduler.wakeup(wait.front());
   wait.pop_front();
 }

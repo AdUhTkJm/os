@@ -44,7 +44,15 @@ _start_high:
 
 .align 4
 stvec_pos:
-  addi sp, sp, -256
+  # Record current sp.
+  csrw sscratch, sp
+  
+  # Load the ksp of the process.
+  la sp, _ZN2os9schedulerE # os::scheduler
+  ld sp, 48(sp)            # scheduler_t::active
+  ld sp, 32(sp)            # pcb_t::ksp
+
+  # Save registers to the kernel stack.
   sd ra, 0(sp)
   sd gp, 8(sp)
   sd tp, 16(sp)
@@ -75,25 +83,27 @@ stvec_pos:
   sd t4, 216(sp)
   sd t5, 224(sp)
   sd t6, 232(sp)
+  csrr t0, sscratch
+  sd t0, 240(sp)
   csrr a2, sepc
-  sd a2, 240(sp)
-  csrr a0, sstatus
-  sd a0, 248(sp)
+  sd a2, 248(sp)
+  csrr t0, sstatus
+  sd t0, 256(sp)
   csrr a0, scause
   csrr a1, stval
-  
-  la s0, _ZN2os9schedulerE # os::scheduler
-  ld t1, 48(s0)            # scheduler_t::active
-  sd sp, 32(t1)            # pcb_t::ksp
 
   call _ZN2os17interrupt_handlerEllPv
 
-  ld t1, 48(s0)
+  # Load the ksp of the current process.
+  # (The process might have changed.)
+  la t0, _ZN2os9schedulerE
+  ld t1, 48(t0)
   ld sp, 32(t1)
 
-  ld t0, 248(sp)
+  # Restore the registers.
+  ld t0, 256(sp)
   csrw sstatus, t0
-  ld t0, 240(sp)
+  ld t0, 248(sp)
   csrw sepc, t0
   ld ra, 0(sp)
   ld gp, 8(sp)
@@ -125,5 +135,5 @@ stvec_pos:
   ld t4, 216(sp)
   ld t5, 224(sp)
   ld t6, 232(sp)
-  addi sp, sp, 256
+  ld sp, 240(sp)
   sret

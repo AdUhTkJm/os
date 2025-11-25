@@ -35,9 +35,9 @@ void init(pcb_t *pcb) {
     .begin = heap_start, .end = heap_start + PAGE_SIZE, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE, .backup = nullptr, .offset = 0
   });
-  // Allocate a stack.
+  // Allocate a stack. Note it grows downwards.
   pcb->vma.push_back({
-    .begin = stack_top, .end = stack_top + user_stack_size, .prot = PROT_READ | PROT_WRITE,
+    .begin = stack_top - user_stack_size, .end = stack_top, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE, .backup = nullptr, .offset = 0
   });
 
@@ -75,11 +75,15 @@ static void first_time_setup(pcb_t *pcb) {
   // and leave the space for it.
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
+  // Let sp point to the user stack.
+  trap->sscratch = stack_top;
+
   int sstatus; CSRR(sstatus, sstatus);
   // User process with interrupt enabled.
   trap->sstatus = (sstatus & ~(1 << 8)) | (1 << 5);
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   pt_root = (pte_t *) as_va(pcb->pt_root);
+  printk("Set active sepc = %p at kstack %p\n", trap->sepc, trap);
 }
 
 void trap_return_setup(pcb_t *pcb) {

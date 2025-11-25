@@ -23,6 +23,7 @@ void init_plic() {
   
   devfs.construct();
   tty0.construct("tty0");
+  console_input_buf.construct();
 }
 
 void handle_plic_interrupt() {

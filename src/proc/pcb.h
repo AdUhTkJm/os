@@ -9,7 +9,7 @@
 namespace os {
 
 // Near the highest address in the lower-half space.
-constexpr va_t stack_top = 0x3f'f000'0000ul;
+constexpr va_t stack_top = 0xf'f000'0000ul;
 constexpr size_t user_stack_size = 8_mb;
 constexpr size_t kstack_size = 8_kb;
 
@@ -19,12 +19,14 @@ enum process_state {
 
 struct trapframe {
   reg_t regs[30]; // zero and sp are not stored.
+  reg_t sscratch; // this is the user sp.
   reg_t sepc;
   reg_t sstatus;
+  char pad[8];
 };
 
 #ifdef __cplusplus
-static_assert(sizeof(trapframe) == 256);
+static_assert(sizeof(trapframe) == 272);
 #endif
 
 struct process_file_table {

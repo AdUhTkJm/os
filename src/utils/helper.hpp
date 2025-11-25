@@ -18,6 +18,7 @@ template<class T>
 class static_storage {
 private:
   alignas(T) char storage[sizeof(T)];
+  bool init;
 public:
   T &operator*() {
     return *(T*) storage;
@@ -35,10 +36,16 @@ public:
   template<typename ...Args>
   void construct(Args ...args) {
     new (storage) T(args...);
+    init = true;
   }
 
   void destroy() {
     (**this).~T();
+    init = false;
+  }
+
+  bool valid() {
+    return init;
   }
 };
 

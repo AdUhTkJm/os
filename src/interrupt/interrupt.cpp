@@ -8,11 +8,6 @@ namespace {
 
 using namespace os;
 
-void on_miss(void *va) {
-  printk("Page fault at: %p\n", va);
-  vma_map_current(va);
-}
-
 long syscall(trapframe *ksp) {
   auto a7 = ksp->regs[15];
   auto a0 = ksp->regs[8];
@@ -102,7 +97,8 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
     case 12: // Instruction page fault
     case 13: // Load page fault
     case 15: // Store page fault
-      on_miss((void *) stval);
+      printk("page fault at %p when executing %p\n", stval, sepc);
+      vma_map_current((void*) stval);
       break;
     default:
       printk("exception (user): scause = %ld, stval = %ld, sepc = %p\n", scause & 0xff, stval, sepc);
