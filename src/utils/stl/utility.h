@@ -70,7 +70,9 @@ using noblock = bool;
 template<class T>
 concept blockspec = is_same_v<T, block> || is_same_v<T, noblock>;
 
-enum class result : bool { success, failure };
+enum class result : bool {
+  success, failure
+};
 
 }
 

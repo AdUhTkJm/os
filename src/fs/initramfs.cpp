@@ -63,7 +63,7 @@ vector<inode*> initramfs_inode::list() {
 }
 
 void mount_initramfs() {
-  char *initrd_start, *initrd_end;
+  char *initrd_start;
   void *pstart = fdt::query("/chosen", "linux,initrd-start");
   void *pend = fdt::query("/chosen", "linux,initrd-end");
   if (!pstart || !pend)
@@ -71,7 +71,6 @@ void mount_initramfs() {
   
   // Read the device tree and find the chosen node.
   initrd_start = (char *) as_va(read_int(pstart));
-  initrd_end = (char *) as_va(read_int(pend));
   
   // Initialize the initramfs and register it in vfs.
   fs *initramfs = new class initramfs;
@@ -101,8 +100,6 @@ void mount_initramfs() {
     }
     cpio = (cpio_newc_header_t *) os::roundup<4>(data + filesize);
   }
-
-  printk("Mounted initramfs [%p - %p].\n", initrd_start, initrd_end);
 }
 
 }

@@ -23,6 +23,8 @@
 #define O_NOFOLLOW  00400000 /* Do not follow symbolic links */
 #define O_CLOEXEC   02000000 /* Close file descriptor upon execve() */
 
+#define FD_CLOEXEC  0x1
+
 namespace os {
 
 class inode;
@@ -137,6 +139,7 @@ public:
 
   dentry *lookup(const string &path);
   file *open(const string &path, int flags);
+  void close(file *f);
 
   void mount(const string &fsname, dentry *host, dentry *root);
 };
@@ -152,6 +155,15 @@ public:
 };
 
 extern os::static_storage<vfs> vfs;
+
+class File {
+  file *f;
+public:
+  File(const string &path, int flags) { f = vfs->open(path, flags); }
+  ~File() { vfs->close(f); }
+  operator file*() const { return f; }
+};
+
 
 }
 

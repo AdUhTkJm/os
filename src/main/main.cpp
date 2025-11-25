@@ -48,41 +48,44 @@ void kernel_main() {
 }
 
 void main_high() {
+  // Set up page table.
   memset(__bss_begin, 0, __bss_end - __bss_begin);
   kernel_pt_root = pt_root = (pte_t *) as_va((pa_t) 0x80201000);
   punmap((va_t) 0x80000000ul, MAP_1GB);
-  printk("Page table initialized.\n");
 
+  // Set up free list allocator.
   os::init_freelist_kalloc();
-  printk("Allocator initialized.\n");
 
+  // Set up (boot-time) kernel stack.
   boot_pcb.construct();
   RD(sp, boot_pcb->ksp);
   boot_pcb->pid = -1; // This is not a valid process.
   scheduler.active = &boot_pcb;
-  printk("Kernel stack set up, with stack top = %p.\n", boot_pcb->ksp);
 
+  // Verify FDT.
   pa_t pfdt = *(pa_t *) as_va(0x80202010);
   int hart_id = *(uint64_t *) as_va(0x80202008);
   fdt::read(hart_id, pfdt);
   fdt::check();
-  printk("FDT checked at %p.\n", fdt::pos());
+  
   os::init_bitmap_kalloc();
-  printk("Bitmap allocator initialized.\n");
   os::mount_initramfs();
-
   os::init_plic();
-  printk("PLIC enabled.\n");
   os::mount_dev();
   
+  // Start the first user process.
   scheduler.init();
   file *init = vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
-  if (!load_elf(init))
+  pcb_t *pcb = new pcb_t;
+  pcb->pid = nextpid();
+  if (load_elf(init, pcb) == result::failure)
     panic("load_elf: cannot load /init");
+  scheduler.add(pcb);
 
+  // Enable timer.
   sbi_set_timer(rv_rdtime() + 3000000);
-  printk("Timer enabled.\n");
+  printk("Boot finished.\n");
   for (;;) ;
 }

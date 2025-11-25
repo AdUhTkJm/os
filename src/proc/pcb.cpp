@@ -1,14 +1,18 @@
+#include "elf.h"
 #include "pcb.h"
 #include "schedule.h"
 #include "../mem/kalloc.h"
 
 namespace os {
 
+static_storage<hashmap<int, pcb_t*>> pid_map_s;
+
 int process_file_table::allocate(file *f, int fd) {
   // A file descriptor number is specified.
   if (fd != -1) {
     deallocate(fd);
     open[fd] = f;
+    desc[fd] = 0;
     return fd;
   }
 
@@ -16,6 +20,7 @@ int process_file_table::allocate(file *f, int fd) {
   for (int i = 3; ; i++) {
     if (!open.count(i)) {
       open[i] = f;
+      desc[fd] = 0;
       f->refcnt++;
       return i;
     }
@@ -25,10 +30,25 @@ int process_file_table::allocate(file *f, int fd) {
 void process_file_table::deallocate(int fd) {
   if (!open.count(fd))
     return;
-  if (!--open[fd]->refcnt) {
+  if (!--open[fd]->refcnt)
     delete open[fd];
-    open.erase(fd);
+  
+  open.erase(fd);
+  desc.erase(fd);
+}
+
+void process_file_table::clear() {
+  for (auto [_, f] : open) {
+    if (!--f->refcnt)
+      delete f;
   }
+}
+
+void pcb_t::clear() {
+  pt::free(pt_root);
+  pt_root = (pa_t) kernel_pt_root - KERNEL_OFFSET;
+  ftbl.clear();
+  status = Zombie;
 }
 
 int nextpid() {
@@ -39,8 +59,6 @@ int nextpid() {
 }
 
 void init(pcb_t *pcb) {
-  pcb->pid = nextpid();
-  
   va_t max = 0;
   for (const auto &vma : pcb->vma)
     max = os::max(vma.end, max);
@@ -72,16 +90,20 @@ void init(pcb_t *pcb) {
     panic("no console!");
   for (int i = 0; i < 3; i++)
     pcb->ftbl.allocate(new file(tty0->node, O_RDWR), i);
-
-  scheduler.add(pcb);
 }
 
 void terminate(pcb_t *pcb, int ret) {
-  // Currently, without the idle process, the termination would fail.
-  panic("terminate: not yet implemented");
-  
+  // This will dispatch.
   scheduler.erase(pcb);
+  pcb->clear();
   pcb->ret = ret;
+  // Change all child processes to children of init.
+  // It is expected that init will recycle them later.
+  auto init = (*pid_map_s)[1];
+  for (auto child : pcb->children) {
+    child.parent = init;
+    init->children.push_back(&child);
+  }
 }
 
 static void first_time_setup(pcb_t *pcb) {
@@ -122,6 +144,7 @@ int fork() {
   auto pcb = scheduler.active;
   auto child = new pcb_t;
   child->parent = pcb;
+  pcb->children.push_back(child);
 
   // Allocate a new kernel stack.
   child->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
@@ -149,15 +172,6 @@ int fork() {
   // Deep-copy the page table.
   assert(pt_root == (pte_t *) as_va(pcb->pt_root));
   child->pt_root = pt::copy(pt_root);
-  printk("pa = %p in parent\n", to_pa(0x100b4));
-  auto old = pt_root;
-  pt_root = (pte_t*) as_va(child->pt_root);
-  pt::walk(pt_root, [](pte_t pte) {
-    if (pte & PTE_U)
-      printk("child pte = %p\n", pte);
-  });
-  printk("pa = %p in child\n", to_pa(0x100b4));
-  pt_root = old;
 
   // Shallow-copy the file table.
   child->ftbl = pcb->ftbl;
@@ -168,6 +182,32 @@ int fork() {
   child->vma = pcb->vma;
   scheduler.add(child);
   return child->pid;
+}
+
+result exec(const string &path, char *const *argv, char *const *envp) {
+  auto pcb = scheduler.active;
+  pt::free(pcb->pt_root);
+  pfree(pcb->ksp);
+  
+  File file(path, O_RDONLY);
+  if (load_elf(file, pcb) != result::success)
+    return result::failure;
+
+  // Close files according to flags.
+  os::vector<int> toclose;
+  for (auto [fd, f] : pcb->ftbl) {
+    if (pcb->ftbl.get_desc(fd) & FD_CLOEXEC
+     || f->flags & O_CLOEXEC)
+      toclose.push_back(fd);
+  }
+  for (auto fd : toclose)
+    pcb->ftbl.deallocate(fd);
+
+  (void) argv; (void) envp;
+  // Yield. On next schedule, the trap frame would be set up properly.
+  scheduler.add(pcb);
+  scheduler.dispatch();
+  return result::success;
 }
 
 }

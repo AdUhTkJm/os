@@ -93,6 +93,10 @@ file *vfs::open(const string &path, int flags) {
   return f;
 }
 
+void vfs::close(file *f) {
+  f->node->refcnt--;
+}
+
 void vfs::mount(const string &fsname, dentry *host, dentry *root) {
   (void) fsname;
   mounts.push_back({ host, root });

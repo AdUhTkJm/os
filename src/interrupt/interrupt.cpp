@@ -19,7 +19,6 @@ long syscall(trapframe *ksp) {
   auto a2 = ksp->regs[10];
   auto pcb = scheduler.active;
   ksp->sepc += 4;
-  printk("syscall %ld\n", a7);
   switch (a7) {
   case 0: {
     // read(fd, buf, len)
@@ -49,6 +48,11 @@ long syscall(trapframe *ksp) {
   case 57: {
     // fork()
     return fork();
+  }
+  case 59: {
+    // execve(const char*, char *const *, char *const *)
+    result r = exec((const char*) a0, (char *const*) a1, (char *const*) a2);
+    return r == result::success;
   }
   case 60: {
     // exit(ret_code)
@@ -121,7 +125,6 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
     case 12: // Instruction page fault
     case 13: // Load page fault
     case 15: // Store page fault
-      printk("page fault at %p when executing %p\n", stval, sepc);
       vma_map_current((void*) stval);
       break;
     default:

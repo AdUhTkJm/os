@@ -5,6 +5,7 @@
 #include "../mem/ptable.h"
 #include "../mem/vma.h"
 #include "../mem/kalloc.h"
+#include "../utils/stl/optional.h"
 
 namespace os {
 
@@ -30,18 +31,21 @@ static_assert(sizeof(trapframe) == 272);
 #endif
 
 class process_file_table {
+public:
+  using fddesc = unsigned char;
+private:
+  // The open file table.
   os::hashmap<int, file*> open;
+  // The file descriptor table.
+  os::hashmap<int, fddesc> desc;
 public:
   int allocate(file *f, int fd = -1);
   void deallocate(int fd);
-  ~process_file_table() {
-    for (auto [_, f] : open) {
-      if (!--f->refcnt)
-        delete f;
-    }
-  }
+  void clear();
   
   file *&operator[](int x) { return open[x]; }
+  void set_desc(int fd, fddesc desc) { this->desc[fd] = desc; }
+  optional<fddesc> get_desc(int fd) { return desc.count(fd) ? optional(desc[fd]) : nullopt; }
   
   using iterator = decltype(open)::iterator;
   iterator begin() { return open.begin(); }
@@ -66,13 +70,20 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   bool prog_valid;        // Whether the syscall progress is valid. See below.
   process_file_table ftbl;// Process file table.
   syscall_progress prog;  // System call progress, for resuming blocking syscalls.
+  os::intrusive_list<pcb_t> children;
 
-  ~pcb_t() {
-    pt::free(pt_root);
-    vfree(1 + (trapframe *) ksp);
-  }
+  // Note this is not the destructor. PCB will need to release its resources
+  // before destruction, and then put itself to a zombie state.
+  void clear();
   void open_file(const string &name);
   void close_file(const string &name);
+
+  // This is the final deletion. This cannot be done in clear(), because it
+  // is called when this ksp is in use.
+  ~pcb_t() {
+    auto ksp_bottom = ksp + sizeof(trapframe) - kstack_size;
+    vfree((void*) ksp_bottom);
+  }
 };
 /*
 Note for ksp:
@@ -85,6 +96,8 @@ Note for ksp:
 
 static_assert(offsetof(pcb_t, ksp) == 32);
 
+extern static_storage<hashmap<int, pcb_t*>> pid_map_s;
+
 void init(pcb_t *pcb);
 void terminate(pcb_t *pcb, int ret);
 
@@ -96,6 +109,9 @@ int nextpid();
 
 // Forks a process.
 int fork();
+
+// Replaces a process image.
+result exec(const string &path, char *const *argv, char *const *envp);
 
 }
 

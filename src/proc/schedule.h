@@ -12,7 +12,7 @@ struct scheduler_t {
   spinlock *lock = nullptr;
 
   // No global constructor is allowed. Hence this explicit init.
-  void init() { lock = new spinlock; }
+  void init() { lock = new spinlock; pid_map_s.construct(); }
   
   void add(pcb_t *pcb);
   // Chooses the next process to schedule, and switches to it.

@@ -96,7 +96,7 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
 
     // Fill the L1 table, such that the map doesn't change.
     auto *pt_l1 = (pte_t *) as_va(pa_pt_l1);
-    auto orig_pa = PPN_AS_PA(PTE_PPN(pte_l2));
+    auto orig_pa = PTE_TO_PA(pte_l2);
     for (int i = 0; i < 512; i++) {
       pt_l1[i] = (PA_LVL2(orig_pa) << PTE_PPN2_OFFSET)
         | (i << PTE_PPN1_OFFSET)
@@ -110,7 +110,7 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   // If we haven't adjusted pt in previous parts, then this PTE is valid.
   // Hence we directly load from it.
   if (!pa_pt_l1)
-    pa_pt_l1 = PPN_AS_PA(PTE_PPN(pte_l2));
+    pa_pt_l1 = PTE_TO_PA(pte_l2);
   auto *pt_l1 = (pte_t *) as_va(pa_pt_l1);
 
   // Allocate a 2MB node.
@@ -135,7 +135,7 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
 
   if (is_leaf(pte_l1)) {
     pa_pt_l0 = pframe();
-    auto orig_pa = PPN_AS_PA(PTE_PPN(pte_l1));
+    auto orig_pa = PTE_TO_PA(pte_l1);
     auto *pt_l0 = (pte_t *) as_va(pa_pt_l0);
     for (int i = 0; i < 512; i++) {
       pt_l0[i] = (PA_LVL2(orig_pa) << PTE_PPN2_OFFSET)
@@ -147,7 +147,7 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   }
 
   if (!pa_pt_l0)
-    pa_pt_l0 = PPN_AS_PA(PTE_PPN(pte_l1));
+    pa_pt_l0 = PTE_TO_PA(pte_l1);
   auto *pt_l0 = (pte_t *) as_va(pa_pt_l0);
 
   // Populate the L0 page table entry.
@@ -174,14 +174,14 @@ unmap_ret_t punmap(va_t va, int mode) {
     if (!is_leaf(pte_l2))
       return { 0, UNMAP_SIZE_MISMATCH };
 
-    unmap_ret_t result = { PPN_AS_PA(PTE_PPN(pte_l2)), UNMAP_OK };
+    unmap_ret_t result = { PTE_TO_PA(pte_l2), UNMAP_OK };
     pte_l2 = 0;
     return result;
   }
   if (is_leaf(pte_l2))
     return { 0, UNMAP_SIZE_MISMATCH };
 
-  auto *pt_l1 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l2)));
+  auto *pt_l1 = (pte_t *) PTE_TO_VA(pte_l2);
   pte_t &pte_l1 = pt_l1[VA_LVL1(va)];
 
   if (!is_valid(pte_l1))
@@ -191,19 +191,19 @@ unmap_ret_t punmap(va_t va, int mode) {
     if (!is_leaf(pte_l1))
       return { 0, UNMAP_SIZE_MISMATCH };
 
-    unmap_ret_t result = { PPN_AS_PA(PTE_PPN(pte_l1)), UNMAP_OK };
+    unmap_ret_t result = { PTE_TO_PA(pte_l1), UNMAP_OK };
     pte_l1 = 0;
     return result;
   }
   if (is_leaf(pte_l1))
     return { 0, UNMAP_SIZE_MISMATCH };
 
-  auto *pt_l0 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l1)));
+  auto *pt_l0 = (pte_t *) PTE_TO_VA(pte_l1);
   pte_t &pte_l0 = pt_l0[VA_LVL0(va)];
   if (!is_valid(pte_l0))
     return { 0, UNMAP_NO_MAPPING };
 
-  unmap_ret_t result = { PPN_AS_PA(PTE_PPN(pte_l0)), UNMAP_OK };
+  unmap_ret_t result = { PTE_TO_PA(pte_l0), UNMAP_OK };
   pte_l0 = 0;
   return result;
 }
@@ -213,27 +213,27 @@ pa_t to_pa(va_t va) {
   if (!is_valid(pte_l2))
     return -1ul;
   if (is_leaf(pte_l2))
-    return PPN_AS_PA(PTE_PPN(pte_l2))
+    return PTE_TO_PA(pte_l2)
       + (VA_LVL1(va) << 21)
       + (VA_LVL0(va) << 12)
       + VA_OFFSET(va);
 
-  pte_t *pt_l1 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l2)));
+  pte_t *pt_l1 = (pte_t *) PTE_TO_VA(pte_l2);
   pte_t pte_l1 = pt_l1[VA_LVL1(va)];
 
   if (!is_valid(pte_l1))
     return -1ul;
   if (is_leaf(pte_l1))
-    return PPN_AS_PA(PTE_PPN(pte_l1))
+    return PTE_TO_PA(pte_l1)
       + (VA_LVL0(va) << 12)
       + VA_OFFSET(va);
 
-  pte_t *pt_l0 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l1)));
+  pte_t *pt_l0 = (pte_t *) PTE_TO_VA(pte_l1);
   pte_t pte_l0 = pt_l0[VA_LVL0(va)];
   if (!is_valid(pte_l0))
     return -1ul;
 
-  return PPN_AS_PA(PTE_PPN(pte_l0)) + VA_OFFSET(va);
+  return PTE_TO_PA(pte_l0) + VA_OFFSET(va);
 }
 
 int pte_flags(va_t va) {
@@ -243,7 +243,7 @@ int pte_flags(va_t va) {
   if (is_leaf(pte_l2))
     return PTE_FLAGS(pte_l2);
 
-  pte_t *pt_l1 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l2)));
+  pte_t *pt_l1 = (pte_t *) PTE_TO_VA(pte_l2);
   pte_t pte_l1 = pt_l1[VA_LVL1(va)];
 
   if (!is_valid(pte_l1))
@@ -251,7 +251,7 @@ int pte_flags(va_t va) {
   if (is_leaf(pte_l1))
     return PTE_FLAGS(pte_l1);
 
-  pte_t *pt_l0 = (pte_t *) as_va(PPN_AS_PA(PTE_PPN(pte_l1)));
+  pte_t *pt_l0 = (pte_t *) PTE_TO_VA(pte_l1);
   pte_t pte_l0 = pt_l0[VA_LVL0(va)];
   if (!is_valid(pte_l0))
     return -1;

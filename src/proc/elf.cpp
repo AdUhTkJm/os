@@ -5,16 +5,18 @@
 
 namespace os {
 
-pcb_t *load_elf(file *content) {
+result load_elf(file *content, pcb_t *pcb) {
+  if (!content)
+    return result::failure;
+  
   elf_header_t header;
   content->read(&header, sizeof(header));
 
   if (strncmp(header.e_ident, "\x7f""ELF", 4) != 0)
-    return nullptr;
+    return result::failure;
   if (header.e_machine != EM_MACHINE)
-    return nullptr;
+    return result::failure;
 
-  pcb_t *pcb = new pcb_t;
   pcb->status = Init;
   pcb->pc = header.e_entry;
 
@@ -29,7 +31,7 @@ pcb_t *load_elf(file *content) {
     content->read(&phdr, sizeof(phdr));
     if (phdr.p_type == PT_LOAD) {
       if (phdr.p_memsz < phdr.p_filesz)
-        return nullptr;
+        return result::failure;
     
       // Read the content of the mapped section.
       auto before = content->seek(phdr.p_offset, file::begin);
@@ -53,7 +55,7 @@ pcb_t *load_elf(file *content) {
     }
   }
   init(pcb);
-  return pcb;
+  return result::success;
 }
 
 }

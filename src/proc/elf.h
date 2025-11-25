@@ -78,7 +78,8 @@ struct elf_phdr_t {
   uint64_t p_align;
 };
 
-pcb_t *load_elf(file *content);
+// Changes the content of `pcb` by parsing the ELF file.
+result load_elf(file *content, pcb_t *pcb);
 
 }
 

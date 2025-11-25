@@ -189,10 +189,10 @@ void vfree(void *p) {
   if (!p)
     return;
   auto q = (size_t *) p;
-  [[unlikely]] while (!*q)
+  [[unlikely]] while (!q[-1])
     q--;
   size_t *meta = q - 1;
-  size_t pagecount = *(size_t *) meta;
+  size_t pagecount = *meta;
   vm_free_pages(meta, pagecount);
 }
 
