@@ -8,6 +8,10 @@ namespace {
 
 using namespace os;
 
+/*
+See table:
+https://filippo.io/linux-syscall-table/
+*/
 long syscall(trapframe *ksp) {
   auto a7 = ksp->regs[15];
   auto a0 = ksp->regs[8];
@@ -17,6 +21,21 @@ long syscall(trapframe *ksp) {
   ksp->sepc += 4;
   printk("syscall %ld\n", a7);
   switch (a7) {
+  case 0: {
+    // read(fd, buf, len)
+    auto file = pcb->ftbl[a0];
+    if (!file)
+      return -1;
+    if (file->flags & O_NONBLOCK) {
+      auto buf = (void *) a1;
+      vma_map_current(buf, (char*) buf + a2);
+      EnableAccessToUserMemory guard;
+      return file->read(buf, a2);
+    }
+
+    // The read should block.
+    assert(false && "NYI: blocking read");
+  }
   case 1: {
     // write(fd, buf, len)
     auto file = pcb->ftbl[a0];
@@ -27,10 +46,15 @@ long syscall(trapframe *ksp) {
     EnableAccessToUserMemory guard;
     return file->write(buf, a2);
   }
-  case 60:
+  case 57: {
+    // fork()
+    return fork();
+  }
+  case 60: {
     // exit(ret_code)
     os::terminate(pcb, a0);
     return 0;
+  }
   default:
     printk("unknown syscall: %d\n", a7);
     return -1;

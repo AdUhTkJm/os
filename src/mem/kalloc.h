@@ -6,10 +6,14 @@
 
 namespace os {
 
-/* Gives a free 4KB physical frame. Note this expects a physical address. */
+// Gives a free 4KB physical frame.
 pa_t pframe();
-/* Frees a 4KB physical frame. Note this expects a physical address. */
+// Frees a 4KB physical frame.
+// If the reference count is greater than 1, does not free,
+// but decreases the reference count.
 void pfree(pa_t p);
+// Increase the page's reference count by 1.
+void pincref(pa_t p);
 
 /* Free a chunk of memory allocated by `vmalloc`. */
 void vfree(void *p);

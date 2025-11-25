@@ -7,7 +7,6 @@ static_storage<pcb_t> boot_pcb;
 
 void scheduler_t::add(pcb_t *pcb) {
   synchronized syn(*lock);
-  assert(pcb->status == Init);
   ready.push_back(pcb);
 }
 
@@ -18,9 +17,13 @@ void scheduler_t::dispatch() {
 }
 
 void scheduler_t::dispatch_impl() {
-  if (!ready.size())
-    panic("scheduler: no ready process in queue!");
   auto next = ready.begin();
+  // This is the boot-time PCB. When scheduler is activated,
+  // it's now useless.
+  [[unlikely]] if (next->pid == -1) {
+    ready.pop_front();
+    next = ready.begin();
+  }
   ready.pop_front();
   printk("dispatched pid %d\n", next->pid);
   trap_return_setup(next);

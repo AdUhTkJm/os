@@ -4,22 +4,56 @@
 #include "../utils/libc.h"
 #include "../fdt/fdt.h"
 
-namespace {
-
-bool is_leaf(pte_t pte) {
-  return pte & PTE_RWX;
-}
-
-bool is_valid(pte_t pte) {
-  return pte & PTE_V;
-}
-
-}
-
 void build_page_list();
 void main_high();
 
+namespace {
+  using namespace os;
+  using namespace os::pt;
+
+  pa_t copy_impl(pte_t *pt, int lvl) {
+    pa_t root = pframe();
+    unsigned end = 512;
+    if (lvl == 2) {
+      // Only recurse into the bottom 256 entries.
+      // The upper half are OS pages and are shared across all processes.
+      memcpy((pte_t*) as_va(root) + 256, pt + 256, PAGE_SIZE / 2);
+      end = 256;
+    }
+
+    auto va = (pte_t *) as_va(root);
+    for (unsigned i = 0; i < end; i++) {
+      if (!is_valid(pt[i]))
+        continue;
+      if (is_leaf(pt[i])) {
+        va[i] = pt[i];
+        if (pt[i] & PTE_U)
+          pincref(PTE_TO_PA(pt[i]));
+        continue;
+      }
+      auto pa = copy_impl((pte_t*) PTE_TO_VA(pt[i]), lvl - 1);
+      va[i] = (PA_AS_PPN(pa) << PTE_PPN_OFFSET) | PTE_FLAGS(pt[i]);
+    }
+    return root;
+  }
+
+  void free_impl(pte_t *pt, int lvl) {
+    unsigned end = lvl == 2 ? 256 : 512;
+    // No more child nodes to free.
+    if (lvl == 0)
+      return;
+    for (unsigned i = 0; i < end; i++) {
+      if (is_leaf(pt[i]) || !is_valid(pt[i]))
+        continue;
+      free_impl((pte_t *) PTE_TO_VA(pt[i]), lvl - 1);
+      pfree(PTE_TO_PA(pt[i]));
+    }
+  }
+}
+
 namespace os {
+
+using namespace pt;
 
 pte_t *pt_root, *kernel_pt_root;
 
@@ -223,6 +257,19 @@ int pte_flags(va_t va) {
     return -1;
 
   return PTE_FLAGS(pte_l0);
+}
+
+namespace pt {
+
+pa_t copy(pte_t *root) {
+  return copy_impl(root, 2);
+}
+
+void free(pa_t root) {
+  free_impl((pte_t*) as_va(root), 2);
+  pfree(root);
+}
+
 }
 
 }

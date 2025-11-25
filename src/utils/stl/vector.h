@@ -30,12 +30,16 @@ public:
   vector &operator=(const vector &other) {
     delete[] data;
     data = new V[cap];
+    sz = other.sz;
+    cap = other.cap;
     for (size_t i = 0; i < sz; i++)
       data[i] = other[i];
+    return *this;
   }
   vector &operator=(vector &&other) {
     cap = other.cap; sz = other.sz;
     data = other.data; other.data = nullptr;
+    return *this;
   }
 
   using reference = V&;

@@ -29,8 +29,8 @@ typedef uintptr_t pa_t;
 #define PTE_RWX (PTE_R | PTE_W | PTE_X)
 #define PTE_RX (PTE_R | PTE_X)
 #define PTE_RW (PTE_R | PTE_W)
-#define PTE_RSW(x) (((x) >> 8) & 0x3) /* Reserved for software */
-#define PTE_FLAGS(x) (((x) >> 10) & 0x3ff)
+#define PTE_COW (1ul << 8) /* Note that bits 8 and 9 are reserved for OS. */
+#define PTE_FLAGS(x) ((x) & 0x3ff)
 
 #define PTE_PPN(x) (((x) >> 10) & ((1ul << 46) - 1))
 #define PTE_PPN0(x) (((x) >> 10) & 0x1ff)
@@ -67,6 +67,9 @@ typedef uintptr_t pa_t;
 
 // Map every address to higher-half.
 #define KERNEL_OFFSET 0xffff'ffc0'0000'0000ul
+
+#define PTE_TO_PA(x) (PPN_AS_PA(PTE_PPN(x)))
+#define PTE_TO_VA(x) (as_va(PTE_TO_PA(x)))
 
 namespace os {
 
@@ -130,6 +133,34 @@ inline int pte_flags(const void *va) { return pte_flags((va_t) va); }
 
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);
+
+namespace pt {
+
+inline bool is_leaf(pte_t pte) {
+  return pte & PTE_RWX;
+}
+
+inline bool is_valid(pte_t pte) {
+  return pte & PTE_V;
+}
+
+// This will only provide valid entries to the function `f`.
+template<class T> requires requires(T f, pte_t &t) { f(t); }
+void walk(pte_t *root, T f) {
+  for (unsigned i = 0; i < 512; i++) {
+    if (!is_valid(root[i]))
+      continue;
+    
+    f(root[i]);
+    if (!is_leaf(root[i]))
+      walk((pte_t *) PTE_TO_VA(root[i]), f);
+  }
+}
+
+pa_t copy(pte_t *pt);
+void free(pa_t pt);
+
+}
 
 struct TLBRefreshGuard {
   va_t flushed;

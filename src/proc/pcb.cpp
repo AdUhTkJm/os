@@ -4,7 +4,15 @@
 
 namespace os {
 
-int process_file_table::allocate(file *f) {
+int process_file_table::allocate(file *f, int fd) {
+  // A file descriptor number is specified.
+  if (fd != -1) {
+    deallocate(fd);
+    open[fd] = f;
+    return fd;
+  }
+
+  // Find a usable descriptor.
   for (int i = 3; ; i++) {
     if (!open.count(i)) {
       open[i] = f;
@@ -17,13 +25,21 @@ int process_file_table::allocate(file *f) {
 void process_file_table::deallocate(int fd) {
   if (!open.count(fd))
     return;
-  open[fd]->refcnt--;
-  open.erase(fd);
+  if (!--open[fd]->refcnt) {
+    delete open[fd];
+    open.erase(fd);
+  }
+}
+
+int nextpid() {
+  static spinlock lock;
+  static int pid = 1;
+  synchronized syn(lock);
+  return pid++;
 }
 
 void init(pcb_t *pcb) {
-  static int pid = 1;
-  pcb->pid = pid++;
+  pcb->pid = nextpid();
   
   va_t max = 0;
   for (const auto &vma : pcb->vma)
@@ -55,7 +71,7 @@ void init(pcb_t *pcb) {
   if (!tty0)
     panic("no console!");
   for (int i = 0; i < 3; i++)
-    pcb->ftbl.open[i] = new file(tty0->node, O_RDWR);
+    pcb->ftbl.allocate(new file(tty0->node, O_RDWR), i);
 
   scheduler.add(pcb);
 }
@@ -83,7 +99,6 @@ static void first_time_setup(pcb_t *pcb) {
   trap->sstatus = (sstatus & ~(1 << 8)) | (1 << 5);
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   pt_root = (pte_t *) as_va(pcb->pt_root);
-  printk("Set active sepc = %p at kstack %p\n", trap->sepc, trap);
 }
 
 void trap_return_setup(pcb_t *pcb) {
@@ -101,6 +116,58 @@ void trap_return_setup(pcb_t *pcb) {
   pt_root = (pte_t *) as_va(pcb->pt_root);
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
+}
+
+int fork() {
+  auto pcb = scheduler.active;
+  auto child = new pcb_t;
+  child->parent = pcb;
+
+  // Allocate a new kernel stack.
+  child->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
+  memcpy((char *) child->ksp, (char *) pcb->ksp, sizeof(trapframe));
+
+  // Set the return value (a0) of child to zero.
+  auto trap = (trapframe *) child->ksp;
+  trap->regs[8] = 0;
+  child->pc = trap->sepc;
+
+  child->pid = nextpid();
+  
+  TLBRefreshGuard guard;
+
+  // Mark the parent's table as copy-on-write.
+  pt::walk((pte_t *) as_va(pcb->pt_root), [](pte_t &pte) {
+    // Only do this on user pages that are writable.
+    if (!(pte & PTE_U) || !(pte & PTE_W))
+      return;
+    
+    pte &= ~PTE_W;
+    pte |= PTE_COW;
+  });
+
+  // Deep-copy the page table.
+  assert(pt_root == (pte_t *) as_va(pcb->pt_root));
+  child->pt_root = pt::copy(pt_root);
+  printk("pa = %p in parent\n", to_pa(0x100b4));
+  auto old = pt_root;
+  pt_root = (pte_t*) as_va(child->pt_root);
+  pt::walk(pt_root, [](pte_t pte) {
+    if (pte & PTE_U)
+      printk("child pte = %p\n", pte);
+  });
+  printk("pa = %p in child\n", to_pa(0x100b4));
+  pt_root = old;
+
+  // Shallow-copy the file table.
+  child->ftbl = pcb->ftbl;
+  for (auto [_, f] : child->ftbl)
+    f->refcnt++;
+
+  child->status = Ready;
+  child->vma = pcb->vma;
+  scheduler.add(child);
+  return child->pid;
 }
 
 }

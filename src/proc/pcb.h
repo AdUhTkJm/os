@@ -29,16 +29,23 @@ struct trapframe {
 static_assert(sizeof(trapframe) == 272);
 #endif
 
-struct process_file_table {
+class process_file_table {
   os::hashmap<int, file*> open;
-
-  file *operator[](int x) { return open.count(x) ? open[x] : nullptr; }
-  int allocate(file *f);
+public:
+  int allocate(file *f, int fd = -1);
   void deallocate(int fd);
   ~process_file_table() {
-    for (auto [_, f] : open)
-      delete f;
+    for (auto [_, f] : open) {
+      if (!--f->refcnt)
+        delete f;
+    }
   }
+  
+  file *&operator[](int x) { return open[x]; }
+  
+  using iterator = decltype(open)::iterator;
+  iterator begin() { return open.begin(); }
+  iterator end() { return open.end(); }
 };
 
 union syscall_progress {
@@ -61,7 +68,7 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   syscall_progress prog;  // System call progress, for resuming blocking syscalls.
 
   ~pcb_t() {
-    pfree(pt_root);
+    pt::free(pt_root);
     vfree(1 + (trapframe *) ksp);
   }
   void open_file(const string &name);
@@ -83,6 +90,12 @@ void terminate(pcb_t *pcb, int ret);
 
 // Set up the returning from the trap handler.
 void trap_return_setup(pcb_t *pcb);
+
+// Gives the next free pid.
+int nextpid();
+
+// Forks a process.
+int fork();
 
 }
 

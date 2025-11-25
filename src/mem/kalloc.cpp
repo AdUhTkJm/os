@@ -31,11 +31,14 @@ static_assert(sizeof(frame_t) == PAGE_SIZE);
 // 1 for occupied, 0 for free.
 os::bitmap<VM_SIZE / PAGE_SIZE> vmmap;
 os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
+struct pframe_meta {
+  unsigned char refcnt;
+} meta[MAX_PA_SIZE / PAGE_SIZE];
 bool pminit;
 
 // Finds `total` consecutive virtual pages.
 template<size_t N, typename T>
-size_t find_consecutive(const os::bitmap<N, T> bitmap, size_t total, size_t from, size_t to) {
+size_t find_consecutive(const os::bitmap<N, T> &bitmap, size_t total, size_t from, size_t to) {
   size_t len = 0, start = from;
 
   for (size_t w = from; w < to / bitmap.unit_bits; w += bitmap.unit_bits) {
@@ -66,7 +69,7 @@ size_t find_consecutive(const os::bitmap<N, T> bitmap, size_t total, size_t from
 }
 
 template<size_t T>
-size_t find_consecutive(const os::bitmap<T>& bitmap, size_t total, size_t from) {
+size_t find_consecutive(const os::bitmap<T> &bitmap, size_t total, size_t from) {
   size_t pos = find_consecutive(bitmap, total, from, bitmap.size);
   if (pos != -1ul)
     return pos;
@@ -139,6 +142,7 @@ pa_t pframe() {
     pa_t pa = free_head;
     frame_t *head = (frame_t *) as_va(free_head);
     free_head = (pa_t) head->next;
+    meta[pa / PAGE_SIZE].refcnt++;
     return pa;
   }
 
@@ -150,10 +154,18 @@ pa_t pframe() {
 
   vmmap[index] = 1;
   pm_from++;
+  meta[index].refcnt++;
   return index * PAGE_SIZE;
 }
 
+void pincref(pa_t p) {
+  meta[p / PAGE_SIZE].refcnt++;
+}
+
 void pfree(pa_t p) {
+  if (--meta[p / PAGE_SIZE].refcnt > 0)
+    return;
+
   // This region is managed by free list allocator.
   if (p >= (pa_t) __kernel_end && p <= (pa_t) __kernel_end + FREE_LIST_SIZE) {
     auto *frame = (frame_t *) as_va(p);

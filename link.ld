@@ -62,4 +62,7 @@ SECTIONS {
   . += 1;
   . = ALIGN(4096);
   __kernel_end = .;
+
+  /* Leave 16MB for free list. */
+  . += 16777216;
 }
