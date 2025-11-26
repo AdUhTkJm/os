@@ -30,17 +30,14 @@ int process_file_table::allocate(file *f, int fd) {
 void process_file_table::deallocate(int fd) {
   if (!open.count(fd))
     return;
-  if (!--open[fd]->refcnt)
-    delete open[fd];
-  
+  open[fd]->close();
   open.erase(fd);
   desc.erase(fd);
 }
 
 void process_file_table::clear() {
   for (auto [_, f] : open) {
-    if (!--f->refcnt)
-      delete f;
+    f->close();
   }
 }
 

@@ -1,6 +1,6 @@
 #include "../utils/libc.h"
 #include "../utils/helper.h"
-#include "../utils/plic.h"
+#include "../driver/plic/plic.h"
 #include "../mem/kalloc.h"
 #include "../proc/schedule.h"
 

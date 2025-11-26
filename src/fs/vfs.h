@@ -2,6 +2,7 @@
 #define VFS_H
 
 #include "../utils/helper.h"
+#include "../utils/stl/atomic.h"
 
 #define O_RDONLY    00000000 /* Open for reading only */
 #define O_WRONLY    00000001 /* Open for writing only */
@@ -38,7 +39,7 @@ public:
   // This will allocate new memory.
   virtual inode *get();
   // Mark the inode as unused in the FS.
-  // Note that this will not recycle the inode.
+  // This does not deallocate the inode.
   virtual void erase(inode *);
 };
 
@@ -47,13 +48,13 @@ public:
   inode *node;
   size_t offset;
   int flags;
-  unsigned refcnt = 0;
+  atomic<unsigned> refcnt;
   enum whence {
     begin, current
   };
 
-  file() {}
-  file(inode *node, int flags): node(node), offset(0), flags(flags) { }
+  file(inode *node, int flags);
+  ~file();
 
   size_t read(void *buf, size_t len);
   size_t write(const void *buf, size_t len);
@@ -62,6 +63,7 @@ public:
 };
 
 class inode {
+  atomic<unsigned> refcnt;
 public:
   const uint64_t rtti;
 
@@ -71,8 +73,6 @@ public:
   virtual size_t read(size_t offset, void* buf, size_t len) = 0;
   virtual size_t write(size_t offset, const void* buf, size_t len) = 0;
 
-  virtual result onclose() { return result::success; }
-
   // Creates a new, empty file.
   virtual result create(const string &name, filetype ty) = 0;
   // Looks up a child with the given name.
@@ -80,13 +80,18 @@ public:
   // List all children.
   virtual os::vector<inode *> list() = 0;
 
+  // Mark this inode as unused.
+  // Possibly deletes itself when refcount drops to zero.
+  void drop();
+  void ref() { refcnt++; }
+
   string name;
   size_t size;
   filetype type;
-  unsigned refcnt = 0;
+  int flags;
   class fs *fs;
 
-  inode(class fs *fs, uint64_t rtti): rtti(rtti), fs(fs) {}
+  inode(class fs *fs, uint64_t rtti): rtti(rtti), fs(fs) { refcnt = 1; }
 };
 
 template<class T>
@@ -109,6 +114,7 @@ public:
 };
 
 // Directory entry, as a cache.
+// This does not own an inode and will not change the node's refcnt.
 class dentry {
 public:
   dentry *parent;

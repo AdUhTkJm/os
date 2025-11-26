@@ -1,5 +1,5 @@
 #include "devfs.h"
-#include "../utils/plic.h"
+#include "../driver/plic/plic.h"
 #include "../proc/schedule.h"
 #include "vfs.h"
 

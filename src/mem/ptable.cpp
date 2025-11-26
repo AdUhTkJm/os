@@ -1,6 +1,6 @@
 #include "ptable.h"
 #include "kalloc.h"
-#include "../utils/plic.h"
+#include "../driver/plic/plic.h"
 #include "../utils/libc.h"
 #include "../fdt/fdt.h"
 

@@ -1,8 +1,8 @@
 #ifndef PLIC_H
 #define PLIC_H
 
-#include "helper.h"
-#include "../utils/stl/ring_buffer.h"
+#include "../../utils/helper.h"
+#include "../../utils/stl/ring_buffer.h"
 
 #define PLIC_BASE 0x0C000000
 #define UART0_IRQ 10

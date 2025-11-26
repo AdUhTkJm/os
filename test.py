@@ -29,14 +29,14 @@ AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
-  "-ffreestanding", "-nostdlib",
+  "-ffreestanding", "-nostdlib", "-DNOT_IN_VSCODE",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-Wno-invalid-offsetof",
+  "-Wno-invalid-offsetof", "-DNOT_IN_VSCODE",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 SFLAGS = [
@@ -193,6 +193,7 @@ def build_initramfs():
     pool.starmap(compile_initramfs, tasks)
   proc.check_call(f"cd {obj_dir} && find . -print | cpio -oH newc > ../initramfs.cpio 2> /dev/null", shell=True)
   (obj_dir / "dev").mkdir(exist_ok=True)
+  (obj_dir / "tmp").mkdir(exist_ok=True)
 
 def build():
   build_initramfs()
@@ -270,7 +271,8 @@ def build():
 
 if __name__ == "__main__":
   if args.rebuild:
-    shutil.rmtree(BUILD_DIR)
+    os.remove(BUILD_DIR / ".build_cache.pkl")
+    os.remove(BUILD_DIR / ".include_cache.pkl")
 
   build()
   if args.objdump:
@@ -280,5 +282,12 @@ if __name__ == "__main__":
   if args.run:
     # -d in_asm -D qemu.log
     asm = "-d in_asm -D qemu.log" if args.assembly else ""
-    proc.check_call(f"qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel -initrd {BUILD_DIR}/initramfs.cpio {asm}", shell=True)
+    proc.check_call(
+f"""
+qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel \
+-initrd {BUILD_DIR}/initramfs.cpio \
+-drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+{asm}
+"""
+  ,shell=True)
   print("Run finished.")

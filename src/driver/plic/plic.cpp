@@ -1,9 +1,7 @@
 #include "plic.h"
-#include "libc.h"
-#include "helper.h"
-#include "../mem/ptable.h"
-#include "../utils/stl/ring_buffer.h"
-#include "../fs/devfs.h"
+#include "../../utils/libc.h"
+#include "../../mem/ptable.h"
+#include "../../fs/devfs.h"
 
 namespace os {
 

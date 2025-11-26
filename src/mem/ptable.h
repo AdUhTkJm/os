@@ -188,5 +188,23 @@ struct EnableAccessToUserMemory {
   }
 };
 
+// Read and write to physical memory.
+
+template<class T> requires os::is_integral_v<T>
+T mmrd(pa_t p) {
+  return *(volatile T*) os::as_va(p);
+}
+
+template<class T> requires os::is_integral_v<T>
+void mmwr(pa_t p, T value) {
+  *(volatile T*) os::as_va(p) = (T) value;
+}
+
+template<class T> requires __is_enum(T)
+void mmwr(pa_t p, T value) {
+  using U = underlying_type<T>::type;
+  *(volatile U*) os::as_va(p) = (U) value;
+}
+
 }
 #endif

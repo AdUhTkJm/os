@@ -3,3 +3,5 @@ temp/
 compile_commands.json
 .cache
 qemu.log
+testsuite
+busybox

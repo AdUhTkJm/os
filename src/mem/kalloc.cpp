@@ -31,9 +31,17 @@ static_assert(sizeof(frame_t) == PAGE_SIZE);
 // 1 for occupied, 0 for free.
 os::bitmap<VM_SIZE / PAGE_SIZE> vmmap;
 os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
+#ifdef NOT_IN_VSCODE
 struct pframe_meta {
   unsigned char refcnt;
 } meta[MAX_PA_SIZE / PAGE_SIZE];
+#else
+// This is mainly for VSCode performance reasons.
+// An array of length 4194304 will have dramatic performance drop.
+struct pframe_meta {
+  unsigned char refcnt;
+} meta[1];
+#endif
 bool pminit;
 
 // Finds `total` consecutive virtual pages.
@@ -126,7 +134,7 @@ void mark_reserved() {
   for (const auto &[begin, size] : rsv) {
     auto start_page = begin / PAGE_SIZE;
     auto end_page = start_page + roundup<PAGE_SIZE>(size) / PAGE_SIZE;
-    pmmap.clear(start_page, end_page);
+    pmmap.set(start_page, end_page);
   }
 }
 
@@ -147,8 +155,9 @@ pa_t pframe() {
   }
 
   // Bitmap part.
-  static int pm_from = 0;
-  size_t index = find_consecutive(vmmap, 1, pm_from);
+  // We don't want to allocate physical memory 0x0, because some devices won't like it.
+  static int pm_from = 1;
+  size_t index = find_consecutive(pmmap, 1, pm_from);
   if (index == -1ul)
     return 0;
 
@@ -176,6 +185,18 @@ void pfree(pa_t p) {
   // This is managed by the bitmap allocator.
   auto base = (uintptr_t) p;
   pmmap[base / PAGE_SIZE] = 0;
+}
+
+pa_t pmalloc(int pagecnt) {
+  if (!pminit)
+    return 0;
+
+  auto index = find_consecutive(pmmap, pagecnt, 1);
+  if (index == -1ul)
+    return 0;
+  for (size_t i = index; i < index + pagecnt; i++)
+    meta[i].refcnt++;
+  return index * PAGE_SIZE;
 }
 
 void *vmalloc_impl(size_t len) {

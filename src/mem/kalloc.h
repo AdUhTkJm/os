@@ -15,6 +15,9 @@ void pfree(pa_t p);
 // Increase the page's reference count by 1.
 void pincref(pa_t p);
 
+// Gives a consecutive chunk of physical memory.
+pa_t pmalloc(int pagecnt);
+
 /* Free a chunk of memory allocated by `vmalloc`. */
 void vfree(void *p);
 

@@ -148,6 +148,12 @@ struct conditional<false, T, U> { using type = U; };
 template<bool B, typename T, typename U>
 using conditional_t = conditional<B, T, U>::type;
 
+template<class T>
+struct is_enum : integral_constant<bool, __is_enum(T)> {};
+
+template<class T>
+struct underlying_type { using type = __underlying_type(T); };
+
 }
 
 #endif

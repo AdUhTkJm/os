@@ -30,7 +30,8 @@ size_t file::seek(long pos, whence whence) {
 }
 
 result file::close() {
-  return node->onclose();
+  vfs->close(this);
+  return result::success;
 }
 
 dentry* vfs::check_mount(dentry* cur) {
@@ -89,17 +90,33 @@ file *vfs::open(const string &path, int flags) {
     return nullptr;
 
   file *f = new file(dentry->node, flags);
-  dentry->node->refcnt++;
   return f;
 }
 
 void vfs::close(file *f) {
-  f->node->refcnt--;
+  if (!--f->refcnt)
+    delete f;
 }
 
 void vfs::mount(const string &fsname, dentry *host, dentry *root) {
   (void) fsname;
   mounts.push_back({ host, root });
+}
+
+void inode::drop() {
+  if (--refcnt)
+    return;
+  
+  fs->erase(this);
+  delete this;
+}
+
+file::~file() {
+  node->drop();
+}
+
+file::file(inode *node, int flags): node(node), offset(0), flags(flags), refcnt(1) {
+  node->ref();
 }
 
 }

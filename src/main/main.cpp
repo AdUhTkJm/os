@@ -1,6 +1,5 @@
 #include <stdint.h>
 #include "../utils/libc.h"
-#include "../utils/plic.h"
 #include "../mem/ptable.h"
 #include "../mem/kalloc.h"
 #include "../fs/initramfs.h"
@@ -8,6 +7,8 @@
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
 #include "../proc/schedule.h"
+#include "../driver/plic/plic.h"
+#include "../driver/virtio/virtio.h"
 
 using namespace os;
 
@@ -69,6 +70,13 @@ void main_high() {
   fdt::check();
   
   os::init_bitmap_kalloc();
+  os::virtio::probe();
+  auto dev = os::virtio::get(0);
+  char x[513];
+  dev->read(0, x);
+  x[512] = '\0';
+  printk("%s\n", x);
+
   os::mount_initramfs();
   os::init_plic();
   os::mount_dev();

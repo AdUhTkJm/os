@@ -21,7 +21,7 @@ void *memcpy(void *dst, const void *src, size_t size) {
   return dst;
 }
 
-char *itoa(long value, char *str, int base) {
+char *itoa(int value, char *str, int base) {
   char *p = str, *q = str;
   if (value < 0) {
     *p++ = '-'; q++;
@@ -42,7 +42,28 @@ char *itoa(long value, char *str, int base) {
   return str;
 }
 
-char *itoa_u(unsigned long value, char *str, int base) {
+char *ltoa(long value, char *str, int base) {
+  char *p = str, *q = str;
+  if (value < 0) {
+    *p++ = '-'; q++;
+    value = -value;
+  }
+  do {
+    int tmp = value % base;
+    *p++ = tmp < 10 ? '0' + tmp : 'a' + (tmp - 10);
+  } while (value /= base);
+  *p-- = '\0';
+
+  /* Reverse the digits. */
+  while (q < p) {
+    char tmp = *p;
+    *p-- = *q;
+    *q++ = tmp;
+  }
+  return str;
+}
+
+char *ultoa(unsigned long value, char *str, int base) {
   char *p = str, *q = str;
   do {
     int tmp = value % base;
@@ -82,7 +103,7 @@ int printk(const char *fmt, ...) {
     }
     case 'u': {
       unsigned val = va_arg(args, unsigned);
-      itoa_u(val, buf, 10);
+      ultoa(val, buf, 10);
       kputs(buf);
       output += strlen(buf);
       break;
@@ -97,7 +118,7 @@ int printk(const char *fmt, ...) {
     case 'p': {
       uintptr_t val = va_arg(args, uintptr_t);
       kputs("0x");
-      itoa_u(val, buf, 16);
+      ultoa(val, buf, 16);
       kputs(buf);
       output += strlen(buf);
       break;
@@ -265,4 +286,49 @@ size_t __rand64() {
 
 int rand() {
   return __rand64();
+}
+
+int atoi(const char *str) {
+  int res = 0, i = 0;
+  while (str[i] && str[i] <= '9' && str[i] >= '0') {
+    res = res * 10 + str[i] - '0';
+    i++;
+  }
+  return res;
+}
+
+unsigned long atoul(const char *str) {
+  unsigned long res = 0;
+  int i = 0;
+  while (str[i] && str[i] <= '9' && str[i] >= '0') {
+    res = res * 10 + str[i] - '0';
+    i++;
+  }
+  return res;
+}
+
+long atol(const char *str) {
+  long res = 0;
+  int i = 0;
+  while (str[i] && str[i] <= '9' && str[i] >= '0') {
+    res = res * 10 + str[i] - '0';
+    i++;
+  }
+  return res;
+}
+
+unsigned long hextoul(const char *str) {
+  unsigned long result = 0;
+  for (int i = 0; str[i]; i++) {
+    int digit = (
+        '0' <= str[i] && str[i] <= '9' ? str[i] - 10
+      : 'a' <= str[i] && str[i] <= 'f' ? str[i] - 'a' + 10
+      : 'A' <= str[i] && str[i] <= 'F' ? str[i] - 'A' + 10
+      : -1
+    );
+    if (digit == -1)
+      return -1ul;
+    result = result * 16 + digit;
+  }
+  return result;
 }

@@ -26,7 +26,7 @@ C uint32_t to_big_endian(uint32_t x) {
   return byte3 + (byte2 << 8) + (byte1 << 16) + (byte0 << 24);
 }
 
-C uint64_t rev_endian64(uint64_t x) {
+C uint64_t to_big_endian64(uint64_t x) {
   uint64_t byte0 = x & 0xff;
   uint64_t byte1 = (x >> 8) & 0xff;
   uint64_t byte2 = (x >> 16) & 0xff;
