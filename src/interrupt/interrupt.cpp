@@ -25,15 +25,11 @@ long syscall(trapframe *ksp) {
     auto file = pcb->ftbl[a0];
     if (!file)
       return -1;
-    if (file->flags & O_NONBLOCK) {
-      auto buf = (void *) a1;
-      vma_map_current(buf, (char*) buf + a2);
-      EnableAccessToUserMemory guard;
-      return file->read(buf, a2);
-    }
-
-    // The read should block.
-    assert(false && "NYI: blocking read");
+    char *buf = (char *) a1;
+    vma_map_current(buf,  buf + a2);
+    EnableAccessToUserMemory guard;
+    auto len = file->read(buf, a2);
+    return len;
   }
   case 1: {
     // write(fd, buf, len)
@@ -79,7 +75,6 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
     case 5: { // Timer interrupt
       sbi_set_timer(rv_rdtime() + 3000000);
       scheduler.yield(/*sleepy=*/false); // TODO: check time slice
-      break;
     }
     case 9: // PLIC interrupt
       os::handle_plic_interrupt();
@@ -123,7 +118,11 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
       break;
     }
     case 12: // Instruction page fault
+      vma_map_current((void*) stval);
+      break;
     case 13: // Load page fault
+      vma_map_current((void*) stval);
+      break;
     case 15: // Store page fault
       vma_map_current((void*) stval);
       break;

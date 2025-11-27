@@ -70,8 +70,8 @@ public:
   enum filetype { File, Dir, Link };
 
   virtual ~inode() = default;
-  virtual size_t read(size_t offset, void* buf, size_t len) = 0;
-  virtual size_t write(size_t offset, const void* buf, size_t len) = 0;
+  virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;
+  virtual size_t write(size_t offset, const void* buf, size_t len, int flags) = 0;
 
   // Creates a new, empty file.
   virtual result create(const string &name, filetype ty) = 0;

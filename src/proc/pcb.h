@@ -26,6 +26,18 @@ struct trapframe {
   char pad[8];
 };
 
+// This is to resume at the place exactly AFTER the call to suspend().
+// The code would not expect we preserve caller-saved registers, so don't preserve them.
+// Moreover, as we entered suspend(), we know the return address register (ra) is exactly what we want:
+// the next instruction to execute.
+struct ctxframe {
+  reg_t regs[12]; // The callee-saved (s*) registers.
+  reg_t pc;
+  reg_t sp;       // Kernel sp.
+  reg_t sepc;
+  reg_t sstatus;
+};
+
 #ifdef __cplusplus
 static_assert(sizeof(trapframe) == 272);
 #endif
@@ -52,12 +64,6 @@ public:
   iterator end() { return open.end(); }
 };
 
-union syscall_progress {
-  struct read {
-    int cur; // Current offset from buf.
-  } read;
-};
-
 struct pcb_t : os::intrusive_list_node<pcb_t> {
   int pid;                // Process id.
   process_state status;   // Process status (running, sleeping etc.)
@@ -67,9 +73,9 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
   int ret;                // Return value.
-  bool prog_valid;        // Whether the syscall progress is valid. See below.
+  bool ctx_valid;         // Whether the syscall progress is valid. See below.
   process_file_table ftbl;// Process file table.
-  syscall_progress prog;  // System call progress, for resuming blocking syscalls.
+  ctxframe ctx;           // System call progress, for resuming blocking syscalls.
   os::intrusive_list<pcb_t> children;
 
   // Note this is not the destructor. PCB will need to release its resources
@@ -104,6 +110,9 @@ void terminate(pcb_t *pcb, int ret);
 // Set up the returning from the trap handler.
 void trap_return_setup(pcb_t *pcb);
 
+// Suspend the current system call.
+void suspend();
+
 // Gives the next free pid.
 int nextpid();
 
@@ -112,6 +121,12 @@ int fork();
 
 // Replaces a process image.
 result exec(const string &path, char *const *argv, char *const *envp);
+
+// Even though it does not return for now, it will eventually look as if it "returned".
+extern "C" void context_save(void *ctx, bool *ctx_valid);
+extern "C" [[noreturn]] void context_restore(void *ctx);
+
+#define suspend() do { context_save(&scheduler.active->ctx, &scheduler.active->ctx_valid); } while (0)
 
 }
 

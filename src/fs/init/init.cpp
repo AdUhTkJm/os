@@ -56,11 +56,17 @@ unsigned strlen(const char *s) {
 }
 
 void kputs(const char *c) {
-  syscall(/*stdout=*/ 1, (reg_t) c, strlen(c), /*read*/ 1);
+  syscall(/*stdout=*/ 1, (reg_t) c, strlen(c), /*write*/ 1);
 }
 
 void kputch(char c) {
-  syscall(/*stdout=*/ 1, (reg_t) &c, 1, /*read*/ 1);
+  syscall(/*stdout=*/ 1, (reg_t) &c, 1, /*write*/ 1);
+}
+
+char kgetch() {
+  char c;
+  syscall(/*stdin=*/0, (reg_t) &c, 1, /*read*/0);
+  return c;
 }
 
 char *itoa(long value, char *str, int base) {
@@ -193,6 +199,8 @@ extern "C" void _start() {
   int pid = syscall(57);
   printf("forked, pid = %d\n", pid);
   if (pid == 0) {
+    char c = kgetch();
+    printf("input = %c\n", c);
     printf("about to exit\n");
     syscall(0, 60);
   }

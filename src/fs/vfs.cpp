@@ -5,13 +5,13 @@ namespace os {
 static_storage<class vfs> vfs;
 
 size_t file::read(void *buf, size_t len) {
-  auto ret = node->read(offset, buf, len);
+  auto ret = node->read(offset, buf, len, flags);
   offset += ret;
   return ret;
 }
 
 size_t file::write(const void *buf, size_t len) {
-  auto ret = node->write(offset, buf, len);
+  auto ret = node->write(offset, buf, len, flags);
   offset += ret;
   return ret;
 }

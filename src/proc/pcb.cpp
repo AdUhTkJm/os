@@ -82,11 +82,13 @@ void init(pcb_t *pcb) {
 
   // Open stdin, stdout and stderr.
   // Note they are different files, but point to the same place.
-  auto tty0 = vfs->lookup("/dev/tty0");
-  if (!tty0)
+  auto console = vfs->lookup("/dev/console");
+  if (!console)
     panic("no console!");
   for (int i = 0; i < 3; i++)
-    pcb->ftbl.allocate(new file(tty0->node, O_RDWR), i);
+    pcb->ftbl.allocate(new file(console->node, O_RDWR), i);
+
+  pcb->ctx_valid = false;
 }
 
 void terminate(pcb_t *pcb, int ret) {
@@ -121,10 +123,6 @@ static void first_time_setup(pcb_t *pcb) {
 }
 
 void trap_return_setup(pcb_t *pcb) {
-  pcb_t *active = scheduler.active;
-  CSRR(sepc, active->pc);
-  scheduler.active = pcb;
-
   [[unlikely]] if (pcb->status == Init) {
     first_time_setup(pcb);
     return;

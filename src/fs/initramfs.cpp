@@ -22,7 +22,7 @@ size_t as_int(const char *p) {
 
 namespace os {
 
-size_t initramfs_inode::read(size_t offset, void *buf, size_t len) {
+size_t initramfs_inode::read(size_t offset, void *buf, size_t len, int) {
   ssize_t l = min(long(size) - long(offset), long(len));
   if (l <= 0)
     return 0;
@@ -31,7 +31,7 @@ size_t initramfs_inode::read(size_t offset, void *buf, size_t len) {
 }
 
 // This is read-only.
-size_t initramfs_inode::write(size_t, const void *, size_t) {
+size_t initramfs_inode::write(size_t, const void *, size_t, int) {
   return 0;
 }
 

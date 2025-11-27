@@ -16,16 +16,16 @@ struct scheduler_t {
   
   void add(pcb_t *pcb);
   // Chooses the next process to schedule, and switches to it.
-  void dispatch();
+  [[noreturn]] void dispatch();
   void erase(pcb_t *pcb);
 
   // Puts the current active process to sleep.
   // When sleepy = false, puts it to ready state instead.
-  void yield(bool sleepy = true);
+  [[noreturn]] void yield(bool sleepy = true);
 
   void wakeup(pcb_t *pcb);
 private:
-  void dispatch_impl();
+  [[noreturn]] void dispatch_impl();
 };
 
 static_assert(offsetof(scheduler_t, active) == 48);

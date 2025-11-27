@@ -4,6 +4,7 @@
 #include "../mem/kalloc.h"
 #include "../fs/initramfs.h"
 #include "../fs/devfs.h"
+#include "../fs/ext2.h"
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
 #include "../proc/schedule.h"
@@ -71,12 +72,9 @@ void main_high() {
   
   os::init_bitmap_kalloc();
   os::virtio::probe();
-  auto dev = os::virtio::get(0);
-  char x[512];
-  dev->read(2, x);
-  hexdump(x, 512);
 
   os::mount_initramfs();
+  // os::mount_ext2();
   os::init_plic();
   os::mount_dev();
   

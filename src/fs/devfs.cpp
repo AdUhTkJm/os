@@ -1,7 +1,7 @@
 #include "devfs.h"
 #include "../driver/plic/plic.h"
 #include "../proc/schedule.h"
-#include "vfs.h"
+#include "../utils/errorcode.h"
 
 namespace {
 
@@ -9,8 +9,8 @@ class devroot : public os::inode_impl<devroot> {
   os::hashmap<os::string, inode*> children;
 public:
   using os::inode_impl<devroot>::inode_impl;
-  size_t read(size_t, void *, size_t) override { return 0; }
-  size_t write(size_t, const void *, size_t) override { return 0; }
+  size_t read(size_t, void *, size_t, int) override { return 0; }
+  size_t write(size_t, const void *, size_t, int) override { return 0; }
   os::result create(const os::string &, os::inode::filetype) override { return os::result::failure; }
   os::inode *lookup(const os::string &name) override {
     return children[name];
@@ -33,22 +33,28 @@ public:
 
 namespace os {
 
-static_storage<console_inode> tty0;
+static_storage<console_inode> console;
 static_storage<class devfs> devfs;
 
-size_t console_inode::read(size_t offset, void *buf, size_t len) {
+size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
+  bool block = !(flags & O_NONBLOCK);
   (void) offset;
   char *p = (char *) buf;
   for (unsigned i = 0; i < len; i++) {
-    auto c = console_input_buf->pop_front();
-    if (!c)
-      return i;
+    optional<char> c = console_input_buf->pop_front();
+    while (!c) {
+      if (!block)
+        return i == 0 ? -EAGAIN : i;
+      wait.push_back(scheduler.active);
+      suspend();
+      c = console_input_buf->pop_front();
+    }
     p[i] = *c;
   }
   return len;
 }
 
-size_t console_inode::write(size_t offset, const void *buf, size_t len) {
+size_t console_inode::write(size_t offset, const void *buf, size_t len, int) {
   (void) offset;
   char *p = (char *) buf;
   for (unsigned i = 0; i < len; i++)
@@ -72,8 +78,8 @@ devfs::devfs() {
 
 void mount_dev() {
   auto root = devfs->root;
-  // tty0 is initialized in PLIC handler.
-  cast<devroot>(root->node)->record("tty0", &*tty0);
+  // console is initialized in PLIC handler.
+  cast<devroot>(root->node)->record("console", &*console);
   auto dentry = vfs->lookup("/dev");
   if (!dentry)
     panic("devfs: cannot find /dev");

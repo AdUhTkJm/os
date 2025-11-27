@@ -105,6 +105,7 @@ public:
 
   void push_back(const T &item) {
     node *n = new node { item, nullptr, nullptr };
+    sz++;
     if (!tail) {
       head = tail = n;
       return;
@@ -121,6 +122,7 @@ public:
     head = head->next;
     if (!head)
       tail = nullptr;
+    sz--;
     delete n;
   }
 

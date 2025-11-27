@@ -7,7 +7,7 @@ void ramfs_inode::load(void *data, size_t sz) {
   this->sz = sz;
 }
 
-size_t ramfs_inode::read(size_t offset, void *buf, size_t len) {
+size_t ramfs_inode::read(size_t offset, void *buf, size_t len, int) {
   ssize_t l = min(long(size) - long(offset), long(len));
   if (l <= 0)
     return 0;
@@ -15,7 +15,7 @@ size_t ramfs_inode::read(size_t offset, void *buf, size_t len) {
   return l;
 }
 
-size_t ramfs_inode::write(size_t offset, const void *buf, size_t len) {
+size_t ramfs_inode::write(size_t offset, const void *buf, size_t len, int) {
   ssize_t l = min(long(size) - long(offset), long(len));
   if (l <= 0)
     return 0;

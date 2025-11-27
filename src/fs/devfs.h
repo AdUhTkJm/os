@@ -25,8 +25,8 @@ public:
     this->name = name;
     size = 0; type = File;
   }
-  size_t read(size_t offset, void *buf, size_t len) override;
-  size_t write(size_t, const void*, size_t) override;
+  size_t read(size_t offset, void *buf, size_t len, int flags) override;
+  size_t write(size_t, const void*, size_t, int flags) override;
   result create(const string &, filetype) override { return result::failure; }
   inode *lookup(const string &) override { return nullptr; }
   vector<inode*> list() override { return {}; }
@@ -34,7 +34,7 @@ public:
   void wake();
 };
 
-extern static_storage<console_inode> tty0;
+extern static_storage<console_inode> console;
 
 void mount_dev();
 

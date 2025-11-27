@@ -1,6 +1,7 @@
 #include "virtio.h"
 #include "../../fdt/fdt.h"
 #include "../../mem/kalloc.h"
+#include "../../proc/schedule.h"
 
 namespace {
 
@@ -130,7 +131,6 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
   // Finish the setup.
   status |= device_status::DRIVER_OK;
   mmwr(base + STATUS, status);
-  printk("configured device at %p\n", device.base);
 }
 
 vq::desc &block_device::next_descriptor() {
@@ -186,15 +186,16 @@ result block_device::read_legacy(uint64_t lba, void *buffer) {
   __asm__ volatile ("fence w,rw" ::: "memory");
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   
-  // Spinwait for testing.
-  volatile int timeout = 10000000;
-  while (mmrd<uint8_t>(stat) == 0xff) {
-    if (--timeout == 0) {
-      printk("Error: VirtIO request timed out.\n");
-      return result::failure;
+  // Spinwait when there is no current process.
+  if (scheduler.active->pid == -1) {
+    volatile int timeout = 10000000;
+    while (mmrd<uint8_t>(stat) == 0xff) {
+      if (--timeout == 0) {
+        printk("Error: VirtIO request timed out.\n");
+        return result::failure;
+      }
     }
   }
-  printk("done waiting\n");
 
   auto status = mmrd<uint8_t>(stat);
   if (status == 0) {
@@ -258,7 +259,6 @@ void probe() {
     if (device_id != 2)
       continue;
 
-    printk("found block device at %p\n", base);
     auto dev = new block_device(device, legacy);
     (*disks)[block_device_cnt++] = dev;
   }

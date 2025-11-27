@@ -41,7 +41,7 @@ _start_high:
   j _Z9main_highv # void main_high();
 
 .section .text
-
+.global __handler_end
 .align 4
 stvec_pos:
   # Record current sp.
@@ -94,6 +94,7 @@ stvec_pos:
 
   call _ZN2os17interrupt_handlerEllPv
 
+__handler_end:
   # Load the ksp of the current process.
   # (The process might have changed.)
   la t0, _ZN2os9schedulerE

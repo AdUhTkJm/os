@@ -20,7 +20,7 @@ void init_plic() {
   *(volatile unsigned char*) as_va(UART_BASE) = 0;
   
   devfs.construct();
-  tty0.construct("tty0");
+  console.construct("console");
   console_input_buf.construct();
 }
 
@@ -33,7 +33,8 @@ void handle_plic_interrupt() {
     char c = *(volatile unsigned char*) as_va(UART_BASE + UART_RBR);
     *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET) = irq;
     console_input_buf->push_back(c);
-    tty0->wake();
+    printk("received %c\n", c);
+    console->wake();
     
     // Ctrl+C
     if (c == 0x03) {

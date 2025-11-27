@@ -49,8 +49,18 @@ constexpr T roundup(T x) {
   return (T) ((((uintptr_t) x) + (V - 1)) & -V);
 }
 
+template<class T>
+constexpr T roundup(T x, uint64_t V) {
+  return (T) ((((uintptr_t) x) + (V - 1)) & -V);
+}
+
 template<uint64_t V, class T> requires ((V & (V - 1)) == 0)
 constexpr T rounddown(T x) {
+  return (T) (((uintptr_t) x) & -V);
+}
+
+template<class T>
+constexpr T rounddown(T x, uint64_t V) {
   return (T) (((uintptr_t) x) & -V);
 }
 

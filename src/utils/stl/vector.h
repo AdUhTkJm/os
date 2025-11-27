@@ -8,37 +8,37 @@ namespace os {
 template<typename V>
 class vector {
   size_t cap, sz;
-  V *data;
+  V *dat;
 public:
-  vector(): cap(0), sz(0), data(nullptr) {}
+  vector(): cap(0), sz(0), dat(nullptr) {}
   vector(V v, size_t sz): sz(sz) {
     cap = roundup<4>(sz);
-    data = new V[cap];
+    dat = new V[cap];
     for (size_t i = 0; i < sz; i++)
-      data[i] = v;
+      dat[i] = v;
   }
-  ~vector() { delete[] data; }
+  ~vector() { delete[] dat; }
   vector(const vector &other): cap(other.cap), sz(other.sz) {
-    data = new V[cap];
+    dat = new V[cap];
     for (size_t i = 0; i < sz; i++)
-      data[i] = other[i];
+      dat[i] = other[i];
   }
   vector(vector &&other): cap(other.cap), sz(other.sz) {
-    data = other.data; other.data = nullptr;
+    dat = other.dat; other.dat = nullptr;
   }
 
   vector &operator=(const vector &other) {
-    delete[] data;
-    data = new V[cap];
+    delete[] dat;
+    dat = new V[cap];
     sz = other.sz;
     cap = other.cap;
     for (size_t i = 0; i < sz; i++)
-      data[i] = other[i];
+      dat[i] = other[i];
     return *this;
   }
   vector &operator=(vector &&other) {
     cap = other.cap; sz = other.sz;
-    data = other.data; other.data = nullptr;
+    dat = other.dat; other.dat = nullptr;
     return *this;
   }
 
@@ -47,13 +47,13 @@ public:
   using iterator = V*;
   using const_iterator = const V*;
 
-  iterator begin() { return data; }
-  iterator end() { return data + sz; }
+  iterator begin() { return dat; }
+  iterator end() { return dat + sz; }
 
   void push_back(const V &v) {
     if (sz == cap)
       reserve(max(16ul, cap * 2));
-    data[sz++] = v;
+    dat[sz++] = v;
   }
   void pop_back() { sz--; }
 
@@ -63,18 +63,33 @@ public:
 
     V *newdata = new V[newcap];
     for (size_t i = 0; i < sz; i++)
-      newdata[i] = data[i];
-    delete[] data;
-    data = newdata;
+      newdata[i] = dat[i];
+    delete[] dat;
+    dat = newdata;
     cap = newcap;
   }
 
-  V &back() { return data[sz - 1]; }
-  const V &back() const { return data[sz - 1]; }
+  void resize(size_t newsz) {
+    if (sz > newsz) {
+      sz = newsz;
+      return;
+    }
+    reserve(newsz);
+    sz = newsz;
+  }
+
+  V *data() { return dat; }
+  const V* data() const { return dat; }
+
+  V &back() { return dat[sz - 1]; }
+  const V &back() const { return dat[sz - 1]; }
+
   size_t size() const { return sz; }
   size_t capacity() const { return cap; }
-  V &operator[](size_t i) { return data[i]; }
-  const V &operator[](size_t i) const { return data[i]; }
+
+  V &operator[](size_t i) { return dat[i]; }
+  const V &operator[](size_t i) const { return dat[i]; }
+
   bool empty() const { return sz == 0; }
 };
 
