@@ -3,18 +3,18 @@
 #include "../fdt/fdt.h"
 #include "../utils/libc.h"
 
+using namespace os;
+
 // Reserved kernel virtual memory size.
-constexpr size_t VM_SIZE = 1 << 30;
+constexpr size_t VM_SIZE = 1_gb;
 constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 
-// The entire physical memory space we're able to manage. (16 GB.)
-constexpr va_t MAX_PA_SIZE = 1ull << 34;
+// The entire physical memory space we're able to manage. (2 GB.)
+constexpr va_t MAX_PA_SIZE = 2_gb;
 // This amount of 4KB frames from __kernel_base will be managed by
 // the free-list allocator, mainly for bootstrapping.
 // All other regions will be managed by the bitmap allocator.
 constexpr va_t FREE_LIST_SIZE = 0x1000;
-
-using namespace os;
 
 namespace {
 
@@ -27,11 +27,13 @@ pa_t free_head;
 
 // No extra paddings.
 static_assert(sizeof(frame_t) == PAGE_SIZE);
-
-// 1 for occupied, 0 for free.
 os::bitmap<VM_SIZE / PAGE_SIZE> vmmap;
 os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
-#ifdef NOT_IN_VSCODE
+
+uintptr_t physbegin, physend;
+
+// 1 for occupied, 0 for free.
+#ifndef IN_VSCODE
 struct pframe_meta {
   unsigned char refcnt;
 } meta[MAX_PA_SIZE / PAGE_SIZE];
@@ -49,9 +51,9 @@ template<size_t N, typename T>
 size_t find_consecutive(const os::bitmap<N, T> &bitmap, size_t total, size_t from, size_t to) {
   size_t len = 0, start = from;
 
-  for (size_t w = from; w < to / bitmap.unit_bits; w += bitmap.unit_bits) {
+  for (size_t w = from; w < to; w += bitmap.unit_bits) {
     auto word = bitmap.word(w / bitmap.unit_bits);
-    // A whole chunk of zeroes. Skip them directly.
+    // A whole chunk of zeroes. Add them directly.
     if (word == 0) {
       if (len == 0)
         start = w;
@@ -127,12 +129,32 @@ void vm_free_pages(void *va, size_t total) {
 }
 
 void mark_reserved() {
+  // Moreover, look at the /memory node.
+  char *p = (char *) fdt::pfdt + to_big_endian(fdt::pfdt->off_dt_struct);
+  fdt::walk(p, [&](const char *cdev, const char *cprop, void *property, int len) {
+    if (strncmp(cdev, "/memory@", 8) != 0)
+      return WalkResult::Continue;
+
+    if (strcmp(cprop, "reg") == 0) {
+      assert(len == 16);
+      auto prop = (uint32_t*) property;
+      physbegin = (to_big_endian(prop[0]) * 1ull << 32) | to_big_endian(prop[1]);
+      physend = physbegin + ((to_big_endian(prop[2]) * 1ull << 32) | to_big_endian(prop[3]));
+      
+      return WalkResult::Interrupt;
+    }
+    return WalkResult::Continue;
+  });
+
   auto rsv = fdt::reserved();
   // Don't touch the space of the free-list allocator.
-  rsv.push_back({ (pa_t) __kernel_end, FREE_LIST_SIZE * PAGE_SIZE });
+  // Also don't touch the kernel itself.
+  auto endpa = to_pa(__kernel_end);
+  rsv.push_back({ 0x8000'0000, endpa  - 0x8000'0000 });
+  rsv.push_back({ endpa, FREE_LIST_SIZE * PAGE_SIZE });
 
   for (const auto &[begin, size] : rsv) {
-    auto start_page = begin / PAGE_SIZE;
+    auto start_page = (begin - physbegin) / PAGE_SIZE;
     auto end_page = start_page + roundup<PAGE_SIZE>(size) / PAGE_SIZE;
     pmmap.set(start_page, end_page);
   }
@@ -155,16 +177,15 @@ pa_t pframe() {
   }
 
   // Bitmap part.
-  // We don't want to allocate physical memory 0x0, because some devices won't like it.
-  static int pm_from = 1;
+  static int pm_from = 0;
   size_t index = find_consecutive(pmmap, 1, pm_from);
   if (index == -1ul)
     return 0;
 
-  vmmap[index] = 1;
+  pmmap[index] = 1;
   pm_from++;
   meta[index].refcnt++;
-  return index * PAGE_SIZE;
+  return index * PAGE_SIZE + physbegin;
 }
 
 void pincref(pa_t p) {
@@ -191,12 +212,14 @@ pa_t pmalloc(int pagecnt) {
   if (!pminit)
     return 0;
 
-  auto index = find_consecutive(pmmap, pagecnt, 1);
+  // We always search from the beginning. (The round-robin won't be in sync with pframe().)
+  auto index = find_consecutive(pmmap, pagecnt, 0);
   if (index == -1ul)
     return 0;
+  pmmap.set(index, index + pagecnt);
   for (size_t i = index; i < index + pagecnt; i++)
     meta[i].refcnt++;
-  return index * PAGE_SIZE;
+  return index * PAGE_SIZE + physbegin;
 }
 
 void *vmalloc_impl(size_t len) {

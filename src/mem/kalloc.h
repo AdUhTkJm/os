@@ -17,6 +17,8 @@ void pincref(pa_t p);
 
 // Gives a consecutive chunk of physical memory.
 pa_t pmalloc(int pagecnt);
+// Gives a consecutive chunk in the lower 4GB, for
+
 
 /* Free a chunk of memory allocated by `vmalloc`. */
 void vfree(void *p);

@@ -38,3 +38,27 @@ C uint64_t to_big_endian64(uint64_t x) {
   return byte7 + (byte6 << 8) + (byte5 << 16) + (byte4 << 24)
     + (byte3 << 32) + (byte2 << 40) + (byte1 << 48) + (byte0 << 56);
 }
+
+C void hexdump(const void *ptr, size_t len) {
+  const uint8_t *buf = (const uint8_t *)ptr;
+  for (size_t i = 0; i < len; i += 16) {
+    // Print physical address instead.
+    printk("%08p  ", uintptr_t(ptr) + i);
+
+    for (size_t j = 0; j < 16; ++j) {
+      if (i + j < len)
+        printk("%02x ", buf[i + j]);
+      else
+        printk("   ");
+    }
+
+    printk(" ");
+
+    for (size_t j = 0; j < 16 && i + j < len; ++j) {
+      uint8_t c = buf[i + j];
+      printk("%c", (c >= 32 && c < 127) ? c : '.');
+    }
+
+    printk("\n");
+  }
+}

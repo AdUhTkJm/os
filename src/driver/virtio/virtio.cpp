@@ -23,37 +23,45 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
   this->legacy = legacy;
 
   // Reset the device.
-  mmwr(base + STATUS, 0);
+  int status = 0;
+  mmwr(base + STATUS, status);
 
   // Set the acknowledge bit.
-  mmwr(base + STATUS, device_status::ACKNOWLEDGE);
+  status |= device_status::ACKNOWLEDGE;
+  mmwr(base + STATUS, status);
 
   // Set the driver status bit.
-  mmwr(base + STATUS, device_status::DRIVER);
+  status |= device_status::DRIVER;
+  mmwr(base + STATUS, status);
 
   // Negotiate features.
   
   // Tell the device of our supported features.
-  uint64_t supported = legacy_features::ANY_LAYOUT;
 
   mmwr(base + DEVICE_FEATURESEL, 0);
-  auto features_low = mmrd<int32_t>(base + DEVICE_FEATURE);
-  (void) features_low;
-  mmwr<uint32_t>(base + DEVICE_FEATURE, supported);
+  auto features_low = mmrd<uint32_t>(base + DEVICE_FEATURE);
+  bool anylayout = features_low & legacy_features::ANY_LAYOUT;
+
+  uint64_t supported = anylayout ? legacy_features::ANY_LAYOUT : 0;
+  mmwr(base + DRIVER_FEATURESEL, 0);
+  mmwr<uint32_t>(base + DRIVER_FEATURE, supported);
 
   mmwr(base + DEVICE_FEATURESEL, 1);
-  auto features_high = mmrd<int32_t>(base + DEVICE_FEATURE);
+  auto features_high = mmrd<uint32_t>(base + DEVICE_FEATURE);
   // Legacy should be indicated by `VERSION_1` not offered.
-  assert((features_high & (((uint64_t) features::VERSION_1) >> 32)) ^ legacy);
-  mmwr<uint32_t>(base + DEVICE_FEATURE, supported >> 32);
+  assert(bool(features_high & (((uint64_t) features::VERSION_1) >> 32)) ^ legacy);
+
+  mmwr(base + DRIVER_FEATURESEL, 1);
+  mmwr<uint32_t>(base + DRIVER_FEATURE, supported >> 32);
 
   // Mark out intent as "complete".
   // This is only done in v1.0 standard.
   if (!legacy) {
-    mmwr(base + STATUS, device_status::FEATURES_OK);
+    status |= device_status::FEATURES_OK;
+    mmwr(base + STATUS, status);
     // Reread to see whether the device accepts it. (It must for now; we didn't use any features.)
     int accepted = mmrd<int32_t>(base + STATUS);
-    if (accepted != (int) device_status::FEATURES_OK)
+    if (!(accepted & device_status::FEATURES_OK))
       panic("virtio device failed");
   }
 
@@ -61,6 +69,9 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
   // Select virtqueue 0, and see max queue size.
   mmwr(base + QUEUE_SEL, 0);
   if (mmrd<int32_t>(base + QUEUE_READY) != 0)
+    panic("queue occupied");
+
+  if (legacy && mmrd<int32_t>(base + QUEUE_PFN) != 0)
     panic("queue occupied");
 
   auto maxsz = mmrd<int32_t>(base + QUEUE_SIZE_MAX);
@@ -89,24 +100,36 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
       (vq::avail_ring*) as_va(avail),
       (vq::used_ring*) as_va(used)
     };
+
+    // Now the queue is ready.
+    mmwr(base + QUEUE_READY, 1);
   } else {
     // See section 2.7.2 for the legacy layout.
     mmwr(base + QUEUE_ALIGN, vq::align);
+    mmwr(base + DRIVER_PAGE_SIZE, PAGE_SIZE);
 
+    // Allocate space for queue.
     constexpr auto size = roundup<vq::align>(sizeof(vq::desc) * vq::size + 2 * (3 + vq::size))
       + roundup<vq::align>(6 + sizeof(vq::used_ring::element) * vq::size);
+    static_assert(roundup<PAGE_SIZE>(sizeof(vq::queue_legacy)) == size);
     pa_t mem = pmalloc(size / PAGE_SIZE);
+
+    // Allocate space for buffers.
+    req = pmalloc(1);
+    buffer = pmalloc(1);
+    stat = pmalloc(1);
+
+    // Set up the registers and the queue.
     mmwr<uint32_t>(base + QUEUE_PFN, mem / PAGE_SIZE);
     queue = (vq::queue_legacy *) as_va(mem);
-    ((vq::queue_legacy *) queue)->avail.idx = 0;
-    static_assert(roundup<PAGE_SIZE>(sizeof(vq::queue_legacy)) == size);
+    memset(queue, 0, size);
+
+    // In legacy we shouldn't set up QueueReady.
   }
 
-  // Now the queue is ready.
-  mmwr(base + QUEUE_READY, 1);
-
   // Finish the setup.
-  mmwr(base + STATUS, device_status::DRIVER_OK);
+  status |= device_status::DRIVER_OK;
+  mmwr(base + STATUS, status);
   printk("configured device at %p\n", device.base);
 }
 
@@ -128,50 +151,57 @@ uint16_t block_device::indexof(const vq::desc &desc) {
 // The lba is the logical block address.
 result block_device::read_legacy(uint64_t lba, void *buffer) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
-  request_legacy head {
+  *(request_legacy *) as_va(req) = request_legacy {
     .type = 0, /* Read */
     .reserved = 0,
     .sector = lba,
   };
-  memset(buffer, 0, 512);
-  uint8_t status = 0xff;
+  
+  mmwr(stat, uint8_t(0xff));
 
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
   vq::desc &d3 = next_descriptor();
-  d1.addr = to_pa(&head);
-  d1.len = sizeof(request);
+  d1.addr = req;
+  d1.len = sizeof(request_legacy);
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = to_pa(buffer);
+  d2.addr = this->buffer;
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
   d2.next = indexof(d3);
 
-  d3.addr = to_pa(status);
+  d3.addr = stat;
   d3.len = 1;
   d3.flags = vq::descflags::WRITEONLY;
   d3.next = 0;
 
   // Put the head of chain into available ring for the device to read.
   auto queue = (vq::queue_legacy*) this->queue;
-  queue->avail.ring[queue->avail.idx++ % vq::size] = indexof(d1);
+  queue->avail.ring[queue->avail.idx % vq::size] = indexof(d1);
+  queue->avail.idx++;
+
+  // Tell device that a new request has come.
+  __asm__ volatile ("fence w,rw" ::: "memory");
+  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   
   // Spinwait for testing.
   volatile int timeout = 10000000;
-  while (status == 0xff) {
+  while (mmrd<uint8_t>(stat) == 0xff) {
     if (--timeout == 0) {
       printk("Error: VirtIO request timed out.\n");
       return result::failure;
     }
   }
+  printk("done waiting\n");
 
-  // Tell device that a new request has come.
-  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-
-  if (status == 0)
+  auto status = mmrd<uint8_t>(stat);
+  if (status == 0) {
+    // hexdump((void *) as_va(this->buffer), 512);
+    memcpy(buffer, (void*) as_va(this->buffer), 512);
     return result::success;
+  }
 
   // Status 1 = error, 2 = unsupported
   printk("failure: %d\n", status);

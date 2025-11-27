@@ -93,6 +93,11 @@ int printk(const char *fmt, ...) {
       continue;
     }
 
+    /* Zero-padding. */
+    int zero_pad = 0;
+    if (*(p + 1) == '0')
+      zero_pad = *(p += 2) - '0';
+
     switch(*++p) {
     case 'd': {
       int val = va_arg(args, int);
@@ -111,16 +116,32 @@ int printk(const char *fmt, ...) {
     case 'x': {
       int val = va_arg(args, int);
       itoa(val, buf, 16);
+      int len = strlen(buf);
+      output += len;
+
+      if (zero_pad >= len) {
+        for (int i = 0; i < zero_pad - len; i++)
+          kputch('0');
+        output += zero_pad - len;
+      }
+
       kputs(buf);
-      output += strlen(buf);
       break;
     }
     case 'p': {
       uintptr_t val = va_arg(args, uintptr_t);
       kputs("0x");
       ultoa(val, buf, 16);
+      int len = strlen(buf);
+
+      if (zero_pad >= len) {
+        for (int i = 0; i < zero_pad - len; i++)
+          kputch('0');
+        output += zero_pad - len;
+      }
+
+      output += len;
       kputs(buf);
-      output += strlen(buf);
       break;
     }
     case 'c': {

@@ -46,6 +46,8 @@ C [[noreturn]] void panic(const char *s);
 C uint32_t to_big_endian(uint32_t x);
 C uint64_t to_big_endian64(uint64_t x);
 
+C void hexdump(const void *ptr, size_t len);
+
 #define CSRW(reg, value) __asm__ volatile("csrw " #reg ", %0" :: "r"(value))
 #define CSRR(reg, value) __asm__ volatile("csrr %0, " #reg : "=r"(value))
 #define CSRS(reg, value) __asm__ volatile("csrs " #reg ", %0" :: "r"(value))

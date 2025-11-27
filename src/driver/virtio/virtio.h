@@ -31,6 +31,8 @@ enum block_device_offsets {
   QUEUE_SIZE = 0x38,
   QUEUE_READY = 0x44,
   QUEUE_NOTIFY = 0x50,
+  INTERRUPT_STATUS = 0x60,
+  INTERRUPT_ACK = 0x64,
   STATUS = 0x70,
   QUEUE_DESC_LOW = 0x80,
   QUEUE_DESC_HIGH = 0x84,
@@ -159,12 +161,15 @@ class block_device {
     uint8_t  *data;
     uint8_t  status;
   };
-
+  
   struct request_legacy {
     uint32_t type;
     uint32_t reserved;
     uint64_t sector;
   };
+  static_assert(sizeof(request_legacy) == 16);
+
+  pa_t req, buffer, stat;
 
   vq::desc &next_descriptor();
   uint16_t indexof(const vq::desc &);

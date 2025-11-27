@@ -72,10 +72,9 @@ void main_high() {
   os::init_bitmap_kalloc();
   os::virtio::probe();
   auto dev = os::virtio::get(0);
-  char x[513];
-  dev->read(0, x);
-  x[512] = '\0';
-  printk("%s\n", x);
+  char x[512];
+  dev->read(2, x);
+  hexdump(x, 512);
 
   os::mount_initramfs();
   os::init_plic();

@@ -29,14 +29,14 @@ AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
-  "-ffreestanding", "-nostdlib", "-DNOT_IN_VSCODE",
+  "-ffreestanding", "-nostdlib",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-Wno-invalid-offsetof", "-DNOT_IN_VSCODE",
+  "-Wno-invalid-offsetof",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 SFLAGS = [
@@ -214,7 +214,7 @@ def build():
     commands.append({
       "directory": os.path.abspath("."),
       "file": absolute,
-      "command": f"clang++ {' '.join(flags)} -c {absolute}"
+      "command": f"clang++ {' '.join(flags)} -DIN_VSCODE -c {absolute}"
     })
     
   with open("compile_commands.json", "w") as conf:
@@ -284,7 +284,7 @@ if __name__ == "__main__":
     asm = "-d in_asm -D qemu.log" if args.assembly else ""
     proc.check_call(
 f"""
-qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel \
+~/.local/qemu/build/qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 -drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 {asm}

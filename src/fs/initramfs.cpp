@@ -70,7 +70,7 @@ void mount_initramfs() {
     panic("device tree: cannot find initrd");
   
   // Read the device tree and find the chosen node.
-  initrd_start = (char *) as_va(read_int(pstart));
+  initrd_start = (char *) as_va((read_int(pstart) * 1ul << 32) + read_int((char*) pstart + 4));
   
   // Initialize the initramfs and register it in vfs.
   fs *initramfs = new class initramfs;
