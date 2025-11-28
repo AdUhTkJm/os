@@ -154,6 +154,23 @@ struct is_enum : integral_constant<bool, __is_enum(T)> {};
 template<class T>
 struct underlying_type { using type = __underlying_type(T); };
 
+template<class T> struct is_const : false_type {};
+template<class T> struct is_const<const T> : true_type {};
+
+
+template<class T> struct is_reference : false_type {};
+template<class T> struct is_reference<T&> : true_type {};
+template<class T> struct is_reference<T&&> : true_type {};
+
+template<class T>
+struct is_function : integral_constant<
+  bool,
+  !is_const<const T>::value && !is_reference<T>::value
+> {};
+
+template<class T>
+constexpr bool is_function_v = is_function<T>::value;
+
 }
 
 #endif

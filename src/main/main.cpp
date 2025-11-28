@@ -49,6 +49,11 @@ void kernel_main() {
   for (;;) ;
 }
 
+void idle() {
+  for (;;)
+    __asm__ volatile("wfi");
+}
+
 void main_high() {
   // Set up page table.
   memset(__bss_begin, 0, __bss_end - __bss_begin);
@@ -78,8 +83,12 @@ void main_high() {
   os::init_plic();
   os::mount_dev();
   
-  // Start the first user process.
+  // Create an idle kernel process.
   scheduler.init();
+  auto k_idle = make_kprocess(idle);
+  scheduler.add(k_idle);
+
+  // Start the init user process.
   file *init = vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");

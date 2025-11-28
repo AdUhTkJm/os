@@ -26,6 +26,14 @@ void scheduler_t::dispatch_impl() {
     ready.pop_front();
     next = ready.begin();
   }
+  // This is the idle PCB. Don't dispatch it if we have something else.
+  if (next->pid == 0 && ready.size() > 1) {
+    ready.pop_front();
+    auto n = ready.begin();
+    // We can't push `next` back when it's in list.
+    ready.push_back(next);
+    next = n;
+  }
   ready.pop_front();
   printk("dispatched pid %d\n", next->pid);
 

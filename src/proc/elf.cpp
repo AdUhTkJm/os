@@ -54,6 +54,8 @@ result load_elf(file *content, pcb_t *pcb) {
       vfree(text);
     }
   }
+
+  init_user(pcb);
   init(pcb);
   return result::success;
 }

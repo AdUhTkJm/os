@@ -28,6 +28,7 @@ public:
 
   bool empty() const { return !head; }
 
+  // Note: this won't work if `node` is inside the list.
   void push_back(T* node) {
     iterator link = into(node);
     link->prev = tail;
@@ -58,6 +59,7 @@ public:
     sz--;
   }
 
+  // This won't work if node is not inside the list.
   void erase(T* node) {
     iterator link = into(node);
 

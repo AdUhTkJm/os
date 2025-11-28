@@ -50,12 +50,12 @@ void pcb_t::clear() {
 
 int nextpid() {
   static spinlock lock;
-  static int pid = 1;
+  static int pid = 0;
   synchronized syn(lock);
   return pid++;
 }
 
-void init(pcb_t *pcb) {
+void init_user(pcb_t *pcb) {
   va_t max = 0;
   for (const auto &vma : pcb->vma)
     max = os::max(vma.end, max);
@@ -71,7 +71,9 @@ void init(pcb_t *pcb) {
     .begin = stack_top - user_stack_size, .end = stack_top, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE, .backup = nullptr, .offset = 0
   });
+}
 
+void init(pcb_t *pcb) {
   // Gives one physical page for the root page table and the kernel stack.
   pcb->pt_root = pframe();
   pcb->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
@@ -117,7 +119,9 @@ static void first_time_setup(pcb_t *pcb) {
 
   int sstatus; CSRR(sstatus, sstatus);
   // User process with interrupt enabled.
-  trap->sstatus = (sstatus & ~(1 << 8)) | (1 << 5);
+  if (!pcb->kproc)
+    sstatus = (sstatus & ~(1 << 8));
+  trap->sstatus = sstatus | (1 << 5);
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   pt_root = (pte_t *) as_va(pcb->pt_root);
 }

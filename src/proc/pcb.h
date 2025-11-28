@@ -73,7 +73,8 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
   int ret;                // Return value.
-  bool ctx_valid;         // Whether the syscall progress is valid. See below.
+  bool ctx_valid = false; // Whether the syscall progress is valid. See below.
+  bool kproc = false;     // Whether this is a kernel process.
   process_file_table ftbl;// Process file table.
   ctxframe ctx;           // System call progress, for resuming blocking syscalls.
   os::intrusive_list<pcb_t> children;
@@ -105,6 +106,7 @@ static_assert(offsetof(pcb_t, ksp) == 32);
 extern static_storage<hashmap<int, pcb_t*>> pid_map_s;
 
 void init(pcb_t *pcb);
+void init_user(pcb_t *pcb);
 void terminate(pcb_t *pcb, int ret);
 
 // Set up the returning from the trap handler.
@@ -127,6 +129,18 @@ extern "C" void context_save(void *ctx, bool *ctx_valid);
 extern "C" [[noreturn]] void context_restore(void *ctx);
 
 #define suspend() do { context_save(&scheduler.active->ctx, &scheduler.active->ctx_valid); } while (0)
+
+// Creates a kernel process.
+template<class T> requires (is_function_v<remove_pointer_t<T>>)
+pcb_t *make_kprocess(T fptr) {
+  pcb_t *pcb = new pcb_t;
+  pcb->status = Init;
+  pcb->pc = (va_t) fptr;
+  pcb->pid = nextpid();
+  pcb->kproc = true;
+  init(pcb);
+  return pcb;
+}
 
 }
 
