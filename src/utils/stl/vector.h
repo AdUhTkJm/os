@@ -78,6 +78,10 @@ public:
     sz = newsz;
   }
 
+  void clear() {
+    sz = 0;
+  }
+
   V *data() { return dat; }
   const V* data() const { return dat; }
 

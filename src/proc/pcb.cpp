@@ -2,6 +2,7 @@
 #include "pcb.h"
 #include "schedule.h"
 #include "../mem/kalloc.h"
+#include "../utils/errorcode.h"
 
 namespace os {
 
@@ -68,7 +69,7 @@ void init_user(pcb_t *pcb) {
   });
   // Allocate a stack. Note it grows downwards.
   pcb->vma.push_back({
-    .begin = stack_top - user_stack_size, .end = stack_top, .prot = PROT_READ | PROT_WRITE,
+    .begin = stack_top - user_stack_size, .end = pcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE, .backup = nullptr, .offset = 0
   });
 }
@@ -89,8 +90,6 @@ void init(pcb_t *pcb) {
     panic("no console!");
   for (int i = 0; i < 3; i++)
     pcb->ftbl.allocate(new file(console->node, O_RDWR), i);
-
-  pcb->ctx_valid = false;
 }
 
 void terminate(pcb_t *pcb, int ret) {
@@ -115,12 +114,14 @@ static void first_time_setup(pcb_t *pcb) {
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
   // Let sp point to the user stack.
-  trap->sscratch = stack_top;
+  trap->sscratch = pcb->usp;
 
   int sstatus; CSRR(sstatus, sstatus);
   // User process with interrupt enabled.
   if (!pcb->kproc)
     sstatus = (sstatus & ~(1 << 8));
+  else
+    sstatus = (sstatus | (1 << 8));
   trap->sstatus = sstatus | (1 << 5);
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   pt_root = (pte_t *) as_va(pcb->pt_root);
@@ -179,18 +180,44 @@ int fork() {
 
   child->status = Ready;
   child->vma = pcb->vma;
+  child->kproc = pcb->kproc;
   scheduler.add(child);
   return child->pid;
 }
 
-result exec(const string &path, char *const *argv, char *const *envp) {
+/*
++---------------------------+  <-- usp
+| argc                      |
++---------------------------+
+| argv[0] (pointer)         |
+| argv[1] (pointer)         |
+| ...                       |
+| argv[argc] = NULL         |
++---------------------------+
+| envp[0] (pointer)         |
+| envp[1] (pointer)         |
+| ...                       |
+| envp[n] = NULL            |
++---------------------------+
+| AT_* auxiliary vectors    |
+| (pairs of (type, value))  |
+| ...                       |
+| AT_NULL = 0               |
++---------------------------+
+| argument strings          |
+| environment strings       |
++---------------------------+
+*/
+int exec(const string &path, char *const *argv, char *const *envp) {
   auto pcb = scheduler.active;
   pt::free(pcb->pt_root);
   pfree(pcb->ksp);
+  pcb->vma.clear();
   
+  // This performs the initialization of pcb.
   File file(path, O_RDONLY);
-  if (load_elf(file, pcb) != result::success)
-    return result::failure;
+  if (auto ret = load_elf(file, pcb); ret != 0)
+    return ret;
 
   // Close files according to flags.
   os::vector<int> toclose;
@@ -202,11 +229,53 @@ result exec(const string &path, char *const *argv, char *const *envp) {
   for (auto fd : toclose)
     pcb->ftbl.deallocate(fd);
 
-  (void) argv; (void) envp;
-  // Yield. On next schedule, the trap frame would be set up properly.
+  char *usp = (char *) pcb->usp;
+  os::vector<char*> argvp, envpp;
+  // Copy the real contents of the strings.
+  for (char *const *p = envp; *p; p++) {
+    char *str = *p;
+    int len = strlen(str);
+    copy_to_user(usp -= len, str, len, pcb);
+    envpp.push_back(usp);
+  }
+  for (char *const *p = argv; *p; p++) {
+    char *str = *p;
+    int len = strlen(str);
+    copy_to_user(usp -= len, str, len, pcb);
+    argvp.push_back(usp);
+  }
+
+  // Copy the pointers.
+  // We copy envp pointers first, so that argv will be closer to stack top,
+  // as required by the ABI.
+  *(uintptr_t*) (usp -= 8) = 0;
+  for (int i = int(envpp.size()); i >= 0; i--) {
+    auto ptr = envpp[i];
+    copy_to_user(usp -= 8, &ptr, 8, pcb);
+  }
+
+  *(uintptr_t*) (usp -= 8) = 0;
+  for (int i = int(argvp.size()); i >= 0; i--) {
+    auto ptr = argvp[i];
+    copy_to_user(usp -= 8, &ptr, 8, pcb);
+  }
+
+  int argc = argvp.size();
+  copy_to_user(usp -= 4, &argc, 4, pcb);
+  pcb->usp = (va_t) usp;
+
   scheduler.add(pcb);
-  scheduler.dispatch();
-  return result::success;
+  return 0;
+}
+
+void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb) {
+  EnableAccessToUserMemory enable;
+  vma_map(usr, (char*) usr + len, pcb);
+  memcpy(usr, ker, len);
+}
+
+void copy_to_user(void *usr, void *ker, size_t len) {
+  copy_to_user(usr, ker, len, scheduler.active);
 }
 
 }

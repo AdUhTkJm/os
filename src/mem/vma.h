@@ -3,6 +3,7 @@
 
 #include "../utils/helper.h"
 #include "../fs/vfs.h"
+#include "ptable.h"
 
 #define PROT_READ      0x1
 #define PROT_WRITE     0x2
@@ -23,10 +24,14 @@ struct vma_t {
 
 // Map according to the current process's VMA.
 // Terminates the process when the pointer is not in any VMA.
-void vma_map_current(void *va);
+void vma_map_current(void *va, pte_t *pte = os::pt_root);
 
 // Map a range. Only maps the addresses that are currently unmapped.
 void vma_map_current(void *from, void *to);
+
+// Map a range. Only maps the addresses that are currently unmapped.
+struct pcb_t;
+void vma_map(void *from, void *to, pcb_t *pcb);
 
 }
 

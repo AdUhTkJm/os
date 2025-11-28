@@ -204,5 +204,5 @@ extern "C" void _start() {
     printf("about to exit\n");
     syscall(0, 60);
   }
-  for (;;) ;
+  syscall(0, 60);
 }

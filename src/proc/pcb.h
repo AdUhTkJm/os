@@ -69,6 +69,7 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   process_state status;   // Process status (running, sleeping etc.)
   pa_t pt_root;           // Root page table entry.
   va_t ksp;               // Kernel stack for this process.
+  va_t usp;               // User stack top for this process.
   va_t pc;                // Program counter.
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
@@ -122,7 +123,7 @@ int nextpid();
 int fork();
 
 // Replaces a process image.
-result exec(const string &path, char *const *argv, char *const *envp);
+int exec(const string &path, char *const *argv, char *const *envp);
 
 // Even though it does not return for now, it will eventually look as if it "returned".
 extern "C" void context_save(void *ctx, bool *ctx_valid);
@@ -138,9 +139,14 @@ pcb_t *make_kprocess(T fptr) {
   pcb->pc = (va_t) fptr;
   pcb->pid = nextpid();
   pcb->kproc = true;
+  // We aren't lazy-allocating here.
+  pcb->usp = (va_t) vmalloc<16>(16_kb);
   init(pcb);
   return pcb;
 }
+
+void copy_to_user(void *usr, void *ker, size_t len);
+void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb);
 
 }
 

@@ -79,7 +79,7 @@ struct elf_phdr_t {
 };
 
 // Changes the content of `pcb` by parsing the ELF file.
-result load_elf(file *content, pcb_t *pcb);
+int load_elf(file *content, pcb_t *pcb);
 
 }
 

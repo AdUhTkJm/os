@@ -5,6 +5,7 @@
 #include "../fs/initramfs.h"
 #include "../fs/devfs.h"
 #include "../fs/ext2.h"
+#include "../fs/tmpfs.h"
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
 #include "../proc/schedule.h"
@@ -79,9 +80,9 @@ void main_high() {
   os::virtio::probe();
 
   os::mount_initramfs();
-  // os::mount_ext2();
   os::init_plic();
   os::mount_dev();
+  os::mount_tmp();
   
   // Create an idle kernel process.
   scheduler.init();
@@ -94,7 +95,7 @@ void main_high() {
     panic("initramfs: cannot find /init");
   pcb_t *pcb = new pcb_t;
   pcb->pid = nextpid();
-  if (load_elf(init, pcb) == result::failure)
+  if (load_elf(init, pcb) != 0)
     panic("load_elf: cannot load /init");
   scheduler.add(pcb);
 

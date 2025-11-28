@@ -47,8 +47,7 @@ long syscall(trapframe *ksp) {
   }
   case 59: {
     // execve(const char*, char *const *, char *const *)
-    result r = exec((const char*) a0, (char *const*) a1, (char *const*) a2);
-    return r == result::success;
+    return exec((const char*) a0, (char *const*) a1, (char *const*) a2);
   }
   case 60: {
     // exit(ret_code)

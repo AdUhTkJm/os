@@ -6,13 +6,13 @@
 namespace os {
 
 // This inode does not own the data, and will not delete it on destruction.
-class ramfs_inode : public os::inode_impl<ramfs_inode> {
+class tmpfs_inode : public os::inode_impl<tmpfs_inode> {
   void *data = nullptr;
   size_t sz = 0;
 
   os::hashmap<string, inode*> children;
 public:
-  ramfs_inode(class fs *fs): inode_impl(fs) { }
+  tmpfs_inode(class fs *fs): inode_impl(fs) { }
 
   size_t read(size_t offset, void* buf, size_t len, int flags) override;
   size_t write(size_t offset, const void* buf, size_t len, int flags) override;
@@ -25,14 +25,15 @@ public:
   void to_dir() { type = Dir; }
 };
 
-class ramfs : public fs {
+class tmpfs : public fs {
 public:
-  ramfs();
-  ramfs_inode *get() override { return new ramfs_inode(this); }
+  tmpfs();
+  tmpfs_inode *get() override { return new tmpfs_inode(this); }
   void erase(inode *) override { }
 };
 
-extern static_storage<class ramfs> ramfs;
+extern static_storage<class tmpfs> tmpfs;
+void mount_tmp();
 
 }
 

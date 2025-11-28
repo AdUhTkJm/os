@@ -2,20 +2,21 @@
 #include "../mem/vma.h"
 #include "../mem/kalloc.h"
 #include "../mem/ptable.h"
+#include "../utils/errorcode.h"
 
 namespace os {
 
-result load_elf(file *content, pcb_t *pcb) {
+int load_elf(file *content, pcb_t *pcb) {
   if (!content)
-    return result::failure;
+    return -ENOENT;
   
   elf_header_t header;
   content->read(&header, sizeof(header));
 
   if (strncmp(header.e_ident, "\x7f""ELF", 4) != 0)
-    return result::failure;
+    return -ENOEXEC;
   if (header.e_machine != EM_MACHINE)
-    return result::failure;
+    return -ENOEXEC;
 
   pcb->status = Init;
   pcb->pc = header.e_entry;
@@ -31,7 +32,7 @@ result load_elf(file *content, pcb_t *pcb) {
     content->read(&phdr, sizeof(phdr));
     if (phdr.p_type == PT_LOAD) {
       if (phdr.p_memsz < phdr.p_filesz)
-        return result::failure;
+        return -ENOEXEC;
     
       // Read the content of the mapped section.
       auto before = content->seek(phdr.p_offset, file::begin);
@@ -57,7 +58,7 @@ result load_elf(file *content, pcb_t *pcb) {
 
   init_user(pcb);
   init(pcb);
-  return result::success;
+  return 0;
 }
 
 }

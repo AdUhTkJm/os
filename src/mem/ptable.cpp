@@ -1,5 +1,6 @@
 #include "ptable.h"
 #include "kalloc.h"
+#include "vma.h"
 #include "../driver/plic/plic.h"
 #include "../utils/libc.h"
 #include "../fdt/fdt.h"
@@ -55,9 +56,10 @@ namespace os {
 
 using namespace pt;
 
+// The existence of this isn't thread-safe. See what we can do about it.
 pte_t *pt_root, *kernel_pt_root;
 
-int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
+int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   os::TLBRefreshGuard guard(va);
 
   // The flags must occupy bits 0.. PTE_PPN_OFFSET-1.
@@ -71,12 +73,12 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   // Allocate a 1GB node.
   if (mode == MAP_1GB) {
     pte_t pte = (PA_LVL2(pa) << PTE_PPN2_OFFSET) | flags;
-    pt_root[VA_LVL2(va)] = pte;
+    root[VA_LVL2(va)] = pte;
     return 0;
   }
 
   // Find the L1 page table.
-  pte_t &pte_l2 = pt_root[VA_LVL2(va)];
+  pte_t &pte_l2 = root[VA_LVL2(va)];
   pa_t pa_pt_l1 = 0;
 
   // When the page table is invalid, allocate a 4KB frame for L1 page table.
@@ -160,12 +162,12 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   return 0;
 }
 
-unmap_ret_t punmap(va_t va, int mode) {
+unmap_ret_t punmap(va_t va, int mode, pte_t *root) {
   if (mode > 2 || mode < 0)
     return { 0, UNMAP_SIZE_MISMATCH };
 
   os::TLBRefreshGuard guard(va);
-  auto &pte_l2 = pt_root[VA_LVL2(va)];
+  auto &pte_l2 = root[VA_LVL2(va)];
 
   if (!is_valid(pte_l2))
     return { 0, UNMAP_NO_MAPPING };
@@ -208,8 +210,8 @@ unmap_ret_t punmap(va_t va, int mode) {
   return result;
 }
 
-pa_t to_pa(va_t va) {
-  pte_t pte_l2 = pt_root[VA_LVL2(va)];
+pa_t to_pa(va_t va, pte_t *root) {
+  pte_t pte_l2 = root[VA_LVL2(va)];
   if (!is_valid(pte_l2))
     return -1ul;
   if (is_leaf(pte_l2))
@@ -236,8 +238,8 @@ pa_t to_pa(va_t va) {
   return PTE_TO_PA(pte_l0) + VA_OFFSET(va);
 }
 
-int pte_flags(va_t va) {
-  pte_t pte_l2 = pt_root[VA_LVL2(va)];
+int pte_flags(va_t va, pte_t *root) {
+  pte_t pte_l2 = root[VA_LVL2(va)];
   if (!is_valid(pte_l2))
     return -1;
   if (is_leaf(pte_l2))

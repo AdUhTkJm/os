@@ -73,6 +73,11 @@ typedef uintptr_t pa_t;
 
 namespace os {
 
+// The active pt_root, virtual address.
+extern pte_t *pt_root;
+// The kernel's pt_root.
+extern pte_t *kernel_pt_root;
+
 /*
 Maps the given physical address into virtual address, with specified size.
 
@@ -80,9 +85,9 @@ Returns:
   - 0 for success.
   - 1 for invalid argument.
 */
-int pmap(pa_t pa, va_t va, int mode, unsigned flags);
-inline int pmap(pa_t pa, const void *va, int mode, unsigned flags) {
-  return pmap(pa, (va_t) va, mode, flags);
+int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root = pt_root);
+inline int pmap(pa_t pa, const void *va, int mode, unsigned flags, pte_t *root = pt_root) {
+  return pmap(pa, (va_t) va, mode, flags, root);
 }
 
 typedef enum {
@@ -96,11 +101,6 @@ typedef struct {
   unmap_status_t status;
 } unmap_ret_t;
 
-// The active pt_root, virtual address.
-extern pte_t *pt_root;
-// The kernel's pt_root.
-extern pte_t *kernel_pt_root;
-
 /*
 Unmaps the given virtual address. If it is mapped to some physical address,
 then the address must span the specified size. Otherwise, the behaviour is
@@ -108,8 +108,8 @@ undefined.
 Returns the physical address that this table is previously mapped to. If
 there is no such address, returns 0.
 */
-unmap_ret_t punmap(va_t va, int mode);
-inline unmap_ret_t punmap(const void *va, int mode) { return punmap((va_t) va, mode); }
+unmap_ret_t punmap(va_t va, int mode, pte_t *root = pt_root);
+inline unmap_ret_t punmap(const void *va, int mode, pte_t *root = pt_root) { return punmap((va_t) va, mode, root); }
 
 // Sv39 requires that the virtual address is sign-extended on bit 38 (highest bit).
 inline constexpr va_t sext(va_t x) {
@@ -124,12 +124,12 @@ inline constexpr va_t sext(va_t x) {
   return pa + KERNEL_OFFSET;
 }
 
-pa_t to_pa(va_t va);
-inline pa_t to_pa(const void *va) { return to_pa((va_t) va); }
+pa_t to_pa(va_t va, pte_t *root = pt_root);
+inline pa_t to_pa(const void *va, pte_t *root = pt_root) { return to_pa((va_t) va, root); }
 
 // Returns -1 when the PTE is not valid.
-int pte_flags(va_t va);
-inline int pte_flags(const void *va) { return pte_flags((va_t) va); }
+int pte_flags(va_t va, pte_t *root = pt_root);
+inline int pte_flags(const void *va, pte_t *root = pt_root) { return pte_flags((va_t) va, root); }
 
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);
@@ -176,15 +176,14 @@ struct TLBRefreshGuard {
 };
 
 struct EnableAccessToUserMemory {
+  reg_t sstatus;
+  
   EnableAccessToUserMemory() {
-    __asm__ volatile(
-      "csrs sstatus, %0"
-    :: "r"(1 << 18));
+    __asm__ volatile("csrr %0, sstatus" : "=r"(sstatus));
+    __asm__ volatile("csrs sstatus, %0" :: "r"(1 << 18));
   }
   ~EnableAccessToUserMemory() {
-    __asm__ volatile(
-      "csrc sstatus, %0"
-    :: "r"(1 << 18));
+    __asm__ volatile("csrw sstatus, %0" :: "r"(sstatus));
   }
 };
 
@@ -205,6 +204,8 @@ void mmwr(pa_t p, T value) {
   using U = underlying_type<T>::type;
   *(volatile U*) os::as_va(p) = (U) value;
 }
+
+void copy_to_user(void *usr, void *ker, size_t len);
 
 }
 #endif

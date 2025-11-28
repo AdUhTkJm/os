@@ -3,10 +3,8 @@
 
 namespace os {
 
-void vma_map_current(void *va) {
+void vma_map_single(void *va, pte_t *root, pcb_t *pcb) {
   EnableAccessToUserMemory enabler;
-
-  auto *pcb = scheduler.active;
 
   va_t addr = (va_t) va;
   size_t i = 0;
@@ -27,7 +25,7 @@ void vma_map_current(void *va) {
   if (vma.prot & PROT_READ) flags |= PTE_R;
   if (vma.prot & PROT_WRITE) flags |= PTE_W;
   auto va_page = rounddown<4_kb>(va);
-  os::pmap(pa, va_page, MAP_4KB, flags);
+  os::pmap(pa, va_page, MAP_4KB, flags, root);
 
   // Copy the contents if it exists.
   if (!vma.backup)
@@ -55,11 +53,24 @@ void vma_map_current(void *va) {
   vma.backup->read(va_page, PAGE_SIZE);
 }
 
+void vma_map_current(void *va, pte_t *root) {
+  return vma_map_single(va, root, scheduler.active);
+}
+
 void vma_map_current(void *from, void *to) {
   char *p = (char *) from, *q = (char *) to;
   for (; p < q; p += PAGE_SIZE) {
     if (pte_flags(p) == -1)
       vma_map_current(p);
+  }
+}
+
+void vma_map(void *from, void *to, pcb_t *pcb) {
+  char *p = (char *) from, *q = (char *) to;
+  pte_t *root = (pte_t *) as_va(pcb->pt_root);
+  for (; p < q; p += PAGE_SIZE) {
+    if (pte_flags(p, root) == -1)
+      vma_map_single(p, root, pcb);
   }
 }
 
