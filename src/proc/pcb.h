@@ -54,6 +54,7 @@ public:
   int allocate(file *f, int fd = -1);
   void deallocate(int fd);
   void clear();
+  int count(int fd) { return open.count(fd); }
   
   file *&operator[](int x) { return open[x]; }
   void set_desc(int fd, fddesc desc) { this->desc[fd] = desc; }
@@ -79,12 +80,14 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   process_file_table ftbl;// Process file table.
   ctxframe ctx;           // System call progress, for resuming blocking syscalls.
   os::intrusive_list<pcb_t> children;
+  int uid;
+  int gid;
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
   void clear();
-  void open_file(const string &name);
-  void close_file(const string &name);
+  int open_file(const string &name, int flags);
+  int close_file(int fd);
 
   // This is the final deletion. This cannot be done in clear(), because it
   // is called when this ksp is in use.
@@ -139,6 +142,7 @@ pcb_t *make_kprocess(T fptr) {
   pcb->pc = (va_t) fptr;
   pcb->pid = nextpid();
   pcb->kproc = true;
+  pcb->gid = pcb->uid = 0; // root
   // We aren't lazy-allocating here.
   pcb->usp = (va_t) vmalloc<16>(16_kb);
   init(pcb);

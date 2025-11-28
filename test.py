@@ -29,14 +29,14 @@ AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
-  "-ffreestanding", "-nostdlib",
+  "-ffreestanding", "-nostdlib", "-Wno-parentheses",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-Wno-invalid-offsetof",
+  "-Wno-invalid-offsetof", "-Wno-parentheses",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 SFLAGS = [

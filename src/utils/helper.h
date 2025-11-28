@@ -2,6 +2,7 @@
 #define HELPER_H
 
 #include "sbi.h"
+#include "errorcode.h"
 
 #if !defined(__clang__) && !defined(__GNUC__)
 #error This OS kernel must be compiled with clang or GNUC.

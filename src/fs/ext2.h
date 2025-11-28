@@ -92,23 +92,23 @@ class ext2 : public fs {
     uint32_t _resv1[3];
   };
 
-  virtio::block_device* disk;
   unsigned block_size;
   // The group descriptor table.
   os::vector<block_group> gdt;
+  inode *device;
 
   void update_superblock();
   void update_group_desc(uint32_t group_id);
 public:
-  ext2();
+  ext2(inode *device);
   ext2_inode *get() override;
   void erase(inode*) override;
+  bool has_backup() override { return true; }
 
   bool valid() { return superblock.magic == 0xef53; }
 };
 
-extern static_storage<ext2> ext2fs;
-void mount_ext2();
+fs *ext2_creator(const char *src);
 
 }
 

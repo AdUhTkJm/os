@@ -49,15 +49,16 @@ public:
 class initramfs : public fs {
 public:
   initramfs() {
-    auto rootnode = new initramfs_inode(this);
+    auto rootnode = new initramfs_inode(this, 0, 0);
     rootnode->type = inode::Dir;
     rootnode->name = "";
     rootnode->size = 0;
     root = new class dentry("", rootnode);
   }
 
-  initramfs_inode *get() override { return new initramfs_inode(this); }
+  initramfs_inode *get() override { return new initramfs_inode(this, 0, 0); }
   void erase(inode *) override { }
+  bool has_backup() override { return false; }
 };
 
 }

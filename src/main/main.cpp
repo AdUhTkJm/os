@@ -79,10 +79,14 @@ void main_high() {
   os::init_bitmap_kalloc();
   os::virtio::probe();
 
-  os::mount_initramfs();
+  os::mount_initramfs(); // Constructs vfs.
   os::init_plic();
   os::mount_dev();
   os::mount_tmp();
+
+  // Register known, mountable fs'es.
+  vfs->record("ext2", ext2_creator);
+  vfs->record("tmp", tmp_creator);
   
   // Create an idle kernel process.
   scheduler.init();
@@ -95,9 +99,11 @@ void main_high() {
     panic("initramfs: cannot find /init");
   pcb_t *pcb = new pcb_t;
   pcb->pid = nextpid();
+  pcb->uid = pcb->gid = 0;
   if (load_elf(init, pcb) != 0)
     panic("load_elf: cannot load /init");
   scheduler.add(pcb);
+  vfs->close(init);
 
   // Enable timer.
   sbi_set_timer(rv_rdtime() + 3000000);

@@ -2,7 +2,6 @@
 #include "../mem/vma.h"
 #include "../mem/kalloc.h"
 #include "../mem/ptable.h"
-#include "../utils/errorcode.h"
 
 namespace os {
 
@@ -50,6 +49,7 @@ int load_elf(file *content, pcb_t *pcb) {
         .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE,
         .backup = content, .offset = phdr.p_offset
       };
+      content->ref();
       pcb->vma.push_back(vma);
 
       vfree(text);

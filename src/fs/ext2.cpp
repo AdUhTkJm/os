@@ -1,5 +1,5 @@
 #include "ext2.h"
-#include "../driver/virtio/virtio.h"
+#include "../proc/schedule.h"
 
 namespace {
 
@@ -16,11 +16,11 @@ static_storage<ext2> ext2fs;
 // }
 
 // Note that read() is synchronous on boot, but asynchronous in user processes.
-ext2::ext2() {
-  disk = virtio::get(0);
-  char block[512];
-  disk->read(2, block);
-  memcpy(&superblock, block, sizeof(struct superblock));
+ext2::ext2(inode *device): device(device) {
+  constexpr auto sbsz = sizeof(struct superblock);
+  char block[sbsz];
+  device->read(1024, block, sbsz, 0);
+  memcpy(&superblock, block, sbsz);
   // Leave ext2 in an uninitialized state.
   if (superblock.magic != 0xef53)
     return;
@@ -34,8 +34,7 @@ ext2::ext2() {
 
   auto gdt_len = roundup(group_count * sizeof(block_group), block_size);
   char *buf = new char[gdt_len];
-  for (unsigned i = 0; i < gdt_len / 512; i++)
-    disk->read(gdt_start + i, buf + i * 512);
+  device->read(gdt_start, buf, gdt_len, 0);
   memcpy(gdt.data(), buf, gdt_len);
   delete[] buf;
   printk("ext2 initialized: groups = %d, block_size = %d\n", group_count, block_size);
@@ -50,10 +49,13 @@ void ext2::erase(inode *n) {
   (void) n;
 }
 
-void mount_ext2() {
-  ext2fs.construct();
-  if (!ext2fs.valid())
-    panic("cannot mount ext2fs");
+fs *ext2_creator(const char *src) {
+  auto pcb = scheduler.active;
+  int fd = pcb->open_file(src, 0);
+  inode *node = pcb->ftbl[fd]->node;
+  if (node->type != inode::BlockDevice)
+    return nullptr;
+  return new ext2(node);
 }
 
 }

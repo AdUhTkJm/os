@@ -7,6 +7,10 @@ enum error_code {
   EIO = 5,
   ENOEXEC = 8,
   EAGAIN = 11,
+  EACCES = 13,
+  EFAULT = 14,
+  EBUSY = 16,
+  ENOTDIR = 20,
   EISDIR = 21,
   EINVAL = 22,
 };

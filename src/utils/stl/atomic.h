@@ -24,7 +24,7 @@ public:
   /* implicit */ atomic(T t): t(t) { }
   atomic() {}
 
-  operator T() const { return load(); }
+  operator T() { return load(); }
 
   T fetch_add(T t) {
     synchronized syn(lock);

@@ -2,7 +2,6 @@
 #include "pcb.h"
 #include "schedule.h"
 #include "../mem/kalloc.h"
-#include "../utils/errorcode.h"
 
 namespace os {
 
@@ -22,7 +21,7 @@ int process_file_table::allocate(file *f, int fd) {
     if (!open.count(i)) {
       open[i] = f;
       desc[fd] = 0;
-      f->refcnt++;
+      f->ref();
       return i;
     }
   }
@@ -47,6 +46,54 @@ void pcb_t::clear() {
   pt_root = (pa_t) kernel_pt_root - KERNEL_OFFSET;
   ftbl.clear();
   status = Zombie;
+  for (const auto &vma : this->vma) {
+    if (vma.backup)
+      vma.backup->drop();
+  }
+}
+
+int pcb_t::open_file(const string &name, int flags) {
+  bool creatable = flags & O_CREAT;
+  bool write = bool(flags & O_RDWR) || bool(flags & O_WRONLY);
+  bool read = bool(flags & O_RDWR) || bool(flags & O_RDONLY);
+
+  // TODO: check search permission
+  auto maybe_dentry = vfs->lookup(name);
+  if (!maybe_dentry) {
+    if (!creatable)
+      return -maybe_dentry;
+
+    // TODO: create this file
+  }
+
+  auto dentry = *maybe_dentry;
+  inode *node = dentry->node;
+  if (node->type == inode::Dir && write)
+    return -EISDIR;
+
+  // Check the flags of node.
+  int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
+  if (uid != 0) {
+    // Skip check for root.
+
+    if (read && !(flags & (1 << bit + 2)))
+      return -EACCES;
+    
+    if (write && !(flags & (1 << bit + 1)))
+      return -EACCES; 
+  }
+
+  file *f = new file(node, flags);
+  int fd = ftbl.allocate(f);
+  return fd;
+}
+
+int pcb_t::close_file(int fd) {
+  if (!ftbl.count(fd))
+    return -EINVAL;
+  
+  ftbl.deallocate(fd);
+  return 0;
 }
 
 int nextpid() {
@@ -89,7 +136,7 @@ void init(pcb_t *pcb) {
   if (!console)
     panic("no console!");
   for (int i = 0; i < 3; i++)
-    pcb->ftbl.allocate(new file(console->node, O_RDWR), i);
+    pcb->ftbl.allocate(new file((*console)->node, O_RDWR), i);
 }
 
 void terminate(pcb_t *pcb, int ret) {
@@ -176,14 +223,34 @@ int fork() {
   // Shallow-copy the file table.
   child->ftbl = pcb->ftbl;
   for (auto [_, f] : child->ftbl)
-    f->refcnt++;
+    f->ref();
 
+  // Copy various information from parent.
   child->status = Ready;
   child->vma = pcb->vma;
   child->kproc = pcb->kproc;
+  child->uid = pcb->uid;
+  child->gid = pcb->gid;
   scheduler.add(child);
   return child->pid;
 }
+
+class File {
+  int fd;
+public:
+  File(const string &path, int flags) {
+    auto pcb = scheduler.active;
+    fd = pcb->open_file(path, flags);
+  }
+  ~File() {
+    auto pcb = scheduler.active;
+    pcb->close_file(fd);
+  }
+  operator file*() const {
+    auto pcb = scheduler.active;
+    return pcb->ftbl[fd];
+  }
+};
 
 /*
 +---------------------------+  <-- usp
@@ -215,8 +282,8 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   pcb->vma.clear();
   
   // This performs the initialization of pcb.
-  File file(path, O_RDONLY);
-  if (auto ret = load_elf(file, pcb); ret != 0)
+  int fd = pcb->open_file(path, O_RDONLY);
+  if (auto ret = load_elf(pcb->ftbl[fd], pcb); ret != 0)
     return ret;
 
   // Close files according to flags.

@@ -42,10 +42,9 @@ dentry* vfs::check_mount(dentry* cur) {
   return nullptr;
 }
 
-dentry *vfs::lookup(const string &path) {
+errable<dentry*> vfs::lookup(const string &path) {
   // We assume the first mounted FS is the root of the entire VFS.
-  if (mounts.empty())
-    return nullptr;
+  assert(!mounts.empty());
 
   if (path == "/")
     return mounts[0].root;
@@ -54,7 +53,7 @@ dentry *vfs::lookup(const string &path) {
 
   for (auto name : split(path, "/")) {
     if (!cur || cur->node->type != inode::Dir)
-      return nullptr;
+      return -ENOTDIR;
 
     if (dentry *root = check_mount(cur))
       cur = root;
@@ -63,8 +62,9 @@ dentry *vfs::lookup(const string &path) {
       continue;
 
     if (name == "..") {
-      if (!(cur = cur->parent))
-        return nullptr;
+      // Only `..` won't have a parent.
+      if (cur->parent)
+        cur = cur->parent;
     }
 
     auto pair = os::pair { cur->node, name };
@@ -79,44 +79,70 @@ dentry *vfs::lookup(const string &path) {
       continue;
     }
 
-    return nullptr;
+    return -ENOENT;
   }
   return cur;
 }
 
 file *vfs::open(const string &path, int flags) {
-  dentry *dentry = lookup(path);
+  auto dentry = lookup(path);
   if (!dentry)
     return nullptr;
 
-  file *f = new file(dentry->node, flags);
+  file *f = new file((*dentry)->node, flags);
   return f;
 }
 
 void vfs::close(file *f) {
-  if (!--f->refcnt)
-    delete f;
+  f->drop();
 }
 
-void vfs::mount(const string &fsname, dentry *host, dentry *root) {
-  (void) fsname;
+void vfs::mount(dentry *host, dentry *root) {
   mounts.push_back({ host, root });
+}
+
+fs *vfs::get(const string &fsname, const char *src) {
+  if (!creators.count(fsname))
+    return nullptr;
+  return creators[fsname](src);
+}
+
+void vfs::record(const string &fsname, fs *(*creator)(const char*)) {
+  creators[fsname] = creator;
 }
 
 void inode::drop() {
   if (--refcnt)
     return;
   
-  fs->erase(this);
-  delete this;
+  bool backed = fs->has_backup();
+  if (backed || lnkcnt == 0) {
+    fs->erase(this);
+    delete this;
+  }
+}
+
+void inode::unlinked() {
+  if (--lnkcnt)
+    return;
+
+  if (refcnt == 0) {
+    fs->erase(this);
+    delete this;
+  }
 }
 
 file::~file() {
   node->drop();
 }
 
-file::file(inode *node, int flags): node(node), offset(0), flags(flags), refcnt(1) {
+file::file(inode *node, int flags): refcnt(1), node(node), offset(0), flags(flags) {
   node->ref();
+}
+
+void file::drop() {
+  if (!--refcnt)
+    delete this;
 }
 
 }

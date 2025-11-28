@@ -3,6 +3,7 @@
 
 #include "../utils/helper.h"
 #include "../utils/stl/atomic.h"
+#include "../utils/stl/optional.h"
 
 #define O_RDONLY    00000000 /* Open for reading only */
 #define O_WRONLY    00000001 /* Open for writing only */
@@ -33,25 +34,36 @@ class dentry;
 
 class fs {
 public:
+  fs() {}
+  fs(const fs &) = delete;
+  fs &operator=(const fs &) = delete;
+
   dentry *root;
 
   // Get a free inode in the FS.
   // This will allocate new memory.
-  virtual inode *get();
+  virtual inode *get() = 0;
   // Mark the inode as unused in the FS.
   // This does not deallocate the inode.
-  virtual void erase(inode *);
+  virtual void erase(inode *) = 0;
+
+  // If its inode has a backup on disk, then we can delete inodes when refcnt drops to zero.
+  // If it is not, we can only delete when its link count drops to zero.
+  virtual bool has_backup() = 0;
 };
 
 class file {
+  atomic<unsigned> refcnt;
 public:
   inode *node;
   size_t offset;
   int flags;
-  atomic<unsigned> refcnt;
   enum whence {
     begin, current
   };
+
+  void drop();
+  void ref() { refcnt++; }
 
   file(inode *node, int flags);
   ~file();
@@ -63,11 +75,14 @@ public:
 };
 
 class inode {
-  atomic<unsigned> refcnt;
+  atomic<unsigned> refcnt, lnkcnt;
 public:
+  inode(const inode &) = delete;
+  inode &operator=(const inode &) = delete;
+
   const uint64_t rtti;
 
-  enum filetype { File, Dir, Link };
+  enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket };
 
   virtual ~inode() = default;
   virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;
@@ -84,14 +99,17 @@ public:
   // Possibly deletes itself when refcount drops to zero.
   void drop();
   void ref() { refcnt++; }
+  void unlinked();
+  void linked() { lnkcnt++; }
 
   string name;
   size_t size;
   filetype type;
-  int flags;
   class fs *fs;
+  int flags;
+  int uid, gid;
 
-  inode(class fs *fs, uint64_t rtti): rtti(rtti), fs(fs) { refcnt = 1; }
+  inode(class fs *fs, int uid, int gid, uint64_t rtti): rtti(rtti), fs(fs), uid(uid), gid(gid) { refcnt = 1; }
 };
 
 template<class T>
@@ -107,7 +125,7 @@ class inode_impl : public inode {
   };
   constexpr static uint64_t ID = __hash(__name());
 public:
-  inode_impl(class fs *fs): inode(fs, ID) {}
+  inode_impl(class fs *fs, int uid, int gid): inode(fs, uid, gid, ID) {}
   static bool classof(inode *p) {
     return p->rtti == ID;
   }
@@ -138,16 +156,26 @@ class vfs {
   dentry *root = nullptr;
   // TODO: make it an LRU cache.
   os::hashmap<pair<inode*, string>, dentry*> dcache;
+  // The way to create a new `fs` structure from the opaque `source`.
+  // This is limited by the way of system call; we can't use templates.
+  os::hashmap<string, fs *(*)(const char *)> creators;
 
   dentry *check_mount(dentry *cur);
 public:
   vfs(dentry *root): root(root) { }
 
-  dentry *lookup(const string &path);
+  // Returns the (optional) entry and an error code.
+  errable<dentry *> lookup(const string &path);
+  // When there is a process, use `pcb->open_file` instead. This is for boot.
   file *open(const string &path, int flags);
   void close(file *f);
 
-  void mount(const string &fsname, dentry *host, dentry *root);
+  void mount(dentry *host, dentry *root);
+  bool mounted(dentry *host) { return check_mount(host) != nullptr; }
+
+  // Constructs a new in-memory `fs` structure according to the given fs.
+  fs *get(const string &fsname, const char *src);
+  void record(const string &fsname, fs*(*creator)(const char*));
 };
 
 class SeekGuard {
@@ -161,16 +189,6 @@ public:
 };
 
 extern os::static_storage<vfs> vfs;
-
-class File {
-  file *f;
-public:
-  File(const string &path, int flags) { f = vfs->open(path, flags); }
-  ~File() { vfs->close(f); }
-  operator file*() const { return f; }
-};
-
-
 }
 
 #endif

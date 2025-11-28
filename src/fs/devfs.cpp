@@ -1,5 +1,6 @@
 #include "devfs.h"
 #include "../driver/plic/plic.h"
+#include "../driver/virtio/virtio.h"
 #include "../proc/schedule.h"
 #include "../utils/errorcode.h"
 
@@ -72,7 +73,7 @@ void console_inode::wake() {
 }
 
 devfs::devfs() {
-  auto node = new devroot(this);
+  auto node = new devroot(this, 0, 0);
   root = new dentry("/dev", node);
 }
 
@@ -84,7 +85,7 @@ void mount_dev() {
   if (!dentry)
     panic("devfs: cannot find /dev");
   
-  vfs->mount("dev", dentry, root);
+  vfs->mount(*dentry, root);
 }
 
 }

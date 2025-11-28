@@ -190,7 +190,8 @@ result block_device::read_legacy(uint64_t lba, void *buffer) {
   if (scheduler.active->pid == -1) {
     volatile int timeout = 10000000;
     while (mmrd<uint8_t>(stat) == 0xff) {
-      if ((timeout -= 1) == 0) {
+      timeout -= 1;
+      if (timeout == 0) {
         printk("Error: VirtIO request timed out.\n");
         return result::failure;
       }

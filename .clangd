@@ -1,6 +1,7 @@
 CompileFlags:
   Add:
     - -Wno-unused-includes
+    - -Wno-shift-op-parentheses
 Diagnostics:
   Suppress:
     - -Wunused-includes

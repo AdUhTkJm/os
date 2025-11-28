@@ -1,4 +1,5 @@
 #include "tmpfs.h"
+#include "../proc/schedule.h"
 
 namespace os {
 
@@ -44,7 +45,7 @@ inode *tmpfs_inode::lookup(const string &name) {
   return children[name];
 }
 
-tmpfs::tmpfs() {
+tmpfs::tmpfs(int uid, int gid): uid(uid), gid(gid) {
   auto node = get();
   node->to_dir();
   root = new dentry("tmp", node);
@@ -53,9 +54,15 @@ tmpfs::tmpfs() {
 static_storage<class tmpfs> tmpfs;
 
 void mount_tmp() {
-  tmpfs.construct();
+  tmpfs.construct(0, 0);
   auto mountpoint = vfs->lookup("/tmp");
-  vfs->mount("tmp", mountpoint, tmpfs->root);
+  assert(mountpoint);
+  vfs->mount(*mountpoint, tmpfs->root);
+}
+
+fs *tmp_creator(const char*) {
+  pcb_t *pcb = scheduler.active;
+  return new class tmpfs(pcb->uid, pcb->gid);
 }
 
 }

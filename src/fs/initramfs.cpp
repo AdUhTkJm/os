@@ -47,6 +47,7 @@ initramfs_inode *initramfs_inode::load(const string &name, filetype ty, size_t s
   child->size = sz;
   child->data = ptr;
   children[child->name] = child;
+  child->linked();
   return child;
 }
 
@@ -77,7 +78,7 @@ void mount_initramfs() {
   auto *dentry = initramfs->root;
   inode *root = dentry->node;
   vfs.construct(dentry);
-  vfs->mount("initram", dentry, dentry);
+  vfs->mount(dentry, dentry);
   
   for (auto *cpio = (cpio_newc_header_t *) initrd_start;;) {
     if (strncmp(cpio->magic, "070701", 6) != 0)
