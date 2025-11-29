@@ -54,7 +54,7 @@ dentry* vfs::check_mount(dentry* cur) {
   return nullptr;
 }
 
-errable<dentry*> vfs::lookup(const string &path) {
+expected<dentry*> vfs::lookup(const string &path) {
   // We assume the first mounted FS is the root of the entire VFS.
   assert(!mounts.empty());
 
@@ -115,13 +115,13 @@ void vfs::mount(dentry *host, dentry *root) {
   mounts.push_back({ host, root });
 }
 
-fs *vfs::get(const string &fsname, const char *src) {
+expected<fs*> vfs::get(const string &fsname, const char *src) {
   if (!creators.count(fsname))
-    return nullptr;
+    return -EINVAL;
   return creators[fsname](src);
 }
 
-void vfs::record(const string &fsname, fs *(*creator)(const char*)) {
+void vfs::record(const string &fsname, expected<fs*>(*creator)(const char*)) {
   creators[fsname] = creator;
 }
 

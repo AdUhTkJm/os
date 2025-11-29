@@ -42,10 +42,10 @@ int tmpfs_inode::create(const string &name, filetype ty) {
   return 0;
 }
 
-os::vector<inode*> tmpfs_inode::list() {
-  os::vector<inode*> result;
-  for (auto [_, f] : children)
-    result.push_back(f);
+os::vector<inode::item> tmpfs_inode::list() {
+  os::vector<item> result;
+  for (auto [name, inode] : children)
+    result.push_back({ .handle = (long) inode, .name = name });
   return result;
 }
 
@@ -68,7 +68,7 @@ void mount_tmp() {
   vfs->mount(*mountpoint, tmpfs->root);
 }
 
-fs *tmp_creator(const char*) {
+expected<fs*> tmp_creator(const char*) {
   pcb_t *pcb = scheduler.active;
   return new class tmpfs(pcb->uid, pcb->gid);
 }

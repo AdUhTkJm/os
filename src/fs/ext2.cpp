@@ -49,12 +49,14 @@ void ext2::erase(inode *n) {
   (void) n;
 }
 
-fs *ext2_creator(const char *src) {
+expected<fs*> ext2_creator(const char *src) {
   auto pcb = scheduler.active;
   int fd = pcb->open_file(src, 0);
+  if (fd < 0)
+    return -EBADF;
   inode *node = pcb->ftbl[fd]->node;
   if (node->type != inode::BlockDevice)
-    return nullptr;
+    return -ENOTBLK;
   return new ext2(node);
 }
 

@@ -4,11 +4,14 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "../../mem/ptable.h"
+#include "../../fs/devfs.h"
 
 /*
 For VirtIO specification, see
 https://docs.oasis-open.org/virtio/virtio/v1.3/csd01/virtio-v1.3-csd01.pdf
 */
+
+namespace os { struct pcb_t; }
 
 namespace os::virtio {
 
@@ -148,11 +151,12 @@ static_assert(offsetof(queue_legacy, used) % PAGE_SIZE == 0);
 
 }
 
-class block_device {
+class block_device : public os::block_device {
   pa_t base;
   void *queue; // Either queue or queue_legacy.
   int descid;
   bool legacy;
+  os::list<pcb_t*> wait;
 
   struct request {
     uint32_t type;
@@ -174,14 +178,17 @@ class block_device {
   vq::desc &next_descriptor();
   uint16_t indexof(const vq::desc &);
 
-  result read_legacy(uint64_t lba, void *buffer);
+  int read_legacy(uint64_t lba, void *buffer);
+  int write_legacy(uint64_t lba, const void *buffer);
+  friend void block_device_handler(int irq);
 public:
   block_device(const device &, bool legacy);
   block_device(const block_device &) = delete;
   block_device &operator=(const block_device &) = delete;
 
   // For operation specifications, see 5.2.6.
-  result read(uint64_t lba, void *buffer);
+  int read(uint64_t lba, void *buffer) override;
+  int write(uint64_t lba, const void *buffer) override;
 };
 
 void probe();

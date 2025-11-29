@@ -3,45 +3,70 @@
 #include "../../mem/ptable.h"
 #include "../../fs/devfs.h"
 
-namespace os {
+namespace {
+  
+void console_input_handler(int) {
+  // Read the register.
+  char c = os::mmrd<char>(UART_BASE + UART_RBR);
+  os::console_input_buf->push_back(c);
+  os::console->wake();
+  
+  // Ctrl+C
+  if (c == 0x03)
+    sbi_system_reset();
+}
+
+}
+
+namespace os {  
 
 static_storage<ring_buffer<char>> console_input_buf;
 
-// See https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc
-void init_plic() {
+}
+
+namespace os::plic {
+
+static_storage<hashmap<int, void(*)(int)>> handlers;
+
+void enable(int device) {
   // Set priority of interrupt #10 to 1.
-  *(volatile unsigned*) as_va(PLIC_BASE + UART0_IRQ * 4) = 1;
+  mmwr(PLIC_BASE + device * 4, 1u);
   // Enable interrupt #10.
-  *(volatile unsigned*) as_va(PLIC_BASE + PLIC_ENABLE_S_OFFSET) |= (1 << UART0_IRQ);
-  // Set priority threshold #10 (<= will be masked) to 0.
-  *(volatile unsigned*) as_va(PLIC_BASE + PLIC_THRESHOLD_S_OFFSET) = 0;
-  *(volatile unsigned char*) as_va(UART_BASE + UART_LCR) = 0x03;
-  *(volatile unsigned char*) as_va(UART_BASE + 1) = 1;
-  *(volatile unsigned char*) as_va(UART_BASE) = 0;
+  // We must access this on 4-byte boundary, but note that the argument of as_va is byte-sized.
+  *(volatile unsigned*) as_va(PLIC_BASE + PLIC_ENABLE_S_OFFSET + 4 * (device / 32)) |= (1 << device % 32);
+}
+
+// See https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc
+void init() {
+  enable(UART0_IRQ);
+  // Set priority threshold of the hart to 0. (priority <= 0 will be masked)
+  mmwr(PLIC_BASE + PLIC_THRESHOLD_S_OFFSET, 0u);
+
+  // Also set up the UART device here - able to debug as soon as possible.
+  mmwr<unsigned char>(UART_BASE + UART_LCR, 0x03);
+  mmwr<unsigned char>(UART_BASE + 1, 1);
+  mmwr<unsigned char>(UART_BASE, 0);
   
   devfs.construct();
   console.construct();
   console_input_buf.construct();
+  handlers.construct();
+
+  record(UART0_IRQ, console_input_handler);
 }
 
-void handle_plic_interrupt() {
+void handle() {
   // Claim the interrupt to get the IRQ ID.
-  unsigned irq = *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET);
+  unsigned irq = mmrd<unsigned>(PLIC_BASE + PLIC_CLAIM_S_OFFSET);
 
-  if (irq == UART0_IRQ) {
-    // Read the register.
-    char c = *(volatile unsigned char*) as_va(UART_BASE + UART_RBR);
-    *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET) = irq;
-    console_input_buf->push_back(c);
-    console->wake();
-    
-    // Ctrl+C
-    if (c == 0x03) {
-      sbi_system_reset();
-    }
-  } else if (irq != 0) {
-    *(volatile unsigned*) as_va(PLIC_BASE + PLIC_CLAIM_S_OFFSET) = irq;
-  }
+  if (handlers->count(irq))
+    handlers->at(irq)(irq);
+  
+  mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
+}
+
+void record(int device, void(*handler)(int)) {
+  (*handlers)[device] = handler;
 }
 
 }

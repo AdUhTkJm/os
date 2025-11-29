@@ -4,6 +4,7 @@
 #include "../driver/plic/plic.h"
 #include "../utils/libc.h"
 #include "../fdt/fdt.h"
+#include "../proc/schedule.h"
 
 void build_page_list();
 void main_high();
@@ -55,9 +56,6 @@ namespace {
 namespace os {
 
 using namespace pt;
-
-// The existence of this isn't thread-safe. See what we can do about it.
-pte_t *pt_root, *kernel_pt_root;
 
 int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   os::TLBRefreshGuard guard(va);
@@ -162,55 +160,70 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   return 0;
 }
 
-unmap_ret_t punmap(va_t va, int mode, pte_t *root) {
+int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
+  return pmap(pa, va, mode, flags, pt_root());
+}
+
+expected<pa_t> punmap(va_t va, int mode, pte_t *root) {
   if (mode > 2 || mode < 0)
-    return { 0, UNMAP_SIZE_MISMATCH };
+    return -BADSIZE;
 
   os::TLBRefreshGuard guard(va);
   auto &pte_l2 = root[VA_LVL2(va)];
 
   if (!is_valid(pte_l2))
-    return { 0, UNMAP_NO_MAPPING };
+    return -MAPLESS;
 
   if (mode == MAP_1GB) {
     if (!is_leaf(pte_l2))
-      return { 0, UNMAP_SIZE_MISMATCH };
+      return -BADSIZE;
 
-    unmap_ret_t result = { PTE_TO_PA(pte_l2), UNMAP_OK };
+    auto result = PTE_TO_PA(pte_l2);
     pte_l2 = 0;
     return result;
   }
   if (is_leaf(pte_l2))
-    return { 0, UNMAP_SIZE_MISMATCH };
+    return -BADSIZE;
 
   auto *pt_l1 = (pte_t *) PTE_TO_VA(pte_l2);
   pte_t &pte_l1 = pt_l1[VA_LVL1(va)];
 
   if (!is_valid(pte_l1))
-    return { 0, UNMAP_NO_MAPPING };
+    return -MAPLESS;
 
   if (mode == MAP_2MB) {
     if (!is_leaf(pte_l1))
-      return { 0, UNMAP_SIZE_MISMATCH };
+      return -BADSIZE;
 
-    unmap_ret_t result = { PTE_TO_PA(pte_l1), UNMAP_OK };
+    auto result = PTE_TO_PA(pte_l1);
     pte_l1 = 0;
     return result;
   }
   if (is_leaf(pte_l1))
-    return { 0, UNMAP_SIZE_MISMATCH };
+    return -BADSIZE;
 
   auto *pt_l0 = (pte_t *) PTE_TO_VA(pte_l1);
   pte_t &pte_l0 = pt_l0[VA_LVL0(va)];
   if (!is_valid(pte_l0))
-    return { 0, UNMAP_NO_MAPPING };
+    return -MAPLESS;
 
-  unmap_ret_t result = { PTE_TO_PA(pte_l0), UNMAP_OK };
+  auto result = PTE_TO_PA(pte_l0);
   pte_l0 = 0;
   return result;
 }
 
-pa_t to_pa(va_t va, pte_t *root) {
+expected<pa_t> punmap(va_t va, int mode) {
+  return punmap(va, mode, pt_root());
+}
+
+pte_t *pt_root() {
+  [[unlikely]] if (onboot)
+    return (pte_t *) as_va(__kernel_pt_root);
+
+  return (pte_t *) as_va(scheduler.active->pt_root);
+}
+
+pa_t to_pa(va_t va, const pte_t *root) {
   pte_t pte_l2 = root[VA_LVL2(va)];
   if (!is_valid(pte_l2))
     return -1ul;
@@ -238,7 +251,11 @@ pa_t to_pa(va_t va, pte_t *root) {
   return PTE_TO_PA(pte_l0) + VA_OFFSET(va);
 }
 
-int pte_flags(va_t va, pte_t *root) {
+pa_t to_pa(va_t va) {
+  return to_pa(va, pt_root());
+}
+
+int pte_flags(va_t va, const pte_t *root) {
   pte_t pte_l2 = root[VA_LVL2(va)];
   if (!is_valid(pte_l2))
     return -1;
@@ -259,6 +276,10 @@ int pte_flags(va_t va, pte_t *root) {
     return -1;
 
   return PTE_FLAGS(pte_l0);
+}
+
+int pte_flags(va_t va) {
+  return pte_flags(va, pt_root());
 }
 
 namespace pt {

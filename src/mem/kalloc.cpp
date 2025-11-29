@@ -103,8 +103,8 @@ void *vm_alloc_pages(size_t total, int flags) {
     // Out of physical memory. Free all obtained memory.
     if (!frame) {
       for (size_t j = 0; j < i; ++j) {
-        auto [pa, status] = punmap(base + j * PAGE_SIZE, MAP_4KB);
-        pfree(pa);
+        auto pa = punmap(base + j * PAGE_SIZE, MAP_4KB);
+        pfree(*pa);
         vmmap[index + j] = 0;
       }
       return nullptr;
@@ -122,8 +122,8 @@ void vm_free_pages(void *va, size_t total) {
   size_t index = (base - VM_BASE) / PAGE_SIZE;
   for (size_t i = 0; i < total; ++i) {
     uintptr_t v = base + i * PAGE_SIZE;
-    auto [p, status] = punmap(v, MAP_4KB);
-    pfree(p);
+    auto p = punmap(v, MAP_4KB);
+    pfree(*p);
     vmmap[index + i] = 0;
   }
 }
@@ -251,7 +251,7 @@ void init_freelist_kalloc() {
   // We use __builtin_assume_aligned, or otherwise the final
   // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
   // single `sd`.
-  pa_t begin = to_pa(__kernel_end);
+  pa_t begin = (pa_t) __kernel_end - KERNEL_OFFSET;
   pa_t end = begin + FREE_LIST_SIZE * PAGE_SIZE;
 
   for (pa_t p = begin; p != end; p += PAGE_SIZE)

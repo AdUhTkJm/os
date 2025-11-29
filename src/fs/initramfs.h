@@ -43,7 +43,7 @@ public:
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
   int create(const string &name, filetype ty) override;
   inode *lookup(const string &name) override;
-  vector<inode*> list() override;
+  vector<item> list() override;
 };
 
 class initramfs : public fs {

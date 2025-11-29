@@ -1,4 +1,6 @@
 #include "virtio.h"
+#include "../plic/plic.h"
+#include "../../fs/devfs.h"
 #include "../../fdt/fdt.h"
 #include "../../mem/kalloc.h"
 #include "../../proc/schedule.h"
@@ -16,6 +18,18 @@ int block_device_cnt = 0;
 namespace os::virtio {
 
 static_storage<os::hashmap<int, block_device*>> disks;
+static_storage<os::hashmap<int, block_device*>> intr;
+
+void block_device_handler(int irq) {
+  if (!intr->count(irq))
+    return;
+
+  printk("seen irq: %d\n", irq);
+  block_device *dev = intr->at(irq);
+  auto pcb = dev->wait.front();
+  dev->wait.pop_front();
+  scheduler.wakeup(pcb);
+}
 
 // Configures the underlying device.
 // See section 3.1.1.
@@ -149,7 +163,7 @@ uint16_t block_device::indexof(const vq::desc &desc) {
 }
 
 // The lba is the logical block address.
-result block_device::read_legacy(uint64_t lba, void *buffer) {
+int block_device::read_legacy(uint64_t lba, void *buffer) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
   *(request_legacy *) as_va(req) = request_legacy {
     .type = 0, /* Read */
@@ -183,36 +197,71 @@ result block_device::read_legacy(uint64_t lba, void *buffer) {
   queue->avail.idx++;
 
   // Tell device that a new request has come.
-  __asm__ volatile ("fence w,rw" ::: "memory");
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   
-  // Spinwait when there is no current process.
-  if (scheduler.active->pid == -1) {
-    volatile int timeout = 10000000;
-    while (mmrd<uint8_t>(stat) == 0xff) {
-      timeout -= 1;
-      if (timeout == 0) {
-        printk("Error: VirtIO request timed out.\n");
-        return result::failure;
-      }
-    }
-  }
+  wait.push_back(scheduler.active);
+  suspend();
 
   auto status = mmrd<uint8_t>(stat);
   if (status == 0) {
-    // hexdump((void *) as_va(this->buffer), 512);
     memcpy(buffer, (void*) as_va(this->buffer), 512);
-    return result::success;
+    return 0;
   }
 
   // Status 1 = error, 2 = unsupported
-  printk("failure: %d\n", status);
-  return result::failure;
+  return status;
 }
 
-result block_device::read(uint64_t lba, void *buffer) {
+int block_device::write_legacy(uint64_t lba, const void *buffer) {
+  // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
+  *(request_legacy *) as_va(req) = request_legacy {
+    .type = 1, /* Write */
+    .reserved = 0,
+    .sector = lba,
+  };
+  
+  mmwr(stat, uint8_t(0xff));
+  memcpy((void*) as_va(this->buffer), buffer, 512);
+
+  vq::desc &d1 = next_descriptor();
+  vq::desc &d2 = next_descriptor();
+  vq::desc &d3 = next_descriptor();
+  d1.addr = req;
+  d1.len = sizeof(request_legacy);
+  d1.flags = vq::descflags::HAS_NEXT;
+  d1.next = indexof(d2);
+
+  d2.addr = this->buffer;
+  d2.len = 512;
+  d2.flags = vq::descflags::HAS_NEXT;
+  d2.next = indexof(d3);
+
+  d3.addr = stat;
+  d3.len = 1;
+  d3.flags = vq::descflags::WRITEONLY;
+  d3.next = 0;
+
+  // Put the head of chain into available ring for the device to read.
+  auto queue = (vq::queue_legacy*) this->queue;
+  queue->avail.ring[queue->avail.idx % vq::size] = indexof(d1);
+  queue->avail.idx++;
+
+  // Tell device that a new request has come.
+  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
+
+  auto status = mmrd<uint8_t>(stat);
+  return status;
+}
+
+int block_device::read(uint64_t lba, void *buffer) {
   if (legacy)
     return read_legacy(lba, buffer);
+  assert(false && "NYI for non-legacy devices");
+}
+
+int block_device::write(size_t lba, const void *buffer) {
+  if (legacy)
+    return write_legacy(lba, buffer);
   assert(false && "NYI for non-legacy devices");
 }
 
@@ -243,6 +292,13 @@ void probe() {
     return WalkResult::Continue;
   });
 
+  auto dentry = vfs->lookup("/dev");
+  if (!dentry)
+    panic("virtio: cannot find /dev");
+  auto devnode = dyn_cast<devroot>((*dentry)->node);
+  if (!devnode)
+    panic("virtio: /dev not properly mounted");
+
   // We only consider mmio devices for now.
   // See section 4.2.2 of the spec.
   disks.construct();
@@ -261,7 +317,18 @@ void probe() {
       continue;
 
     auto dev = new block_device(device, legacy);
-    (*disks)[block_device_cnt++] = dev;
+    (*disks)[block_device_cnt] = dev;
+
+    // Set up PLIC interrupt.
+    plic::enable(device.interrupt);
+    plic::record(device.interrupt, block_device_handler);
+
+    // Create a node in devfs.
+    char buf[4] = "sda";
+    buf[2] += block_device_cnt; // sda, sdb, sdc ...
+    devnode->record(buf, new block_inode(dev));
+
+    block_device_cnt++;
   }
 }
 

@@ -48,7 +48,7 @@ public:
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
   int create(const string &name, filetype ty) override;
   inode *lookup(const string &name) override;
-  vector<inode*> list() override;
+  vector<item> list() override;
 };
 
 class ext2 : public fs {
@@ -108,7 +108,7 @@ public:
   bool valid() { return superblock.magic == 0xef53; }
 };
 
-fs *ext2_creator(const char *src);
+expected<fs*> ext2_creator(const char *src);
 
 }
 

@@ -55,11 +55,13 @@ void idle() {
     __asm__ volatile("wfi");
 }
 
+bool os::onboot = true;
+
 void main_high() {
   // Set up page table.
   memset(__bss_begin, 0, __bss_end - __bss_begin);
-  kernel_pt_root = pt_root = (pte_t *) as_va((pa_t) 0x80201000);
-  punmap((va_t) 0x80000000ul, MAP_1GB);
+  auto pt_root = (pte_t *) as_va((pa_t) 0x80201000);
+  punmap((va_t) 0x80000000ul, MAP_1GB, pt_root);
 
   // Set up free list allocator.
   os::init_freelist_kalloc();
@@ -68,7 +70,10 @@ void main_high() {
   boot_pcb.construct();
   RD(sp, boot_pcb->ksp);
   boot_pcb->pid = -1; // This is not a valid process.
+  boot_pcb->pt_root = 0x80201000;
   scheduler.active = &boot_pcb;
+
+  onboot = false;
 
   // Verify FDT.
   pa_t pfdt = *(pa_t *) as_va(0x80202010);
@@ -77,12 +82,13 @@ void main_high() {
   fdt::check();
   
   os::init_bitmap_kalloc();
-  os::virtio::probe();
 
   os::mount_initramfs(); // Constructs vfs.
-  os::init_plic();
+  os::plic::init();
   os::mount_dev();
   os::mount_tmp();
+  
+  os::virtio::probe();
 
   // Register known, mountable fs'es.
   vfs->record("ext2", ext2_creator);

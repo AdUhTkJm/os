@@ -18,7 +18,7 @@ public:
 
   int create(const string &name, filetype ty) override;
   inode *lookup(const string &name) override;
-  os::vector<inode *> list() override;
+  os::vector<item> list() override;
 
   void load(void *data, size_t sz);
 };
@@ -34,7 +34,7 @@ public:
 
 extern static_storage<class tmpfs> tmpfs;
 void mount_tmp();
-fs *tmp_creator(const char*);
+expected<fs*> tmp_creator(const char*);
 
 }
 

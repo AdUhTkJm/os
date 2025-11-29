@@ -199,22 +199,23 @@ extern "C" void _start() {
   syscall(fd, (reg_t) "Hello World!\n", 13, 1);
 
   int pid = syscall(57);
-  printf("forked, pid = %d\n", pid);
   if (pid == 0) {
-    printf("open file (sub): %d\n", fd);
     // lseek
     syscall(fd, 0, 0, 8);
     char value[13];
     // read
-    int rd = syscall(fd, (reg_t) value, 13, 0);
+    syscall(fd, (reg_t) value, 13, 0);
     value[12] = '\0';
-    printf("read = %d, file = %s\n", rd, value);
-    printf("about to exit\n");
+    printf("%s\n", value);
     // close
     syscall(fd, 3);
     syscall(0, 60);
   }
   // close
   syscall(fd, 3);
+
+  // mount
+  int r = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", 165);
+  printf("%d\n", r);
   syscall(0, 60);
 }

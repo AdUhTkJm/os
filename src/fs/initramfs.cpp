@@ -54,11 +54,11 @@ inode *initramfs_inode::lookup(const string &name) {
   return children[name];
 }
 
-vector<inode*> initramfs_inode::list() {
-  vector<inode*> result;
+vector<inode::item> initramfs_inode::list() {
+  vector<item> result;
   result.reserve(children.size());
-  for (auto [_, inode] : children)
-    result.push_back(inode);
+  for (auto [name, inode] : children)
+    result.push_back({ .handle = (long) inode, .name = name });
   return result;
 }
 

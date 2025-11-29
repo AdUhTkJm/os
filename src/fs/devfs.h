@@ -7,6 +7,11 @@
 
 namespace os {
 
+struct /*interface*/ block_device {
+  virtual int read(size_t lba, void *buf) = 0;
+  virtual int write(size_t lba, const void *buf) = 0;
+};
+
 class devfs : public fs {
 public:
   devfs();
@@ -30,10 +35,50 @@ public:
   size_t write(size_t, const void*, size_t, int flags) override;
   int create(const string &, filetype) override { return -ENOTDIR; }
   inode *lookup(const string &) override { return nullptr; }
-  vector<inode*> list() override { return {}; }
+  vector<item> list() override { return {}; }
 
   void wake();
 };
+
+class devroot : public inode_impl<devroot> {
+  hashmap<string, inode*> children;
+public:
+  using inode_impl<devroot>::inode_impl;
+  size_t read(size_t, void *, size_t, int) override { return 0; }
+  size_t write(size_t, const void *, size_t, int) override { return -EROFS; }
+  int create(const string &, inode::filetype) override { return -EROFS; }
+  inode *lookup(const string &name) override {
+    return children[name];
+  }
+  vector<item> list() override {
+    vector<item> result;
+    result.reserve(children.size());
+    for (auto [name, inode] : children)
+      result.push_back({ .handle = (long) inode, .name = name });
+    return result;
+  }
+
+  // Special registration function.
+  void record(const string &name, inode *node) {
+    children[name] = node;
+  }
+};
+
+class block_inode : public inode_impl<block_inode> {
+  block_device *dev;
+public:
+  using inode_impl::inode_impl;
+  block_inode(block_device *dev): inode_impl(devfs, /*uid=*/0, /*gid=*/0), dev(dev) {
+    size = 0; type = BlockDevice;
+    flags = 0666; // rw-rw-rw-
+  }
+  size_t read(size_t offset, void *buf, size_t len, int flags) override;
+  size_t write(size_t, const void*, size_t, int flags) override;
+  int create(const string &, filetype) override { return -ENOTDIR; }
+  inode *lookup(const string &) override { return nullptr; }
+  vector<item> list() override { return {}; }
+};
+
 
 extern static_storage<console_inode> console;
 

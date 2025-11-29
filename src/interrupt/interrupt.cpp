@@ -22,11 +22,11 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
   if (vfs->mounted(mntpoint))
     return -EBUSY;
 
-  class fs *fs = vfs->get(fsty, src);
+  expected<class fs*> fs = vfs->get(fsty, src);
   if (!fs)
-    return -EINVAL;
+    return fs;
 
-  vfs->mount(mntpoint, fs->root);
+  vfs->mount(mntpoint, (*fs)->root);
   return 0;
 }
 
@@ -101,8 +101,7 @@ long syscall(trapframe *ksp) {
     auto buf = copy_from_user((void*) a1, a2);
     if (!buf)
       return -EFAULT;
-    auto ret = file->write(*buf, a2);
-    delete *buf;
+    auto ret = file->write(buf->get(), a2);
     return ret;
   }
   case 2: {
@@ -110,8 +109,7 @@ long syscall(trapframe *ksp) {
     auto path = copy_from_user((char *) a0);
     if (!path)
       return -EFAULT;
-    auto ret = pcb->open_file(*path, a1);
-    delete *path;
+    auto ret = pcb->open_file(path->get(), a1);
     return ret;
   }
   case 3: {
@@ -161,12 +159,20 @@ long syscall(trapframe *ksp) {
     // mount(src, tgt, fsty, flags, data)
     // Ignore the data for now.
     EnableAccessToUserMemory guard;
-    auto src = asstr(a0);
-    auto tgt = asstr(a0);
-    auto fsty = asstr(a0);
-    if (!src || !tgt || !fsty)
-      return -EFAULT;
-    return mount(*src, *tgt, *fsty, a3);
+    auto src = copy_from_user((void*) a0);
+    if (!src)
+      return src;
+
+    auto tgt = copy_from_user((void*) a1);
+    if (!tgt)
+      return tgt;
+
+    auto fsty = copy_from_user((void*) a2);
+    if (!fsty)
+      return fsty;
+
+    auto ret = mount(src->get(), tgt->get(), fsty->get(), a3);
+    return ret;
   }
   default:
     printk("unknown syscall: %d\n", a7);
@@ -190,7 +196,7 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
       scheduler.yield(/*sleepy=*/false); // TODO: check time slice
     }
     case 9: // PLIC interrupt
-      os::handle_plic_interrupt();
+      os::plic::handle();
       break;
     default:
       printk("interrupt: scause = %ld, stval = %ld, sepc = %p\n", scause & 0xff, stval, sepc);
@@ -237,6 +243,7 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
       vma_map_current((void*) stval);
       break;
     case 15: // Store page fault
+      // This also work on COW pages. No special care needed.
       vma_map_current((void*) stval);
       break;
     default:

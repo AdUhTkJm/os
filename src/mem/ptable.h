@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "../utils/helper.h"
 #include "../utils/stl/optional.h"
+#include "../utils/stl/unique_ptr.h"
 
 /**
 We use the Sv39 paging scheme.
@@ -74,11 +75,6 @@ typedef uintptr_t pa_t;
 
 namespace os {
 
-// The active pt_root, virtual address.
-extern pte_t *pt_root;
-// The kernel's pt_root.
-extern pte_t *kernel_pt_root;
-
 /*
 Maps the given physical address into virtual address, with specified size.
 
@@ -86,21 +82,17 @@ Returns:
   - 0 for success.
   - 1 for invalid argument.
 */
-int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root = pt_root);
-inline int pmap(pa_t pa, const void *va, int mode, unsigned flags, pte_t *root = pt_root) {
+int pmap(pa_t pa, va_t va, int mode, unsigned flags);
+int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root);
+inline int pmap(pa_t pa, const void *va, int mode, unsigned flags, pte_t *root) {
   return pmap(pa, (va_t) va, mode, flags, root);
 }
+ enum unmap_status {
+  MAPLESS,
+  BADSIZE,
+};
 
-typedef enum {
-  UNMAP_OK,
-  UNMAP_NO_MAPPING,
-  UNMAP_SIZE_MISMATCH,
-} unmap_status_t;
-
-typedef struct {
-  pa_t pa;
-  unmap_status_t status;
-} unmap_ret_t;
+constexpr pa_t __kernel_pt_root = 0x8020'1000;
 
 /*
 Unmaps the given virtual address. If it is mapped to some physical address,
@@ -109,8 +101,9 @@ undefined.
 Returns the physical address that this table is previously mapped to. If
 there is no such address, returns 0.
 */
-unmap_ret_t punmap(va_t va, int mode, pte_t *root = pt_root);
-inline unmap_ret_t punmap(const void *va, int mode, pte_t *root = pt_root) { return punmap((va_t) va, mode, root); }
+expected<pa_t> punmap(va_t va, int mode);
+expected<pa_t> punmap(va_t va, int mode, pte_t *root);
+inline expected<pa_t> punmap(const void *va, int mode, pte_t *root) { return punmap((va_t) va, mode, root); }
 
 // Sv39 requires that the virtual address is sign-extended on bit 38 (highest bit).
 inline constexpr va_t sext(va_t x) {
@@ -125,15 +118,22 @@ inline constexpr va_t sext(va_t x) {
   return pa + KERNEL_OFFSET;
 }
 
-pa_t to_pa(va_t va, pte_t *root = pt_root);
-inline pa_t to_pa(const void *va, pte_t *root = pt_root) { return to_pa((va_t) va, root); }
+pa_t to_pa(va_t va);
+pa_t to_pa(va_t va, const pte_t *root);
+inline pa_t to_pa(const void *va) { return to_pa((va_t) va); }
+inline pa_t to_pa(const void *va, const pte_t *root) { return to_pa((va_t) va, root); }
 
 // Returns -1 when the PTE is not valid.
-int pte_flags(va_t va, pte_t *root = pt_root);
-inline int pte_flags(const void *va, pte_t *root = pt_root) { return pte_flags((va_t) va, root); }
+int pte_flags(va_t va);
+int pte_flags(va_t va, const pte_t *root);
+inline int pte_flags(const void *va) { return pte_flags((va_t) va); }
+inline int pte_flags(const void *va, const pte_t *root) { return pte_flags((va_t) va, root); }
 
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);
+
+extern bool onboot;
+pte_t *pt_root();
 
 namespace pt {
 
@@ -208,9 +208,9 @@ void mmwr(pa_t p, T value) {
 
 void copy_to_user(void *usr, void *ker, size_t len);
 // Copies raw data.
-errable<char*> copy_from_user(void *usr, size_t len);
+expected<unique_ptr<char>> copy_from_user(void *usr, size_t len);
 // Copies a string.
-errable<char*> copy_from_user(void *usr);
+expected<unique_ptr<char>> copy_from_user(void *usr);
 
 }
 #endif

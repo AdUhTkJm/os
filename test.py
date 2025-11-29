@@ -195,6 +195,7 @@ def build_initramfs():
   proc.check_call(f"cd {obj_dir} && find . -print | cpio -oH newc > ../initramfs.cpio 2> /dev/null", shell=True)
   (obj_dir / "dev").mkdir(exist_ok=True)
   (obj_dir / "tmp").mkdir(exist_ok=True)
+  (obj_dir / "mnt").mkdir(exist_ok=True)
 
 def build():
   build_initramfs()

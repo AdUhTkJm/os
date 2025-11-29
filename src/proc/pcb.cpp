@@ -2,6 +2,7 @@
 #include "pcb.h"
 #include "schedule.h"
 #include "../mem/kalloc.h"
+#include "../utils/stl/unique_ptr.h"
 
 namespace os {
 
@@ -43,7 +44,7 @@ void process_file_table::clear() {
 
 void pcb_t::clear() {
   pt::free(pt_root);
-  pt_root = (pa_t) kernel_pt_root - KERNEL_OFFSET;
+  pt_root = __kernel_pt_root - KERNEL_OFFSET;
   ftbl.clear();
   status = Zombie;
   for (const auto &vma : this->vma) {
@@ -141,7 +142,7 @@ void init(pcb_t *pcb) {
 
   // Copy the kernel's level 2 root table.
   // We only need to shallow copy.
-  memcpy((void *) as_va(pcb->pt_root), kernel_pt_root, PAGE_SIZE);
+  memcpy((void *) as_va(pcb->pt_root), (void*) as_va(__kernel_pt_root), PAGE_SIZE);
 
   // Open stdin, stdout and stderr.
   // Note they are different files, but point to the same place.
@@ -185,7 +186,6 @@ static void first_time_setup(pcb_t *pcb) {
     sstatus = (sstatus | (1 << 8));
   trap->sstatus = sstatus | (1 << 5);
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
-  pt_root = (pte_t *) as_va(pcb->pt_root);
 }
 
 void trap_return_setup(pcb_t *pcb) {
@@ -196,7 +196,6 @@ void trap_return_setup(pcb_t *pcb) {
 
   pcb->status = Running;
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
-  pt_root = (pte_t *) as_va(pcb->pt_root);
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
 }
@@ -231,8 +230,7 @@ int fork() {
   });
 
   // Deep-copy the page table.
-  assert(pt_root == (pte_t *) as_va(pcb->pt_root));
-  child->pt_root = pt::copy(pt_root);
+  child->pt_root = pt::copy(pt_root());
 
   // Shallow-copy the file table.
   child->ftbl = pcb->ftbl;
@@ -351,23 +349,34 @@ int exec(const string &path, char *const *argv, char *const *envp) {
 
 void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb) {
   EnableAccessToUserMemory enable;
-  vma_map(usr, (char*) usr + len, pcb);
+  vma_map(usr, (char*) usr + len, pcb, /*write=*/true);
+
+  // This root switch has to be atomic. We disable interrupts.
+  [[unlikely]] if (pcb != scheduler.active) {
+    CSRC(sie, 2);
+    CSRW(satp, pcb->pt_root);
+  }
+  
   memcpy(usr, ker, len);
+  [[unlikely]] if (pcb != scheduler.active) {
+    CSRW(satp, pt_root);
+    CSRS(sie, 2);
+  }
 }
 
 void copy_to_user(void *usr, void *ker, size_t len) {
   copy_to_user(usr, ker, len, scheduler.active);
 }
 
-errable<char*> copy_from_user(void *usr, size_t len) {
+expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
   EnableAccessToUserMemory enable;
   vma_map_current(usr, (char *) usr + len);
   char *buf = new char[len];
   memcpy(buf, usr, len);
-  return buf;
+  return expected<unique_ptr<char>>(buf);
 }
 
-errable<char*> copy_from_user(void *usr) {
+expected<unique_ptr<char>> copy_from_user(void *usr) {
   EnableAccessToUserMemory enable;
   vma_map_current(usr);
   vector<char> vec;
@@ -389,7 +398,7 @@ outer:
   char *buf = new char[1 + sz];
   memcpy(buf, vec.data(), sz);
   buf[sz] = 0;
-  return buf;
+  return expected<unique_ptr<char>>(buf);
 }
 
 }

@@ -93,7 +93,12 @@ public:
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
   // List all children.
-  virtual os::vector<inode *> list() = 0;
+
+  struct item {
+    long handle;
+    string name;
+  };
+  virtual os::vector<item> list() = 0;
 
   // Mark this inode as unused.
   // Possibly deletes itself when refcount drops to zero.
@@ -157,14 +162,14 @@ class vfs {
   os::hashmap<pair<inode*, string>, dentry*> dcache;
   // The way to create a new `fs` structure from the opaque `source`.
   // This is limited by the way of system call; we can't use templates.
-  os::hashmap<string, fs *(*)(const char *)> creators;
+  os::hashmap<string, expected<fs*>(*)(const char *)> creators;
 
   dentry *check_mount(dentry *cur);
 public:
   vfs(dentry *root): root(root) { }
 
   // Returns the (optional) entry and an error code.
-  errable<dentry *> lookup(const string &path);
+  expected<dentry *> lookup(const string &path);
   // When there is a process, use `pcb->open_file` instead. This is for boot.
   file *open(const string &path, int flags);
   void close(file *f);
@@ -173,8 +178,8 @@ public:
   bool mounted(dentry *host) { return check_mount(host) != nullptr; }
 
   // Constructs a new in-memory `fs` structure according to the given fs.
-  fs *get(const string &fsname, const char *src);
-  void record(const string &fsname, fs*(*creator)(const char*));
+  expected<fs*> get(const string &fsname, const char *src);
+  void record(const string &fsname, expected<fs*>(*creator)(const char*));
 };
 
 class SeekGuard {

@@ -17,8 +17,14 @@
 
 namespace os {
 
-void init_plic();
-void handle_plic_interrupt();
+namespace plic {
+
+void enable(int device);
+void init();
+void handle();
+void record(int device, void (*handler)(int));
+
+}
 
 extern static_storage<ring_buffer<char>> console_input_buf;
 
