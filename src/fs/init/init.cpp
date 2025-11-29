@@ -4,48 +4,45 @@
 
 using reg_t = long;
 
-[[gnu::naked]]
 reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7) {
-  __asm__ volatile(
-    "ecall\n"
-    "ret\n"
-  ::: "memory");
+#ifdef __riscv
+  register reg_t _a0 asm("a0") = a0;
+  register reg_t _a1 asm("a1") = a1;
+  register reg_t _a2 asm("a2") = a2;
+  register reg_t _a3 asm("a3") = a3;
+  register reg_t _a4 asm("a4") = a4;
+  register reg_t _a5 asm("a5") = a5;
+  register reg_t _a6 asm("a6") = a6;
+  register reg_t _a7 asm("a7") = a7;
+
+  __asm__ volatile (
+    "ecall"
+    : "+r"(_a0), "+r"(_a1)      // return values
+    : "r"(_a2), "r"(_a3),
+      "r"(_a4), "r"(_a5),
+      "r"(_a6), "r"(_a7)
+    : "memory"
+  );
+  return _a0;
+#else
+  return 0; // For vscode
+#endif
 }
 
-[[gnu::naked]]
 reg_t syscall(reg_t a7) {
-  __asm__ volatile(
-    "mv a7, a0\n"
-    "ecall\n"
-    "ret\n"
-  ::: "memory");
+  return syscall(0, 0, 0, 0, 0, 0, 0, a7);
 }
 
-[[gnu::naked]]
 reg_t syscall(reg_t a0, reg_t a7) {
-  __asm__ volatile(
-    "mv a7, a1\n"
-    "ecall\n"
-    "ret\n"
-  ::: "memory");
+  return syscall(a0, 0, 0, 0, 0, 0, 0, a7);
 }
 
-[[gnu::naked]]
 reg_t syscall(reg_t a0, reg_t a1, reg_t a7) {
-  __asm__ volatile(
-    "mv a7, a2\n"
-    "ecall\n"
-    "ret\n"
-  ::: "memory");
+  return syscall(a0, a1, 0, 0, 0, 0, 0, a7);
 }
 
-[[gnu::naked]]
 reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a7) {
-  __asm__ volatile(
-    "mv a7, a3\n"
-    "ecall\n"
-    "ret\n"
-  ::: "memory");
+  return syscall(a0, a1, a2, 0, 0, 0, 0, a7);
 }
 
 unsigned strlen(const char *s) {
@@ -196,13 +193,28 @@ int printf(const char *fmt, ...) {
 }
 
 extern "C" void _start() {
+  // open
+  int fd = syscall((reg_t) "/tmp/a.txt", 02100, 2); // O_RDWR | O_APPEND
+  // write
+  syscall(fd, (reg_t) "Hello World!\n", 13, 1);
+
   int pid = syscall(57);
   printf("forked, pid = %d\n", pid);
   if (pid == 0) {
-    char c = kgetch();
-    printf("input = %c\n", c);
+    printf("open file (sub): %d\n", fd);
+    // lseek
+    syscall(fd, 0, 0, 8);
+    char value[13];
+    // read
+    int rd = syscall(fd, (reg_t) value, 13, 0);
+    value[12] = '\0';
+    printf("read = %d, file = %s\n", rd, value);
     printf("about to exit\n");
+    // close
+    syscall(fd, 3);
     syscall(0, 60);
   }
+  // close
+  syscall(fd, 3);
   syscall(0, 60);
 }

@@ -6,12 +6,21 @@ static_storage<class vfs> vfs;
 
 size_t file::read(void *buf, size_t len) {
   auto ret = node->read(offset, buf, len, flags);
+  if ((ssize_t) ret < 0)
+    return ret;
+
   offset += ret;
   return ret;
 }
 
 size_t file::write(const void *buf, size_t len) {
+  if (flags & O_APPEND)
+    offset = node->size;
+  
   auto ret = node->write(offset, buf, len, flags);
+  if ((ssize_t) ret < 0)
+    return ret;
+
   offset += ret;
   return ret;
 }
@@ -24,6 +33,9 @@ size_t file::seek(long pos, whence whence) {
     break;
   case current:
     offset += pos;
+    break;
+  case end:
+    offset = node->size + pos;
     break;
   }
   return before;
@@ -81,6 +93,8 @@ errable<dentry*> vfs::lookup(const string &path) {
 
     return -ENOENT;
   }
+  if (dentry *root = check_mount(cur))
+    cur = root;
   return cur;
 }
 
@@ -143,6 +157,41 @@ file::file(inode *node, int flags): refcnt(1), node(node), offset(0), flags(flag
 void file::drop() {
   if (!--refcnt)
     delete this;
+}
+
+string basename(const string &path) {
+  if (path.empty())
+    return ".";
+
+  // Remove trailing slashes.
+  size_t end = path.size();
+  while (end > 1 && path[end - 1] == '/')
+    --end;
+
+  // Find last '/'.
+  size_t pos = path.rfind('/', end - 1);
+  if (pos == string::npos)
+    return path.substr(0, end);
+
+  return path.substr(pos + 1, end - pos - 1);
+}
+
+string dirname(const string &path) {
+  if (path.empty())
+    return ".";
+
+  size_t end = path.size();
+  while (end > 1 && path[end - 1] == '/')
+    --end;
+
+  size_t pos = path.rfind('/', end - 1);
+  if (pos == string::npos)
+    return ".";
+
+  if (pos == 0)
+    return "/";
+
+  return path.substr(0, pos);
 }
 
 }

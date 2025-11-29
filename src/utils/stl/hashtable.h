@@ -12,6 +12,9 @@ namespace os {
 //
 // Moreover, if a key is present in the table, it can't be modified in some
 // way that makes either Eq() or Hash() gives a different result.
+//
+// Finally, the hasher and equator are NOT COPIED across hash tables.
+// This means they must not carry state.
 template<typename K, typename V, hasher<K> Hash = detail::fnv_1a<K>, comparator<K> Eq = detail::equal<K>>
 class hashmap {
   enum node_state {
@@ -73,7 +76,9 @@ public:
   };
 
   hashmap(size_t capacity = 16);
+  hashmap(const hashmap &other);
   ~hashmap();
+  hashmap &operator=(const hashmap &other);
 
   iterator insert(const K &key, const V &value);
   V &at(const K &key);
@@ -175,8 +180,24 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq>::hashmap(size_t capacity) : cap(max(16ul, capacity)), sz(0) {
   table = new entry[capacity];
-  for (size_t i = 0; i < capacity; ++i)
+  for (size_t i = 0; i < capacity; i++)
     table[i].state = Empty;
+}
+
+template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
+hashmap<K, V, Hash, Eq>::hashmap(const hashmap &other) : cap(other.cap), sz(other.sz) {
+  table = new entry[cap];
+  for (size_t i = 0; i < cap; i++)
+    table[i] = other.table[i];
+}
+
+template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
+hashmap<K, V, Hash, Eq> &hashmap<K, V, Hash, Eq>::operator=(const hashmap &other) {
+  cap = other.cap; sz = other.sz;
+  table = new entry[cap];
+  for (size_t i = 0; i < cap; i++)
+    table[i] = other.table[i];
+  return *this;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>

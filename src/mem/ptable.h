@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "../utils/helper.h"
+#include "../utils/stl/optional.h"
 
 /**
 We use the Sv39 paging scheme.
@@ -206,6 +207,10 @@ void mmwr(pa_t p, T value) {
 }
 
 void copy_to_user(void *usr, void *ker, size_t len);
+// Copies raw data.
+errable<char*> copy_from_user(void *usr, size_t len);
+// Copies a string.
+errable<char*> copy_from_user(void *usr);
 
 }
 #endif

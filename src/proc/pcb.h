@@ -80,8 +80,7 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   process_file_table ftbl;// Process file table.
   ctxframe ctx;           // System call progress, for resuming blocking syscalls.
   os::intrusive_list<pcb_t> children;
-  int uid;
-  int gid;
+  int uid, gid, euid, suid;
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.

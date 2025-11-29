@@ -5,3 +5,5 @@ compile_commands.json
 qemu.log
 testsuite
 busybox
+docs/**
+!docs/**.tex

@@ -11,8 +11,8 @@ class devroot : public os::inode_impl<devroot> {
 public:
   using os::inode_impl<devroot>::inode_impl;
   size_t read(size_t, void *, size_t, int) override { return 0; }
-  size_t write(size_t, const void *, size_t, int) override { return 0; }
-  os::result create(const os::string &, os::inode::filetype) override { return os::result::failure; }
+  size_t write(size_t, const void *, size_t, int) override { return -EROFS; }
+  int create(const os::string &, os::inode::filetype) override { return -EROFS; }
   os::inode *lookup(const os::string &name) override {
     return children[name];
   }
@@ -68,8 +68,9 @@ void console_inode::wake() {
   synchronized syn(lock);
   if (!wait.size())
     return;
-  scheduler.wakeup(wait.front());
+  auto front = wait.front();
   wait.pop_front();
+  scheduler.wakeup(front);
 }
 
 devfs::devfs() {

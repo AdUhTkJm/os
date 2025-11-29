@@ -59,7 +59,7 @@ public:
   size_t offset;
   int flags;
   enum whence {
-    begin, current
+    begin, current, end
   };
 
   void drop();
@@ -70,7 +70,7 @@ public:
 
   size_t read(void *buf, size_t len);
   size_t write(const void *buf, size_t len);
-  size_t seek(long pos, whence whence);
+  size_t seek(long pos, whence whence); // Returns the old offset.
   result close();
 };
 
@@ -89,7 +89,7 @@ public:
   virtual size_t write(size_t offset, const void* buf, size_t len, int flags) = 0;
 
   // Creates a new, empty file.
-  virtual result create(const string &name, filetype ty) = 0;
+  virtual int create(const string &name, filetype ty) = 0;
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
   // List all children.
@@ -102,8 +102,7 @@ public:
   void unlinked();
   void linked() { lnkcnt++; }
 
-  string name;
-  size_t size;
+  size_t size = 0;
   filetype type;
   class fs *fs;
   int flags;
@@ -189,6 +188,10 @@ public:
 };
 
 extern os::static_storage<vfs> vfs;
+
+string dirname(const string &path);
+string basename(const string &path);
+
 }
 
 #endif

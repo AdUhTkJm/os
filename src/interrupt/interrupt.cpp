@@ -42,6 +42,16 @@ optional<T*> asptr(reg_t t) {
   return nullopt;
 }
 
+optional<char*> asstr(reg_t t) {
+  auto p = asptr<void>(t);
+  if (!p)
+    return nullopt;
+  // Also check the length of this string.
+  if (!asptr<void>(t + strlen((char*) *p)))
+    return nullopt;
+  return (char*) *p;
+}
+
 optional<char**> aschptr(reg_t t) {
   auto pcb = scheduler.active;
   va_t va = (va_t) t;
@@ -77,16 +87,10 @@ long syscall(trapframe *ksp) {
     if (!file)
       return -ENOENT;
 
-    auto maybe_buf = asptr<char>(a1);
-    auto end = asptr<char>(a1 + a2);
-    if (!maybe_buf || !end)
-      return -EFAULT;
-    char *buf = *maybe_buf;
-
-    vma_map_current(buf, buf + a2);
-    EnableAccessToUserMemory guard;
-    auto len = file->read(buf, a2);
-    return len;
+    char *buf = new char[a2];
+    auto ret = file->read(buf, a2);
+    copy_to_user((void *) a1, buf, a2);
+    return ret;
   }
   case 1: {
     // write(fd, buf, len)
@@ -94,26 +98,45 @@ long syscall(trapframe *ksp) {
     if (!file)
       return -ENOENT;
 
-    auto maybe_buf = asptr<char>(a1);
-    auto end = asptr<char>(a1 + a2);
-    if (!maybe_buf || !end)
+    auto buf = copy_from_user((void*) a1, a2);
+    if (!buf)
       return -EFAULT;
-    char *buf = *maybe_buf;
-
-    vma_map_current(buf, (char*) buf + a2);
-    EnableAccessToUserMemory guard;
-    return file->write(buf, a2);
+    auto ret = file->write(*buf, a2);
+    delete *buf;
+    return ret;
   }
   case 2: {
     // open(path, flags)
-    auto path = asptr<char>(a0);
+    auto path = copy_from_user((char *) a0);
     if (!path)
       return -EFAULT;
-    return pcb->open_file(*path, a1);
+    auto ret = pcb->open_file(*path, a1);
+    delete *path;
+    return ret;
   }
   case 3: {
     // close(fd)
     return pcb->close_file(a0);
+  }
+  case 8: {
+    // lseek(fd, offset, whence)
+    file::whence whence = 
+      a3 == 0 ? file::begin
+    : a3 == 1 ? file::current
+    : a3 == 2 ? file::end
+    : (file::whence) -1;
+    if (int(whence) == -1)
+      return -EINVAL;
+
+    file *f = pcb->ftbl[a0];
+    if (!f)
+      return -EBADF;
+
+    if (f->node->type == inode::CharDevice)
+      return -EINVAL;
+    
+    f->seek(a1, whence);
+    return 0;
   }
   case 57: {
     // fork()
@@ -122,7 +145,7 @@ long syscall(trapframe *ksp) {
   case 59: {
     // execve(path, argv, envp)
     EnableAccessToUserMemory guard;
-    auto path = asptr<char>(a0);
+    auto path = asstr(a0);
     auto argv = aschptr(a1);
     auto envp = aschptr(a2);
     if (!path || !argv || !envp)
@@ -138,9 +161,9 @@ long syscall(trapframe *ksp) {
     // mount(src, tgt, fsty, flags, data)
     // Ignore the data for now.
     EnableAccessToUserMemory guard;
-    auto src = asptr<char>(a0);
-    auto tgt = asptr<char>(a0);
-    auto fsty = asptr<char>(a0);
+    auto src = asstr(a0);
+    auto tgt = asstr(a0);
+    auto fsty = asstr(a0);
     if (!src || !tgt || !fsty)
       return -EFAULT;
     return mount(*src, *tgt, *fsty, a3);

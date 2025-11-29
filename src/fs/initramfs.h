@@ -41,7 +41,7 @@ public:
 
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
-  result create(const string &name, filetype ty) override;
+  int create(const string &name, filetype ty) override;
   inode *lookup(const string &name) override;
   vector<inode*> list() override;
 };
@@ -51,7 +51,6 @@ public:
   initramfs() {
     auto rootnode = new initramfs_inode(this, 0, 0);
     rootnode->type = inode::Dir;
-    rootnode->name = "";
     rootnode->size = 0;
     root = new class dentry("", rootnode);
   }

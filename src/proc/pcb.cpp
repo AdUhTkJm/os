@@ -52,19 +52,32 @@ void pcb_t::clear() {
   }
 }
 
-int pcb_t::open_file(const string &name, int flags) {
-  bool creatable = flags & O_CREAT;
+int pcb_t::open_file(const string &path, int flags) {
+  bool create = flags & O_CREAT;
+  bool existok = !(flags & O_EXCL);
   bool write = bool(flags & O_RDWR) || bool(flags & O_WRONLY);
   bool read = bool(flags & O_RDWR) || bool(flags & O_RDONLY);
 
   // TODO: check search permission
-  auto maybe_dentry = vfs->lookup(name);
+  auto maybe_dentry = vfs->lookup(path);
   if (!maybe_dentry) {
-    if (!creatable)
-      return -maybe_dentry;
+    if (!create)
+      return maybe_dentry;
 
-    // TODO: create this file
+    auto parent = dirname(path);
+    auto maybe_parent = vfs->lookup(parent);
+    if (!maybe_parent)
+      return maybe_parent;
+
+    auto node = (*maybe_parent)->node;
+    if (int err = node->create(basename(path), inode::File); err != 0)
+      return err;
+
+    return open_file(path, flags & ~O_CREAT);
   }
+
+  if (create && !existok)
+    return -EEXIST;
 
   auto dentry = *maybe_dentry;
   inode *node = dentry->node;
@@ -135,8 +148,9 @@ void init(pcb_t *pcb) {
   auto console = vfs->lookup("/dev/console");
   if (!console)
     panic("no console!");
-  for (int i = 0; i < 3; i++)
-    pcb->ftbl.allocate(new file((*console)->node, O_RDWR), i);
+  pcb->ftbl.allocate(new file((*console)->node, O_RDONLY), 0); // stdin
+  pcb->ftbl.allocate(new file((*console)->node, O_WRONLY), 1); // stdout
+  pcb->ftbl.allocate(new file((*console)->node, O_WRONLY), 2); // stderr
 }
 
 void terminate(pcb_t *pcb, int ret) {
@@ -343,6 +357,39 @@ void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb) {
 
 void copy_to_user(void *usr, void *ker, size_t len) {
   copy_to_user(usr, ker, len, scheduler.active);
+}
+
+errable<char*> copy_from_user(void *usr, size_t len) {
+  EnableAccessToUserMemory enable;
+  vma_map_current(usr, (char *) usr + len);
+  char *buf = new char[len];
+  memcpy(buf, usr, len);
+  return buf;
+}
+
+errable<char*> copy_from_user(void *usr) {
+  EnableAccessToUserMemory enable;
+  vma_map_current(usr);
+  vector<char> vec;
+  char *p = (char *) usr;
+  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++)
+    vec.push_back(*p);
+
+  for (int i = 0; i < 4096; i++) {
+    vma_map_current(p);
+    for (char *finish = p + PAGE_SIZE; p < finish && *p; p++)
+      vec.push_back(*p);
+    
+    if (!*p)
+      goto outer;
+  }
+  return -E2BIG;
+outer:
+  int sz = vec.size();
+  char *buf = new char[1 + sz];
+  memcpy(buf, vec.data(), sz);
+  buf[sz] = 0;
+  return buf;
 }
 
 }

@@ -20,7 +20,7 @@ void init_plic() {
   *(volatile unsigned char*) as_va(UART_BASE) = 0;
   
   devfs.construct();
-  console.construct("console");
+  console.construct();
   console_input_buf.construct();
 }
 

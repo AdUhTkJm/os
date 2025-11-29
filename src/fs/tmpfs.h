@@ -5,10 +5,9 @@
 
 namespace os {
 
-// This inode does not own the data, and will not delete it on destruction.
+// This inode owns the data.
 class tmpfs_inode : public os::inode_impl<tmpfs_inode> {
-  void *data = nullptr;
-  size_t sz = 0;
+  vector<char> data;
 
   os::hashmap<string, inode*> children;
 public:
@@ -17,12 +16,11 @@ public:
   size_t read(size_t offset, void* buf, size_t len, int flags) override;
   size_t write(size_t offset, const void* buf, size_t len, int flags) override;
 
-  result create(const string &name, filetype ty) override;
+  int create(const string &name, filetype ty) override;
   inode *lookup(const string &name) override;
   os::vector<inode *> list() override;
 
   void load(void *data, size_t sz);
-  void to_dir() { type = Dir; }
 };
 
 class tmpfs : public fs {

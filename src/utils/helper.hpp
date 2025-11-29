@@ -33,7 +33,7 @@ public:
     return (T*) storage;
   }
 
-  template<typename ...Args>
+  template<typename ...Args> requires requires(Args ...args) { T(args...); }
   void construct(Args ...args) {
     new (storage) T(args...);
     init = true;

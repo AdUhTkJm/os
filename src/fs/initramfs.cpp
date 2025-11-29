@@ -36,17 +36,16 @@ size_t initramfs_inode::write(size_t, const void *, size_t, int) {
 }
 
 // This is read-only.
-result initramfs_inode::create(const string &, filetype) {
-  return result::failure;
+int initramfs_inode::create(const string &, filetype) {
+  return -EROFS;
 }
 
 initramfs_inode *initramfs_inode::load(const string &name, filetype ty, size_t sz, void *ptr) {
   auto *child = cast<initramfs_inode>(fs->get());
-  child->name = name;
   child->type = ty;
   child->size = sz;
   child->data = ptr;
-  children[child->name] = child;
+  children[name] = child;
   child->linked();
   return child;
 }

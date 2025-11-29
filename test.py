@@ -18,6 +18,7 @@ parser.add_argument("-r", "--run", action="store_true")
 parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
+parser.add_argument("--docs", action="store_true")
 
 args = parser.parse_args()
 
@@ -153,7 +154,7 @@ def compile_file(src_path: Path, obj_path: Path):
 
 def compile_initramfs(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
-  proc.check_call([COMPILER, "-ffreestanding", "-nostdlib",
+  proc.check_call([COMPILER, "-ffreestanding", "-nostdlib", "-O2",
   "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64", "-o", str(obj_path),  str(src_path)])
 
 def archive_objects(obj_files, lib_path: Path):
@@ -274,6 +275,10 @@ if __name__ == "__main__":
     os.remove(BUILD_DIR / ".build_cache.pkl")
     os.remove(BUILD_DIR / ".include_cache.pkl")
 
+  if args.docs:
+    proc.check_call("cd docs && xelatex design.tex", shell=True)
+    print("Docs built.")
+
   build()
   if args.objdump:
     proc.run(f"riscv64-unknown-elf-objdump -D build/kernel > temp/kernel.s", shell=True)
@@ -290,4 +295,3 @@ f"""
 {asm}
 """
   ,shell=True)
-  print("Run finished.")

@@ -10,6 +10,8 @@ class string {
   char *p;
   size_t len;
 public:
+  constexpr static size_t npos = -1ul;
+
   string(): string("") {}
   /* implicit */ string(const char *q): p(new char[strlen(q) + 1]), len(strlen(q)) {
     strcpy(p, q);
@@ -44,12 +46,31 @@ public:
     return *this;
   }
 
+  size_t rfind(char t, size_t start = npos) const {
+    start = min(start, len - 1);
+    for (size_t i = start; i--; ) {
+      if (p[i] == t)
+        return i;
+    }
+    return npos;
+  }
+
+  string substr(size_t from, size_t l = npos) const {
+    size_t end = min(from + l, len);
+    return string(p + from, end - from);
+  }
+
   ~string() { delete[] p; }
 
+  bool empty() const { return len == 0; }
   size_t size() const { return len; };
+
   const char *c_str() const { return p; }
   char *c_str() { return p; }
   void dump() { printk("len = %ld, content = %s\n", len, p); }
+
+  char &operator[](size_t s) { return p[s]; }
+  char operator[](size_t s) const { return p[s]; }
 
   bool operator==(const string &other) const { return strcmp(p, other.p) == 0; }
   bool operator!=(const string &other) const { return strcmp(p, other.p) != 0; }
