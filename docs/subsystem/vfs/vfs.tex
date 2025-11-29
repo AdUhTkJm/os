@@ -1,0 +1,22 @@
+\section{VFS}
+\label{sec:vfs}
+
+VFS (\textit{virtual memory system}) 顾名思义，就应该用 \cpp{virtual} 函数实现。
+
+某种程度上来说算是个双关，不过倒也不是开玩笑。Linux 里用的是一大堆函数指针，虚函数用的 vtable 也同样是一大堆函数指针，两者不应该有什么区别。好消息是，vtable 是不需要 C++ runtime 的，所以我的确就这么做了。
+
+不过如果想把父类转为子类的话， \cpp{dynamic_cast} 需要 C++ runtime：它需要启用 -frtti。所幸对于单继承而言，我们有绕过它的方法，这正是 LLVM 所做的。具体的介绍请见 \cref{sec:rtti}。当然，用一个额外的 \cpp{void* data} 确实可以解决一切，但是这也太麻烦了。
+
+因此，我的 inode 基类如下：
+\begin{minted}{cpp}
+class inode {
+  atomic<unsigned> refcnt, lnkcnt;
+public:
+  virtual ~inode() = default;
+  virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;
+  virtual size_t write(size_t offset, const void* buf, size_t len, int flags) = 0;
+  // Other virtual member functions
+};
+\end{minted}
+
+而每种文件系统的 inode 都会实现对应的 read/write 方法。

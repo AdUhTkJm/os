@@ -118,20 +118,14 @@ public:
 
 template<class T>
 class inode_impl : public inode {
-  constexpr static const char *__name() { return __PRETTY_FUNCTION__; }
-  constexpr static uint64_t __hash(const char *const &key) {
-    uint64_t hash = os::detail::FNV_OFFSET_BASIS;
-    for (const char *p = key; *p; p++) {
-      hash *= os::detail::FNV_PRIME;
-      hash ^= *p;
-    }
-    return hash;
-  };
-  constexpr static uint64_t ID = __hash(__name());
+  static const void* class_id() {
+    static int unique;
+    return &unique;
+  }
 public:
-  inode_impl(class fs *fs, int uid, int gid): inode(fs, uid, gid, ID) {}
+  inode_impl(class fs *fs, int uid, int gid): inode(fs, uid, gid, (long) class_id()) {}
   static bool classof(inode *p) {
-    return p->rtti == ID;
+    return p->rtti == (long) class_id();
   }
 };
 

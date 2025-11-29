@@ -1,0 +1,16 @@
+\section{VirtIO 驱动}
+\label{sec:virtio}
+
+这是我根据 VirtIO 标准\cite{virtio}实现的设备驱动。
+
+考虑到 QEMU 默认情况下采用的版本是 1，也就是标准中所言的 legacy 版本，我并没有对最新的 v1.3 标准做太多支持。
+
+标准一共两百多页，不过其实读起来还挺顺畅的，而且可以跳过许多不相干的部分（例如可以只看 MMIO）。略微概括一下的话，驱动流程大致如下：
+
+在 FDT 中找到对应的 soc/virtio 开头的设备，并且读取 FDT entry 得知它们在内存中映射的位置。
+
+接下来，按照标准往设备中写入一些值，例如配置使用的特性、告知队列的长度和页表大小之类的。
+
+初始化完成之后，我们应当设置好了三个队列：descriptor, available ring 和 user ring。其中 descriptor 主要记录的是指向 available ring 的 id，而 available ring 才是真正发送的消息。具体格式标准中都有列出。这些东西叫做 ring，是因为它们实际上是 ring-buffer。
+
+在设备完成请求之后，它会发送中断。（当然，我们需要设置 PLIC 让 CPU 接受这个中断。）同时，它会把完成请求的 id 写进 user ring 中，以便 CPU 查看。不过在\cref{subsec:syscallctx}所描述的 \cpp{suspend()} 机制下，一般而言，我们并不需要检查 user ring 就可以知道到底哪个请求被完成了。

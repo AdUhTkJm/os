@@ -32,10 +32,10 @@ ext2::ext2(inode *device): device(device) {
   int gdt_start = (block_size == 1024) ? 2 : 1;
   gdt.resize(group_count);
 
-  auto gdt_len = roundup(group_count * sizeof(block_group), block_size);
-  char *buf = new char[gdt_len];
-  device->read(gdt_start, buf, gdt_len, 0);
-  memcpy(gdt.data(), buf, gdt_len);
+  size_t len = group_count * sizeof(block_group);
+  char *buf = new char[len];
+  device->read(gdt_start, buf, len, 0);
+  memcpy(gdt.data(), buf, len);
   delete[] buf;
   printk("ext2 initialized: groups = %d, block_size = %d\n", group_count, block_size);
 }

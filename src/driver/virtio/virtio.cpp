@@ -24,8 +24,16 @@ void block_device_handler(int irq) {
   if (!intr->count(irq))
     return;
 
-  printk("seen irq: %d\n", irq);
   block_device *dev = intr->at(irq);
+  // Note that status bit 0 (value 1) means a used ring change;
+  // bit 1 (value 2) means a configuration change.
+  //
+  // Also note that used ring change won't be handled here.
+  // That's the job of the function after recovery from suspend().
+  int status = mmrd<uint32_t>(dev->base + INTERRUPT_STATUS);
+  if (status != 1)
+    return;
+  mmwr(dev->base + INTERRUPT_ACK, status);
   auto pcb = dev->wait.front();
   dev->wait.pop_front();
   scheduler.wakeup(pcb);
@@ -197,6 +205,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   queue->avail.idx++;
 
   // Tell device that a new request has come.
+  __asm__ volatile("fence" ::: "memory");
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   
   wait.push_back(scheduler.active);
@@ -247,6 +256,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   queue->avail.idx++;
 
   // Tell device that a new request has come.
+  __asm__ volatile("fence" ::: "memory");
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
 
   auto status = mmrd<uint8_t>(stat);
@@ -286,7 +296,7 @@ void probe() {
         | read((uint32_t*) property + 3);
     }
 
-    if (strcmp(cprop, "interrupt") == 0)
+    if (strcmp(cprop, "interrupts") == 0)
       devs[cdev].interrupt = to_big_endian(*(uint32_t*) property);
 
     return WalkResult::Continue;
@@ -302,6 +312,8 @@ void probe() {
   // We only consider mmio devices for now.
   // See section 4.2.2 of the spec.
   disks.construct();
+  intr.construct();
+
   for (const auto &[name, device] : devs) {
     auto base = device.base;
     // Erratic device.
@@ -327,6 +339,8 @@ void probe() {
     char buf[4] = "sda";
     buf[2] += block_device_cnt; // sda, sdb, sdc ...
     devnode->record(buf, new block_inode(dev));
+
+    (*intr)[device.interrupt] = dev;
 
     block_device_cnt++;
   }

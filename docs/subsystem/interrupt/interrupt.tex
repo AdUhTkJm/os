@@ -1,3 +1,22 @@
 % interrupt handler
 \section{中断处理}
 \label{sec:interrupt}
+
+每个进程都有两个栈：一个是给自己的，一个是给 kernel 的。
+
+在中断的时候，我们想把所有的寄存器都存到 kernel 的栈上，不过我们显然需要一个额外的临时寄存器。RISC-V 提供了一个名为 sscratch 的 CSR，我选择用它保存 user-stack 的位置。这就是 PCB 中的 usp 字段（\cref{sec:pcb}）。
+
+这样我们就腾出了一个 sp 寄存器。我们需要在只有这一个寄存器的情况下找到当前进程 kernel-stack 的位置，也就是 PCB 中的 ksp 字段。在 C++ 中，这是 \cpp{scheduler.active->ksp}，所以只需要访问两次成员变量就可以了。我们使用 \cpp{static_assert} 来保证偏移量和汇编中的偏移量能对上。此外，VSCode 的 clangd 插件是可以直接显示 class/struct 中每个字段的偏移量和 padding 的，因此获取这个值也不是难事。
+
+接下来，我们把 31 个寄存器存进 ksp 中，顺便存好 sscratch, sepc 和 sstatus。（显然寄存器 zero 是无需保存的。）我们还要靠它们返回中断发生的位置。
+
+下面我们就可以调用 C++ 的中断处理器了。它可能会更改 \cpp{scheduler.active}，所以从中断中返回时还需要重新获取当前进程 ksp 的位置。
+
+最后，重新载入 31 个寄存器以及 sepc 和 sstatus，然后把 sp 设置为 sscratch，就完成处理了。
+
+\subsection{中断处理器}
+\label{sec:interrupthandler}
+
+这其实就是一个大型 switch。它可以依靠 ksp 读取寄存器的值，而 syscall 的参数就依赖这个实现。
+
+除此以外似乎没什么值得说的；各种 syscall 的处理方式已经在相关的章节中描述过了。

@@ -131,7 +131,7 @@ int exec(const string &path, char *const *argv, char *const *envp);
 extern "C" void context_save(void *ctx, bool *ctx_valid);
 extern "C" [[noreturn]] void context_restore(void *ctx);
 
-#define suspend() do { context_save(&scheduler.active->ctx, &scheduler.active->ctx_valid); } while (0)
+#define suspend() context_save(&scheduler.active->ctx, &scheduler.active->ctx_valid)
 
 // Creates a kernel process.
 template<class T> requires (is_function_v<remove_pointer_t<T>>)
