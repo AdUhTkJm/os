@@ -1,89 +1,41 @@
-\documentclass{memoir}
-\usepackage{ctex}
-\usepackage{xcolor,calc}
-\usepackage[T1]{fontenc}
-\usepackage{kpfonts}
-\usepackage[german]{cleveref}
-\usepackage{minted2}
-
-% 配置 cleveref
-\crefformat{chapter}{第~#2#1#3~章}
-\crefformat{section}{~#2#1#3~节}
-\crefformat{subsection}{~#2#1#3~节}
-
-% 配置 memoir 的章节标题格式，取自：
-% https://mirror.ox.ac.uk/sites/ctan.org/info/latex-samples/MemoirChapStyles/MemoirChapStyles.pdf
-\setSingleSpace{1.1}
-\SingleSpacing
-\definecolor{chaptercolor}{gray}{0.8}
-% helper macros
-\newcommand\numlifter[1]{\raisebox{-2cm}[0pt][0pt]{\smash{#1}}}
-\newcommand\numindent{\kern37pt}
-\newlength\chaptertitleboxheight
-\makechapterstyle{hansen}{
-\renewcommand\printchaptername{\raggedleft}
-\renewcommand\printchapternum{%
-\begingroup%
-\leavevmode%
-\chapnumfont%
-\strut%
-\numlifter{\thechapter}%
-\numindent%
-\endgroup%
-}
-\renewcommand*{\printchapternonum}{%
-\vphantom{\begingroup%
-\leavevmode%
-\chapnumfont%
-\numlifter{\vphantom{9}}%
-\numindent%
-\endgroup}
-\afterchapternum}
-\setlength\midchapskip{0pt}
-\setlength\beforechapskip{0.5\baselineskip}
-\setlength{\afterchapskip}{3\baselineskip}
-\renewcommand\chapnumfont{%
-\fontsize{4cm}{0cm}%
-\bfseries%
-\sffamily%
-\color{chaptercolor}%
-}
-\renewcommand\chaptitlefont{%
-\normalfont%
-\huge%
-\bfseries%
-\raggedleft%
-}%
-\settototalheight\chaptertitleboxheight{%
-\parbox{\textwidth}{\chaptitlefont \strut bg\\bg\strut}}
-\renewcommand\printchaptertitle[1]{%
-\parbox[t][\chaptertitleboxheight][t]{\textwidth}{%
-%\microtypesetup{protrusion=false}% add this if you use microtype
-\chaptitlefont\strut ##1\strut}%
-}
-}
-\chapterstyle{hansen}
-\aliaspagestyle{chapter}{empty}
+\input{preamble.tex}
 
 \begin{document}
+
+\title{操作系统设计文档}
+\author{黄越}
+\date{\today}
+\maketitle
+\newpage
+
+\tableofcontents
+
 \chapter{前言}
+\label{chap:preface}
 
-这是我的第一个 OS 内核。既然没有经验，看不懂别人的操作系统，只好自己从零搭一个了。或许很多东西并不是最佳实践，但是能跑起来才是最重要的。
+这是我的第一个 OS 内核。既然没有经验，看不懂别人的操作系统，只好自己从零搭一个了。这个操作系统没有使用任何来自第三方的代码，不过使用了 OS 中常见的概念和抽象，例如 VFS 等。或许很多东西并不是最佳实践，但是能跑起来才是最重要的。
 
-这个操作系统没有使用任何来自第三方的代码，不过使用了 OS 中常见的概念和抽象，例如 VFS 等。
+从项目数据上来看，\input{data/git_summary.tex}。请注意这里的“代码行数”包括所有被 git 统计的文件，例如这篇文档也在其中：LaTeX 代码也是代码。
 
-这个 OS 完全采用 C++ 实现。这是一个与现有操作系统都不相同的决定，在\cref{chap:why_cpp}中，我详细解释了这么做的原因。
+从语言上来看，这个 OS 完全采用 C++ 实现。请注意这是 C++20，并且采用了许多 gcc/clang 独有的扩展；微软的 MSVC 或旧版本的编译器是无法编译它的。这是一个与几乎所有现有操作系统都不相同的决定。在\cref{chap:why_cpp}中，我介绍了我利用的许多 C++ 特性，以及在没有 C++ runtime 时的一些 workaround。希望在阅读这一章后，你可以理解我选择它的原因。
 
-在这篇文档中，我将以 RISC-V 作为例子，介绍操作系统的启动流程以及各个子系统的实现方式。LoongArch 的支持是由条件编译指令 \texttt{#ifdef __loongarch__} 控制的，在此不作过多介绍。
+在这篇文档中，我将以 RISC-V 作为例子，介绍操作系统的启动流程以及各个子系统的实现方式。LoongArch 的支持准备由条件编译指令 \mintinline{cpp}{#ifdef __loongarch__} 控制，但我尚未开始。
+
+这篇文档在一定程度上也算是我的 OS 学习笔记，因此语言上不会非常正式。此外，我并不清楚一部分术语的中文翻译，所以将会用对应的英文词汇替代它们。
 
 \chapter{启动流程}
+\label{chap:boot}
+\input{boot/boot.tex}
 
-\section{内存布局}
+\chapter{子系统}
+\label{chap:subsystem}
+\input{subsystem/interrupt/interrupt.tex}
 
-我规定操作系统的内存布局如下：
-
-
-\chapter{为什么使用 C++？}
+\chapter{C++}
 \label{chap:why_cpp}
+\input{whycpp.tex}
+
+\bibliographystyle{plain}
+\bibliography{bibtex}
 
 \end{document}

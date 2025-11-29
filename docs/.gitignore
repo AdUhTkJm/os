@@ -1,0 +1,6 @@
+*
+!*/
+!**/*.tex
+!.gitignore
+!bibtex.bib
+data/

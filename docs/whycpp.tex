@@ -1,0 +1,30 @@
+% 介绍 C++
+我大量使用了 C++ 的语言特性。即使没有 C++ runtime，这个语言依旧强大。接下来，我将描述我所使用的各种特性，以及对于缺失 runtime 时的一些解决方案。
+
+在我看来，操作系统使用 C 主要是历史原因，而 C++ 不失为一种好的选择。至于 Rust，我个人感觉它“不够自由”，所以我不喜欢它。
+
+\section{与汇编的交流}
+
+众所周知，只要使用 \mintinline{cpp}{extern "C"}, 就可以将 C++ 函数当做 C 链接。但这不总是可行：大部分函数都被放在了 \mintinline{cpp}{namespace os} 之中，所以必须进行 name-mangling。好在它的规则并不复杂，只是初看吓人而已。具体的规则可以参见 Itanium C++ ABI \cite{itanium}, Section 5.1。如果熟悉 clang （前端）的内部实现，那么对它应该不会陌生。
+
+举个例子，如\cref{sec:interrupt}所述，在 interruption handler 中，我们会加载 ksp。在汇编中，我们有如下代码：
+\begin{minted}{asm}
+stvec_pos:
+  # Record current sp.
+  csrw sscratch, sp
+  
+  # Load the ksp of the process.
+  la sp, _ZN2os9schedulerE # os::scheduler
+  ld sp, 48(sp)            # scheduler_t::active
+  ld sp, 32(sp)            # pcb_t::ksp
+
+  # Save registers to the kernel stack.
+  sd ra, 0(sp)
+
+  ...
+\end{minted}
+
+其中的 \_ZN2os9schedulerE 就是全局变量 os::scheduler 的符号名称，而后面的两条指令则是在加载它的成员变量。我们可以使用 static\_assert 来保证偏移量正确。
+
+\section{容器}
+\label{sec:container}
