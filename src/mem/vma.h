@@ -13,6 +13,11 @@
 #define MAP_FIXED      0x10
 #define MAP_ANONYMOUS  0x20
 
+// Kernel internal usage, used for brk().
+#define VMA_IS_HEAP    0x40
+#define VMA_IS_STACK   0x80
+#define VMA_IS_PT_LOAD 0x100
+
 namespace os {
 
 struct vma_t {

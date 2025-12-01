@@ -81,7 +81,7 @@ public:
 
   const uint64_t rtti;
 
-  enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket };
+  enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket, FIFO };
 
   virtual ~inode() = default;
   virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;

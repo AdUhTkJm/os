@@ -51,6 +51,8 @@ initramfs_inode *initramfs_inode::load(const string &name, filetype ty, size_t s
 }
 
 inode *initramfs_inode::lookup(const string &name) {
+  if (!children.count(name))
+    return nullptr;
   return children[name];
 }
 

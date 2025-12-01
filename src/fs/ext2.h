@@ -41,7 +41,8 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
   struct direntry {
     uint32_t inum;
     uint16_t size;
-    uint16_t namelen;
+    uint8_t  namelen;
+    uint8_t  type;
     char name[];
   };
 
@@ -60,6 +61,7 @@ public:
     Socket = 0xC000
   };
   ftypeflags fromtype(inode::filetype ty);
+  inode::filetype totype(ftypeflags ty);
 
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
@@ -80,11 +82,11 @@ class ext2 : public fs {
     uint32_t free_blocks;
     uint32_t free_inodes;
     uint32_t start_block_num;
-    uint32_t blocksz; // log_2(size) - 10
+    uint32_t block_size; // log_2(size) - 10
     uint32_t fragsz;  // log_2(fragment size) - 10
-    uint32_t group_sz_blocks; // Real value, in blocks
-    uint32_t group_sz_frags;
-    uint32_t group_sz_inodes;
+    uint32_t block_per_group;
+    uint32_t flags_per_group;
+    uint32_t inodes_per_group;
     uint32_t last_mount_time;
     uint32_t last_write_time;
     // These are consistency check related. We don't do it for now.
@@ -100,6 +102,17 @@ class ext2 : public fs {
     uint32_t ver_major;
     uint16_t uid; // This uid and gid can use reserved blocks.
     uint16_t gid; // These relate to block_su.
+    uint32_t first_non_reserved;
+    uint16_t inode_size; // In bytes.
+    uint32_t optional_features;
+    uint32_t required_features;
+    uint32_t readonly_features;
+    char fsid[16];
+    char volume_name[16];
+    char last_mounted_path[64];
+    uint32_t compress_alg;
+    uint8_t  file_prealloc_cnt;
+    uint8_t  dir_prealloc_cnt;
   } superblock;
   
   struct block_group {
@@ -122,8 +135,14 @@ class ext2 : public fs {
   void update_superblock();
   void update_block_group(int group_id);
   void update_meta(ext2_inode *node);
+
+  // Create an inode in memory from an existing file, located at `inum`.
+  ext2_inode *read_from_inum(size_t inum);
+
   // Calculate byte offset from beginning, given a block number.
   size_t offset(size_t blk);
+
+  // Search for an unoccupied inode.
   ext2_inode *search(int id, block_group &gd);
   
   friend class ext2_inode;

@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdint.h>
+#include "../../interrupt/sysret.h"
 
 using reg_t = long;
 
@@ -193,29 +194,29 @@ int printf(const char *fmt, ...) {
 }
 
 extern "C" void _start() {
-  // open
-  int fd = syscall((reg_t) "/tmp/a.txt", 02100, 2); // O_RDWR | O_APPEND
-  // write
-  syscall(fd, (reg_t) "Hello World!\n", 13, 1);
+  // mount
+  syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", 165);
 
   int pid = syscall(57);
   if (pid == 0) {
-    // lseek
-    syscall(fd, 0, 0, 8);
-    char value[13];
-    // read
-    syscall(fd, (reg_t) value, 13, 0);
-    value[12] = '\0';
-    printf("%s\n", value);
-    // close
+    int fd = syscall((reg_t) "/mnt", 0, 2); // O_RDONLY
+    
+    // Expand heap.
+    unsigned long brk = syscall(0, 12); // brk
+    printf("brk = %p\n", brk);
+    unsigned long newend = syscall(brk + 4096, 12); // brk
+    printf("brk = %p\n", newend);
+
+    // getdents
+    int ret = syscall(fd, brk, 4096, 78);
+    printf("getdents ret = %d\n", ret);
+    auto p = (linux_dirent*) brk;
+    for (auto q = p; (char*) q < (char*) p + ret; q = (linux_dirent *) ((char *) q + q->len)) {
+      printf("inum = %p, len = %d, item = %s\n", q->inum, q->len, q->name);
+    }
+
     syscall(fd, 3);
     syscall(0, 60);
   }
-  // close
-  syscall(fd, 3);
-
-  // mount
-  int r = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", 165);
-  printf("%d\n", r);
   syscall(0, 60);
 }

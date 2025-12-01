@@ -13,7 +13,11 @@ static_storage<ext2> ext2fs;
 
 // Create a node from existing data.
 ext2_inode::ext2_inode(class fs *fs, const struct meta &meta, long inum):
-  inode_impl(fs, meta.uid, meta.gid), meta(meta), _inum(inum) { }
+  inode_impl(fs, meta.uid, meta.gid), meta(meta), _inum(inum) {
+  // Copy data from disk into memory.
+  type = totype(ftypeflags(meta.type & 0xf000));
+  mode = meta.type & 0xfff;
+}
 
 // Create an empty node.
 ext2_inode::ext2_inode(class fs *fs, long inum):
@@ -145,6 +149,27 @@ ext2_inode::ftypeflags ext2_inode::fromtype(filetype ty) {
     return Socket;
   case filetype::CharDevice:
     return CharDevice;
+  case filetype::FIFO:
+    return FIFO;
+  }
+}
+
+ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
+  switch (ty) {
+  case File:
+    return filetype::File;
+  case Directory:
+    return filetype::Dir;
+  case SymLink:
+    return filetype::Link;
+  case BlockDevice:
+    return filetype::BlockDevice;
+  case Socket:
+    return filetype::Socket;
+  case CharDevice:
+    return filetype::CharDevice;
+  case FIFO:
+    return filetype::FIFO;
   }
 }
 
@@ -197,7 +222,34 @@ inode *ext2_inode::lookup(const string &name) {
 }
 
 vector<inode::item> ext2_inode::list() {
-  return {};
+  if (type != Dir)
+    return {};
+
+  auto fs = static_cast<ext2*>(this->fs);
+  vector<item> result;
+  for (unsigned pos = 0; pos < meta.sz;) {
+    // Read the directory entry header.
+    int block = locate(pos);
+    unsigned offset = block * fs->blksz + pos % fs->blksz;
+    direntry entry;
+    fs->device->read(offset, &entry, sizeof(entry), 0);
+    
+    if (entry.size < sizeof(entry))
+      // Corrupt filesystem.
+      return result;
+
+    if (entry.inum != 0) {
+      auto p = new char[entry.namelen];
+      fs->device->read(offset + sizeof(entry), p, entry.namelen, 0);
+      auto name = string(p, entry.namelen);
+      delete[] p;
+      result.push_back({
+        .inum = entry.inum, .name = name,
+      });
+    }
+    pos += entry.size;
+  }
+  return result;
 }
 
 // Currently we're assuming ext2 header starts at sector 2. This isn't always the case; read sectors 0 & 1 to know.
@@ -206,23 +258,31 @@ ext2::ext2(inode *device): device(device) {
   char block[sbsz];
   device->read(1024, block, sbsz, 0);
   memcpy(&superblock, block, sbsz);
-  // Leave ext2 in an uninitialized state.
+  // Leave ext2 in an uninitialized state. In this state, this->root is nullptr,
+  // so it's easy to detect an error.
   if (superblock.magic != 0xef53)
     return;
 
-  printk("version = %d.%d\n", superblock.ver_major, superblock.ver_minor);
-  blksz = 1 << (10 + superblock.blocksz);
-  auto group_count = (superblock.total_blocks + superblock.group_sz_blocks - 1) / superblock.group_sz_blocks;
+  if (superblock.ver_major < 1) {
+    superblock.inode_size = 128;
+    superblock.first_non_reserved = 11;
+  }
+
+  blksz = 1 << (10 + superblock.block_size);
+  auto group_count = (superblock.total_blocks + superblock.block_per_group - 1) / superblock.block_per_group;
 
   int gdt_start = (blksz == 1024) ? 2 : 1;
   gdt.resize(group_count);
 
   size_t len = group_count * sizeof(block_group);
   char *buf = new char[len];
-  device->read(gdt_start, buf, len, 0);
+  device->read(gdt_start * blksz, buf, len, 0);
   memcpy(gdt.data(), buf, len);
   delete[] buf;
-  printk("ext2 initialized: groups = %d, block_size = %d\n", group_count, blksz);
+
+  // Root is always at inode 2.
+  root = new dentry("/", read_from_inum(2));
+  printk("ext2 version = %d.%d\n", superblock.ver_major, superblock.ver_minor);
 }
 
 size_t ext2::offset(size_t id) {
@@ -253,12 +313,17 @@ ext2_inode *ext2::search(int id, block_group &gd) {
     // 0 is free and 1 is occupied. Skip the fully occupied byte.
     if (byte == 0xFF)
       continue;
+    // Don't touch reserved inodes.
+    if (i * 8 + 7 < superblock.first_non_reserved)
+      continue;
 
     for (int j = 0; j < 8; j++) {
       if (byte & (1 << j))
         continue;
+      if (i * 8 + j < superblock.first_non_reserved)
+        continue;
       
-      unsigned inum = id * superblock.group_sz_inodes + i * 8 + j + 1;
+      unsigned inum = id * superblock.inodes_per_group + i * 8 + j + 1;
       bitmap[i] |= (1 << j);
       
       gd.free_inodes_count--;
@@ -291,6 +356,21 @@ void ext2::erase(inode *n) {
 void ext2::update_meta(ext2_inode *node) {
   // TODO
   (void) node;
+}
+
+ext2_inode *ext2::read_from_inum(size_t inum) {
+  auto group = (inum - 1) / superblock.inodes_per_group;
+  auto index = (inum - 1) % superblock.inodes_per_group;
+
+  const block_group &gd = gdt[group];
+  // Compute byte offset.
+  auto offset = gd.inode_table * blksz + index * superblock.inode_size;
+
+  auto meta = (struct ext2_inode::meta*) vmalloc(superblock.inode_size);
+  device->read(offset, meta, superblock.inode_size, 0);
+  auto inode = new ext2_inode(this, *meta, inum);
+  vfree(meta);
+  return inode;
 }
 
 expected<fs*> ext2_creator(const char *src) {

@@ -206,7 +206,7 @@ void mmwr(pa_t p, T value) {
   *(volatile U*) os::as_va(p) = (U) value;
 }
 
-void copy_to_user(void *usr, void *ker, size_t len);
+void copy_to_user(void *usr, const void *ker, size_t len);
 // Copies raw data.
 expected<unique_ptr<char>> copy_from_user(void *usr, size_t len);
 // Copies a string.

@@ -46,7 +46,7 @@ int load_elf(file *content, pcb_t *pcb) {
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma_t vma = {
-        .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE,
+        .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
         .backup = content, .offset = phdr.p_offset
       };
       content->ref();

@@ -56,8 +56,8 @@ void pcb_t::clear() {
 int pcb_t::open_file(const string &path, int flags, int mode) {
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
-  bool write = bool(flags & O_RDWR) || bool(flags & O_WRONLY);
-  bool read = bool(flags & O_RDWR) || bool(flags & O_RDONLY);
+  bool write = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_WRONLY;
+  bool read = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_RDONLY;
 
   // TODO: check search permission
   auto maybe_dentry = vfs->lookup(path);
@@ -110,6 +110,27 @@ int pcb_t::close_file(int fd) {
   return 0;
 }
 
+va_t pcb_t::brk(va_t addr) {
+  auto va = (va_t) addr;
+  auto lowest = stack_top;
+  // Find the lowest VMA that we must not overlap with.
+  // In other words, this is the cap of the address.
+  for (auto &vma : this->vma) {
+    if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
+      continue;
+    lowest = min(lowest, vma.begin);
+  }
+  for (auto &vma : this->vma) {
+    if (!(vma.flags & VMA_IS_HEAP))
+      continue;
+
+    if (va < vma.end || va >= lowest)
+      return vma.end;
+    return vma.end = va;
+  }
+  panic("process has no heap!");
+}
+
 int nextpid() {
   static spinlock lock;
   static int pid = 0;
@@ -126,12 +147,12 @@ void init_user(pcb_t *pcb) {
   // Allocate a heap. It is initially quite small.
   pcb->vma.push_back({
     .begin = heap_start, .end = heap_start + PAGE_SIZE, .prot = PROT_READ | PROT_WRITE,
-    .flags = MAP_PRIVATE, .backup = nullptr, .offset = 0
+    .flags = MAP_PRIVATE | VMA_IS_HEAP, .backup = nullptr, .offset = 0
   });
   // Allocate a stack. Note it grows downwards.
   pcb->vma.push_back({
     .begin = stack_top - user_stack_size, .end = pcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
-    .flags = MAP_PRIVATE, .backup = nullptr, .offset = 0
+    .flags = MAP_PRIVATE | VMA_IS_STACK, .backup = nullptr, .offset = 0
   });
 }
 
@@ -347,7 +368,7 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   return 0;
 }
 
-void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb) {
+void copy_to_user(void *usr, const void *ker, size_t len, pcb_t *pcb) {
   EnableAccessToUserMemory enable;
   vma_map(usr, (char*) usr + len, pcb, /*write=*/true);
 
@@ -364,7 +385,7 @@ void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb) {
   }
 }
 
-void copy_to_user(void *usr, void *ker, size_t len) {
+void copy_to_user(void *usr, const void *ker, size_t len) {
   copy_to_user(usr, ker, len, scheduler.active);
 }
 

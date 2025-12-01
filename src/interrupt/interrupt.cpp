@@ -1,3 +1,4 @@
+#include "sysret.h"
 #include "../utils/libc.h"
 #include "../utils/helper.h"
 #include "../driver/plic/plic.h"
@@ -137,6 +138,10 @@ long syscall(trapframe *ksp) {
     f->seek(a1, whence);
     return 0;
   }
+  case 12: {
+    // brk(addr)
+    return pcb->brk(a0);
+  }
   case 39: {
     // getpid()
     return pcb->pid;
@@ -159,6 +164,27 @@ long syscall(trapframe *ksp) {
     // exit(ret_code)
     os::terminate(pcb, a0);
     return 0;
+  }
+  case 78: {
+    // getdents(fd, dirents, cnt)
+    if (!pcb->ftbl.count(a0))
+      return -EBADF;
+    auto file = pcb->ftbl[a0];
+    auto items = file->node->list();
+    
+    char *pos = (char *) a1;
+    for (const auto &item : items) {
+      constexpr unsigned nameoff = offsetof(linux_dirent, name);
+      unsigned short len = nameoff + item.name.size() + 2;
+      if (va_t(pos) - a1 + len >= va_t(a2))
+        return -EINVAL;
+
+      linux_dirent entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len };
+      copy_to_user(pos, &entry, nameoff);
+      copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1);
+      pos += len;
+    }
+    return va_t(pos) - a1;
   }
   case 110: {
     // getppid()

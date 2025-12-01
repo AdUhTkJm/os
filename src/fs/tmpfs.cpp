@@ -58,6 +58,8 @@ os::vector<inode::item> tmpfs_inode::list() {
 }
 
 inode *tmpfs_inode::lookup(const string &name) {
+  if (!children.count(name))
+    return nullptr;
   return children[name];
 }
 

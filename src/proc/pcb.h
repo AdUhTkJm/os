@@ -88,6 +88,9 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   int open_file(const string &name, int flags, int mode = 0);
   int close_file(int fd);
 
+  // Sets heap end. Returns the new end on success, and old end on failure.
+  va_t brk(va_t addr);
+
   // This is the final deletion. This cannot be done in clear(), because it
   // is called when this ksp is in use.
   ~pcb_t() {
@@ -148,8 +151,8 @@ pcb_t *make_kprocess(T fptr) {
   return pcb;
 }
 
-void copy_to_user(void *usr, void *ker, size_t len);
-void copy_to_user(void *usr, void *ker, size_t len, pcb_t *pcb);
+void copy_to_user(void *usr, const void *ker, size_t len);
+void copy_to_user(void *usr, const void *ker, size_t len, pcb_t *pcb);
 
 }
 
