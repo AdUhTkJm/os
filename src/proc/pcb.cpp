@@ -53,7 +53,7 @@ void pcb_t::clear() {
   }
 }
 
-int pcb_t::open_file(const string &path, int flags) {
+int pcb_t::open_file(const string &path, int flags, int mode) {
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
   bool write = bool(flags & O_RDWR) || bool(flags & O_WRONLY);
@@ -71,7 +71,7 @@ int pcb_t::open_file(const string &path, int flags) {
       return maybe_parent;
 
     auto node = (*maybe_parent)->node;
-    if (int err = node->create(basename(path), inode::File); err != 0)
+    if (int err = node->create(basename(path), inode::File, mode); err != 0)
       return err;
 
     return open_file(path, flags & ~O_CREAT);

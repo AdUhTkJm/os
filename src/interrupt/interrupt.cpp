@@ -105,11 +105,12 @@ long syscall(trapframe *ksp) {
     return ret;
   }
   case 2: {
-    // open(path, flags)
+    // open(path, flags, mode)
+    // mode will be ignored when not creating file, as expected.
     auto path = copy_from_user((char *) a0);
     if (!path)
       return -EFAULT;
-    auto ret = pcb->open_file(path->get(), a1);
+    auto ret = pcb->open_file(path->get(), a1, a2);
     return ret;
   }
   case 3: {
@@ -136,6 +137,10 @@ long syscall(trapframe *ksp) {
     f->seek(a1, whence);
     return 0;
   }
+  case 39: {
+    // getpid()
+    return pcb->pid;
+  }
   case 57: {
     // fork()
     return fork();
@@ -154,6 +159,10 @@ long syscall(trapframe *ksp) {
     // exit(ret_code)
     os::terminate(pcb, a0);
     return 0;
+  }
+  case 110: {
+    // getppid()
+    return pcb->parent->pid;
   }
   case 165: {
     // mount(src, tgt, fsty, flags, data)

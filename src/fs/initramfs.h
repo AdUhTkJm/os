@@ -33,17 +33,23 @@ void mount_initramfs();
 class initramfs_inode : public inode_impl<initramfs_inode> {
   void *data;
   os::hashmap<string, inode *> children;
+  size_t sz;
 
   initramfs_inode *load(const string &name, filetype ty, size_t sz, void *ptr);
   friend void mount_initramfs();
+  friend class initramfs;
 public:
   using inode_impl::inode_impl;
 
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
-  int create(const string &name, filetype ty) override;
+  int create(const string &name, filetype ty, int) override;
+  int unlink(const string &) override { return -EROFS; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
+
+  size_t size() override { return sz; }
+  long inum() override { return (long) data; }
 };
 
 class initramfs : public fs {
@@ -51,7 +57,7 @@ public:
   initramfs() {
     auto rootnode = new initramfs_inode(this, 0, 0);
     rootnode->type = inode::Dir;
-    rootnode->size = 0;
+    rootnode->sz = 0;
     root = new class dentry("", rootnode);
   }
 

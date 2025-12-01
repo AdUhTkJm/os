@@ -9,16 +9,22 @@ namespace os {
 class tmpfs_inode : public os::inode_impl<tmpfs_inode> {
   vector<char> data;
 
-  os::hashmap<string, inode*> children;
+  os::hashmap<string, tmpfs_inode*> children;
+  atomic<unsigned> lnkcnt;
 public:
   tmpfs_inode(class fs *fs, int uid, int gid): inode_impl(fs, uid, gid) { }
 
   size_t read(size_t offset, void* buf, size_t len, int flags) override;
   size_t write(size_t offset, const void* buf, size_t len, int flags) override;
 
-  int create(const string &name, filetype ty) override;
+  int create(const string &name, filetype ty, int mode) override;
+  int unlink(const string &name) override;
   inode *lookup(const string &name) override;
   os::vector<item> list() override;
+
+  size_t size() override { return data.size(); }
+  // Note that `data.data()` will change, so we can't use it.
+  long inum() override { return (long) this; }
 
   void load(void *data, size_t sz);
 };

@@ -11,11 +11,196 @@ namespace os {
 
 static_storage<ext2> ext2fs;
 
-// size_t ext2_inode::read(size_t offset, void *buf, size_t len) {
-  
-// }
+// Create a node from existing data.
+ext2_inode::ext2_inode(class fs *fs, const struct meta &meta, long inum):
+  inode_impl(fs, meta.uid, meta.gid), meta(meta), _inum(inum) { }
 
-// Note that read() is synchronous on boot, but asynchronous in user processes.
+// Create an empty node.
+ext2_inode::ext2_inode(class fs *fs, long inum):
+  inode_impl(fs, -1, -1), meta(), _inum(inum) { }
+
+size_t ext2_inode::locate(size_t byte) {
+  auto fs = static_cast<ext2*>(this->fs);
+  auto block_size = fs->blksz;
+  size_t cnt = byte / block_size;
+  // Size of each array pointed by the indirect pointers.
+  auto size = block_size / sizeof(int);
+  if (cnt < 12)
+    return meta.directptr[cnt];
+
+  // We're in the range of single-indirect pointer.
+  unique_ptr<unsigned[]> ptrs(new unsigned[block_size / sizeof(unsigned)]);
+  cnt -= 12;
+  if (cnt < size) {
+    fs->device->read(fs->offset(meta.indirect1), ptrs.get(), block_size, 0);
+    return ptrs[cnt];
+  }
+
+  // Second indirect pointer here.
+  cnt -= size;
+  if (cnt < size * size) {
+    fs->device->read(fs->offset(meta.indirect2), ptrs.get(), block_size, 0);
+    size_t b1 = ptrs[cnt / size];
+    if (!b1)
+      return 0;
+    fs->device->read(fs->offset(b1), ptrs.get(), block_size, 0);
+    return ptrs[cnt % size];
+  }
+
+  cnt -= size * size;
+  if (cnt < size * size * size) {
+    fs->device->read(fs->offset(meta.indirect3), ptrs.get(), block_size, 0);
+    size_t b2 = ptrs[cnt / (size * size)];
+    if (!b2)
+      return 0;
+    fs->device->read(fs->offset(b2), ptrs.get(), block_size, 0);
+    size_t b1 = ptrs[(cnt / size) % size];
+    if (!b1)
+      return 0;
+    fs->device->read(fs->offset(b1), ptrs.get(), block_size, 0);
+    return ptrs[cnt % size];
+  }
+
+  // This is out of range.
+  return -1;
+}
+
+size_t ext2_inode::read(size_t offset, void *buf, size_t len, int flags) {
+  auto fs = static_cast<ext2*>(this->fs);
+
+  size_t size = fs->blksz;
+  size_t pos = offset;
+  size_t end = min((size_t) meta.sz, offset + len);
+  size_t read = 0;
+
+  while (pos < end) {
+    size_t b = locate(pos);
+
+    if (b == -1ul)
+      return read;
+    size_t chunk = min(size - pos % size, end - pos);
+
+    char* p = (char*) buf + read;
+
+    // Sparse hole.
+    if (b == 0)
+      memset(p, 0, chunk);
+    else
+      fs->device->read(fs->offset(b) + pos % size, p, chunk, flags);
+
+    pos += chunk;
+    read += chunk;
+  }
+
+  return read;
+}
+
+size_t ext2_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+  bool append = flags & O_APPEND;
+  auto fs = static_cast<ext2*>(this->fs);
+  offset = append ? meta.sz : offset;
+
+  size_t size = fs->blksz;
+  size_t pos = offset;
+  size_t end = offset + len;
+  size_t written = 0;
+
+  while (pos < end) {
+    size_t b = locate(pos);
+    if (b == -1ul)
+      return written;
+    
+    if (b == 0) {
+      // TODO: deal with sparse holes: allocate new blocks.
+      return written;
+    }
+    size_t chunk = min(size - pos % size, end - pos);
+
+    char* p = (char*) buf + written;
+
+    fs->device->write(fs->offset(b) + pos % size, p, chunk, flags & ~O_APPEND);
+
+    pos += chunk;
+    written += chunk;
+  }
+  if (pos > meta.sz) {
+    meta.sz = pos;
+    fs->update_meta(this);
+  }
+
+  return written;
+}
+
+ext2_inode::ftypeflags ext2_inode::fromtype(filetype ty) {
+  switch (ty) {
+  case filetype::File:
+    return File;
+  case filetype::Dir:
+    return Directory;
+  case filetype::Link:
+    return SymLink;
+  case filetype::BlockDevice:
+    return BlockDevice;
+  case filetype::Socket:
+    return Socket;
+  case filetype::CharDevice:
+    return CharDevice;
+  }
+}
+
+int ext2_inode::create(const string &name, filetype ty, int mode) {
+  if (type != Dir)
+    return -ENOTDIR;
+  // Find a new inode.
+  auto fs = static_cast<ext2*>(this->fs);
+  auto node = fs->get();
+
+  auto pcb = scheduler.active;
+  // Update the metadata.
+  node->meta.type = fromtype(ty) | mode;
+  node->meta.uid = pcb->uid;
+  node->meta.gid = pcb->gid;
+  node->meta.lnkcnt = ty == Dir ? 2 : 1;
+
+  // Update the in-memory node.
+  node->mode = mode;
+  node->uid = pcb->uid;
+  node->gid = pcb->gid;
+  node->lnkcnt = node->meta.lnkcnt;
+
+  // Write back to the filesystem.
+  fs->update_meta(node);
+
+  // Create a new directory entry here.
+  int size = roundup<4>(sizeof(direntry) + name.size());
+  unique_ptr entry((direntry *) vmalloc(size));
+  entry->namelen = name.size();
+  entry->size = size;
+  entry->inum = node->_inum;
+  // Copy the name into the flexible array at the end.
+  memcpy(entry->name, name.c_str(), name.size());
+  // Append a directory entry. write() will update metadata for us.
+  meta.lnkcnt++;
+  linked();
+  write(meta.sz, entry.get(), size, 0);
+  return 0;
+}
+
+int ext2_inode::unlink(const string &name) {
+  (void) name;
+  return 0;
+}
+
+inode *ext2_inode::lookup(const string &name) {
+  (void) name;
+  return nullptr;
+}
+
+vector<inode::item> ext2_inode::list() {
+  return {};
+}
+
+// Currently we're assuming ext2 header starts at sector 2. This isn't always the case; read sectors 0 & 1 to know.
 ext2::ext2(inode *device): device(device) {
   constexpr auto sbsz = sizeof(struct superblock);
   char block[sbsz];
@@ -26,10 +211,10 @@ ext2::ext2(inode *device): device(device) {
     return;
 
   printk("version = %d.%d\n", superblock.ver_major, superblock.ver_minor);
-  block_size = 1 << (10 + superblock.blocksz);
+  blksz = 1 << (10 + superblock.blocksz);
   auto group_count = (superblock.total_blocks + superblock.group_sz_blocks - 1) / superblock.group_sz_blocks;
 
-  int gdt_start = (block_size == 1024) ? 2 : 1;
+  int gdt_start = (blksz == 1024) ? 2 : 1;
   gdt.resize(group_count);
 
   size_t len = group_count * sizeof(block_group);
@@ -37,16 +222,75 @@ ext2::ext2(inode *device): device(device) {
   device->read(gdt_start, buf, len, 0);
   memcpy(gdt.data(), buf, len);
   delete[] buf;
-  printk("ext2 initialized: groups = %d, block_size = %d\n", group_count, block_size);
+  printk("ext2 initialized: groups = %d, block_size = %d\n", group_count, blksz);
+}
+
+size_t ext2::offset(size_t id) {
+  return (id - superblock.start_block_num) * blksz;
+}
+
+void ext2::update_superblock() {
+  device->write(1024, &superblock, sizeof(struct superblock), 0);
+}
+
+void ext2::update_block_group(int id) {
+  int gdt_start = (blksz == 1024) ? 2 : 1;
+  device->write(gdt_start * blksz + id * sizeof(block_group), &gdt[id], sizeof(block_group), 0);
+}
+
+ext2_inode *ext2::search(int id, block_group &gd) {
+  if (!gd.free_inodes_count)
+    return nullptr;
+
+  // Each group contains an inode bitmap. We read it.
+  unique_ptr<char[]> bitmap(new char[blksz]);
+  device->read(offset(gd.inode_bitmap), bitmap.get(), blksz, 0);
+
+  // 2. Search the Bitmap for the first free bit, 0.
+  for (unsigned i = 0; i < blksz; i++) {
+    unsigned char byte = bitmap[i];
+    
+    // 0 is free and 1 is occupied. Skip the fully occupied byte.
+    if (byte == 0xFF)
+      continue;
+
+    for (int j = 0; j < 8; j++) {
+      if (byte & (1 << j))
+        continue;
+      
+      unsigned inum = id * superblock.group_sz_inodes + i * 8 + j + 1;
+      bitmap[i] |= (1 << j);
+      
+      gd.free_inodes_count--;
+      superblock.free_inodes--;
+      
+      // Write back changes.
+      device->write(offset(gd.inode_bitmap), bitmap.get(), blksz, 0);
+      update_block_group(id);
+      update_superblock();
+
+      return new ext2_inode(this, inum);
+    }
+  }
+  return nullptr;
 }
 
 ext2_inode *ext2::get() {
-  assert(false);
+  for (unsigned i = 0; i < gdt.size(); i++) {
+    if (auto ret = search(i, gdt[i]))
+      return ret;
+  }
+  return nullptr;
 }
 
 void ext2::erase(inode *n) {
   // auto node = cast<ext2_inode>(n);
   (void) n;
+}
+
+void ext2::update_meta(ext2_inode *node) {
+  // TODO
+  (void) node;
 }
 
 expected<fs*> ext2_creator(const char *src) {

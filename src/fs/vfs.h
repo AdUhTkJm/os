@@ -46,9 +46,6 @@ public:
   // Mark the inode as unused in the FS.
   // This does not deallocate the inode.
   virtual void erase(inode *) = 0;
-
-  // If its inode has a backup on disk, then we can delete inodes when refcnt drops to zero.
-  // If it is not, we can only delete when its link count drops to zero.
   virtual bool has_backup() = 0;
 };
 
@@ -75,7 +72,9 @@ public:
 };
 
 class inode {
-  atomic<unsigned> refcnt, lnkcnt;
+  atomic<unsigned> refcnt;
+protected:
+  atomic<unsigned> lnkcnt;
 public:
   inode(const inode &) = delete;
   inode &operator=(const inode &) = delete;
@@ -89,16 +88,21 @@ public:
   virtual size_t write(size_t offset, const void* buf, size_t len, int flags) = 0;
 
   // Creates a new, empty file.
-  virtual int create(const string &name, filetype ty) = 0;
+  // The `mode` is the access mode.
+  virtual int create(const string &name, filetype ty, int mode) = 0;
+  virtual int unlink(const string &name) = 0;
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
-  // List all children.
 
   struct item {
-    long handle;
+    long inum;
     string name;
   };
+  // List all children.
   virtual os::vector<item> list() = 0;
+  
+  virtual size_t size() = 0;
+  virtual long inum() = 0;
 
   // Mark this inode as unused.
   // Possibly deletes itself when refcount drops to zero.
@@ -106,11 +110,11 @@ public:
   void ref() { refcnt++; }
   void unlinked();
   void linked() { lnkcnt++; }
+  unsigned nlink() { return lnkcnt; }
 
-  size_t size = 0;
   filetype type;
   class fs *fs;
-  int flags;
+  int mode; // Access mode.
   int uid, gid;
 
   inode(class fs *fs, int uid, int gid, uint64_t rtti): rtti(rtti), fs(fs), uid(uid), gid(gid) { refcnt = 1; }
@@ -118,14 +122,14 @@ public:
 
 template<class T>
 class inode_impl : public inode {
-  static const void* class_id() {
+  static uint64_t class_id() {
     static int unique;
-    return &unique;
+    return (uint64_t) &unique;
   }
 public:
   inode_impl(class fs *fs, int uid, int gid): inode(fs, uid, gid, (long) class_id()) {}
   static bool classof(inode *p) {
-    return p->rtti == (long) class_id();
+    return p->rtti == class_id();
   }
 };
 

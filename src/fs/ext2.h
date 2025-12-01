@@ -21,7 +21,7 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
     uint32_t last_write_time;
     uint32_t delete_time;
     uint16_t gid;
-    uint16_t refcnt;
+    uint16_t lnkcnt;
     uint32_t sectors; // The number of sectors used by this file.
     uint32_t flags;
     uint32_t _resv0; // unused
@@ -36,19 +36,40 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
     uint8_t fragnum;
     uint8_t fragsz;
   } meta;
+  long _inum;
 
+  struct direntry {
+    uint32_t inum;
+    uint16_t size;
+    uint16_t namelen;
+    char name[];
+  };
+
+  friend class ext2;
+  // Finds the block number of this byte.
+  // There might be some sparse holes, which would mean zero.
+  size_t locate(size_t byte);
 public:
-  enum type : uint16_t {
+  using inode_impl::inode_impl;
+  ext2_inode(class fs *fs, const struct meta &meta, long inum);
+  ext2_inode(class fs *fs, long inum);
+
+  enum ftypeflags : uint16_t {
     FIFO = 0x1000, CharDevice = 0x2000, Directory = 0x4000,
     BlockDevice = 0x6000, File = 0x8000, SymLink = 0xA000,
     Socket = 0xC000
   };
+  ftypeflags fromtype(inode::filetype ty);
 
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
-  int create(const string &name, filetype ty) override;
+  int create(const string &name, filetype ty, int mode) override;
+  int unlink(const string &name) override;
   inode *lookup(const string &name) override;
   vector<item> list() override;
+
+  size_t size() override { return meta.sz; }
+  long inum() override { return _inum; }
 };
 
 class ext2 : public fs {
@@ -92,13 +113,20 @@ class ext2 : public fs {
     uint32_t _resv1[3];
   };
 
-  unsigned block_size;
+  // The size of each block, in bytes.
+  unsigned blksz;
   // The group descriptor table.
   os::vector<block_group> gdt;
   inode *device;
 
   void update_superblock();
-  void update_group_desc(uint32_t group_id);
+  void update_block_group(int group_id);
+  void update_meta(ext2_inode *node);
+  // Calculate byte offset from beginning, given a block number.
+  size_t offset(size_t blk);
+  ext2_inode *search(int id, block_group &gd);
+  
+  friend class ext2_inode;
 public:
   ext2(inode *device);
   ext2_inode *get() override;

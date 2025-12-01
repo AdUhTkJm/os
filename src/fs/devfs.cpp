@@ -148,8 +148,12 @@ size_t block_inode::write(size_t offset, const void *buf, size_t len, int) {
   return total;
 }
 
+devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {
+  lnkcnt = 2;
+}
+
 devfs::devfs() {
-  auto node = new devroot(this, 0, 0);
+  auto node = new devroot(this);
   root = new dentry("/dev", node);
 }
 

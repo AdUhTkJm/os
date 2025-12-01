@@ -28,14 +28,18 @@ class console_inode : public inode_impl<console_inode> {
 public:
   using inode_impl::inode_impl;
   console_inode(): inode_impl(devfs, /*uid=*/0, /*gid=*/0) {
-    size = 0; type = CharDevice;
-    flags = 0666; // rw-rw-rw-
+    type = CharDevice;
+    mode = 0666; // rw-rw-rw-
   }
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
-  int create(const string &, filetype) override { return -ENOTDIR; }
+  int create(const string &, filetype, int) override { return -ENOTDIR; }
+  int unlink(const string &) override { return -ENOTDIR; }
   inode *lookup(const string &) override { return nullptr; }
   vector<item> list() override { return {}; }
+
+  size_t size() override { return 0; }
+  long inum() override { return (long) this; }
 
   void wake();
 };
@@ -43,10 +47,11 @@ public:
 class devroot : public inode_impl<devroot> {
   hashmap<string, inode*> children;
 public:
-  using inode_impl<devroot>::inode_impl;
+  devroot(class fs *fs);
   size_t read(size_t, void *, size_t, int) override { return 0; }
   size_t write(size_t, const void *, size_t, int) override { return -EROFS; }
-  int create(const string &, inode::filetype) override { return -EROFS; }
+  int create(const string &, inode::filetype, int) override { return -EROFS; }
+  int unlink(const string &) override { return -EROFS; }
   inode *lookup(const string &name) override {
     return children[name];
   }
@@ -54,13 +59,17 @@ public:
     vector<item> result;
     result.reserve(children.size());
     for (auto [name, inode] : children)
-      result.push_back({ .handle = (long) inode, .name = name });
+      result.push_back({ .inum = (long) inode, .name = name });
     return result;
   }
+
+  size_t size() override { return 0; }
+  long inum() override { return (long) this; }
 
   // Special registration function.
   void record(const string &name, inode *node) {
     children[name] = node;
+    node->linked();
   }
 };
 
@@ -69,14 +78,18 @@ class block_inode : public inode_impl<block_inode> {
 public:
   using inode_impl::inode_impl;
   block_inode(block_device *dev): inode_impl(devfs, /*uid=*/0, /*gid=*/0), dev(dev) {
-    size = 0; type = BlockDevice;
-    flags = 0666; // rw-rw-rw-
+    type = BlockDevice;
+    mode = 0666; // rw-rw-rw-
   }
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
-  int create(const string &, filetype) override { return -ENOTDIR; }
+  int create(const string &, filetype, int) override { return -ENOTDIR; }
+  int unlink(const string &) override { return -ENOTDIR; }
   inode *lookup(const string &) override { return nullptr; }
   vector<item> list() override { return {}; }
+
+  size_t size() override { return 0; }
+  long inum() override { return (long) this; }
 };
 
 

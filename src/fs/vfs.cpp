@@ -15,7 +15,7 @@ size_t file::read(void *buf, size_t len) {
 
 size_t file::write(const void *buf, size_t len) {
   if (flags & O_APPEND)
-    offset = node->size;
+    offset = node->size();
   
   auto ret = node->write(offset, buf, len, flags);
   if ((ssize_t) ret < 0)
@@ -35,7 +35,7 @@ size_t file::seek(long pos, whence whence) {
     offset += pos;
     break;
   case end:
-    offset = node->size + pos;
+    offset = node->size() + pos;
     break;
   }
   return before;
@@ -130,10 +130,10 @@ void inode::drop() {
     return;
   
   bool backed = fs->has_backup();
-  if (backed || lnkcnt == 0) {
+  if (lnkcnt == 0)
     fs->erase(this);
+  if (backed || lnkcnt == 0)
     delete this;
-  }
 }
 
 void inode::unlinked() {

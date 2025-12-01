@@ -10,7 +10,9 @@ VFS (\textit{virtual memory system}) 顾名思义，就应该用 \cpp{virtual} �
 因此，我的 inode 基类如下：
 \begin{minted}{cpp}
 class inode {
-  atomic<unsigned> refcnt, lnkcnt;
+  atomic<unsigned> refcnt;
+protected:
+  atomic<unsigned> lnkcnt;
 public:
   virtual ~inode() = default;
   virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;
@@ -20,3 +22,13 @@ public:
 \end{minted}
 
 而每种文件系统的 inode 都会实现对应的 read/write 方法。
+
+可以注意到，我维护了两个数据：refcnt 与 lnkcnt。它们的区别是，refcnt 是这个 inode 被内存中其他结构持有的数量，也就是通常的 shared\_ptr 所维护的那个数；而 lnkcnt 则是其他 inode 连接到它的数量，或者说是文件系统中 inode 的 symlink 数。
+
+同样地，我们有两对函数 drop/ref 以及 unlinked/linked 来更改计数器并且释放资源。
+
+当 refcnt 归零时，只有在这个文件在硬盘上有备份的时候，我们才可以直接在内存中删除它。这是文件系统的属性所决定的，比如 ext2 就认为是有备份的，而 tmpfs 则没有。（我们暂时不会 swap。）如果删除了没有硬盘备份的 inode，之后再想打开的时候，数据就没有了。所以，对这种 inode 而言，只有确认了“无法再次打开”之后才可以删除，而这正是 lnkcnt 所做的事情。
+
+同理，如果 lnkcnt 归零但是有 refcnt，我们也暂时不能删除：可能还有进程在使用它，得等使用完了再删掉。在使用完成后 refcnt 会自然减少，所以不必担心会漏掉。
+
+这样的坏处是，对于 ext2 而言，我们需要维护两份 lnkcnt。一份作为 metadata 写进硬盘，另一份留在内存里，不过只要在创建和删除时注意一下就可以了。

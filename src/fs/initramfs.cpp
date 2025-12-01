@@ -23,7 +23,7 @@ size_t as_int(const char *p) {
 namespace os {
 
 size_t initramfs_inode::read(size_t offset, void *buf, size_t len, int) {
-  ssize_t l = min(long(size) - long(offset), long(len));
+  ssize_t l = min(long(sz) - long(offset), long(len));
   if (l <= 0)
     return 0;
   memcpy(buf, (char *) data + offset, l);
@@ -36,14 +36,14 @@ size_t initramfs_inode::write(size_t, const void *, size_t, int) {
 }
 
 // This is read-only.
-int initramfs_inode::create(const string &, filetype) {
+int initramfs_inode::create(const string &, filetype, int) {
   return -EROFS;
 }
 
 initramfs_inode *initramfs_inode::load(const string &name, filetype ty, size_t sz, void *ptr) {
   auto *child = cast<initramfs_inode>(fs->get());
   child->type = ty;
-  child->size = sz;
+  child->sz = sz;
   child->data = ptr;
   children[name] = child;
   child->linked();
@@ -58,7 +58,7 @@ vector<inode::item> initramfs_inode::list() {
   vector<item> result;
   result.reserve(children.size());
   for (auto [name, inode] : children)
-    result.push_back({ .handle = (long) inode, .name = name });
+    result.push_back({ .inum = (long) inode, .name = name });
   return result;
 }
 

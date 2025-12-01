@@ -6,11 +6,10 @@ namespace os {
 void tmpfs_inode::load(void *dat, size_t sz) {
   data.resize(sz);
   memcpy(data.data(), dat, sz);
-  size = sz;
 }
 
 size_t tmpfs_inode::read(size_t offset, void *buf, size_t len, int) {
-  ssize_t l = min(long(size) - long(offset), long(len));
+  ssize_t l = min(long(data.size()) - long(offset), long(len));
   if (l <= 0)
     return 0;
   memcpy(buf, data.data() + offset, l);
@@ -19,33 +18,42 @@ size_t tmpfs_inode::read(size_t offset, void *buf, size_t len, int) {
 
 size_t tmpfs_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   bool append = flags & O_APPEND;
-  // On append, the file offset should always be at end.
-  if (append) {
-    data.resize(size += len);
-    memcpy(data.data(), buf, len);
-  }
-
-  ssize_t l = min(long(size) - long(offset), long(len));
-  if (l <= 0)
-    return 0;
-  memcpy(data.data() + offset, buf, l);
-  return l;
+  offset = append ? data.size() : offset;
+  if (data.size() < offset + len)
+    data.resize(offset + len);
+  memcpy(data.data() + offset, buf, len);
+  return len;
 }
 
-int tmpfs_inode::create(const string &name, filetype ty) {
+int tmpfs_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;
 
   auto node = cast<tmpfs_inode>(fs->get());
+  auto pcb = scheduler.active;
   node->type = ty;
+  node->uid = pcb->uid;
+  node->gid = pcb->gid;
+  node->mode = mode;
   children[name] = node;
+  return 0;
+}
+
+int tmpfs_inode::unlink(const string &name) {
+  if (!children.count(name))
+    return -ENOENT;
+
+  auto node = children[name];
+  node->unlinked();
+
+  children.erase(name);
   return 0;
 }
 
 os::vector<inode::item> tmpfs_inode::list() {
   os::vector<item> result;
   for (auto [name, inode] : children)
-    result.push_back({ .handle = (long) inode, .name = name });
+    result.push_back({ .inum = (long) inode, .name = name });
   return result;
 }
 
