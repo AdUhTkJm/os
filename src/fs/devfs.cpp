@@ -45,107 +45,126 @@ void console_inode::wake() {
   scheduler.wakeup(front);
 }
 
-size_t block_inode::read(size_t offset, void *buf, size_t len, int) {
+block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force_reload) {
+  auto &c = cache[sector];
+  if (c.valid && !force_reload)
+    return c;
+  
+  if (dev->read(sector, c.data) != 0)
+    memset(c.data, 0, 512); // Perhaps better notify the failure?
+  c.valid = true;
+  return c;
+}
+
+void block_inode::flush_sector(unsigned sector) {
+  auto &c = cache[sector];
+  if (!c.valid || !c.dirty)
+    return;
+  dev->write(sector, c.data);
+  c.dirty = false;
+}
+
+size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
+  bool direct = flags & O_DIRECT;
   if (len == 0)
     return 0;
-  
-  char tmp[512];
+
   size_t total = 0;
-  char* dst = (char*) buf;
-  const size_t SECTOR_SIZE = 512;
+  size_t sector = offset / 512;
+  size_t soff = offset % 512;
+  char *dst = (char*) buf;
 
-  size_t soff = offset % SECTOR_SIZE;
-  size_t start = offset / SECTOR_SIZE;
-
-  // A partial sector read.
+  // Partial first sector.
   if (soff > 0) {
-    if (dev->read(start, tmp) != 0)
-      return 0;
+    auto &c = load_sector(sector, direct);
+    size_t sz = min(len, 512 - soff);
+    memcpy(dst, c.data + soff, sz);
 
-    size_t sz = min(len, SECTOR_SIZE - soff);
-    memcpy(dst, tmp + soff, sz);
-    
     dst += sz;
     len -= sz;
     total += sz;
-    start++;
+    sector++;
   }
 
-  // Read full sectors.
-  for (size_t i = 0; i < len / SECTOR_SIZE; ++i) {
-    if (dev->read(start + i, dst) < 0)
-      return total;
-    dst += SECTOR_SIZE;
-    len -= SECTOR_SIZE;
-    total += SECTOR_SIZE;
-    start++;
+  // Full sectors.
+  while (len >= 512) {
+    auto &c = load_sector(sector, direct);
+    memcpy(dst, c.data, 512);
+
+    dst += 512;
+    len -= 512;
+    total += 512;
+    sector++;
   }
 
-  // A partial sector write.
+  // Last partial sector.
   if (len > 0) {
-    if (dev->read(start, tmp) != 0)
-      return total;
-    
-    memcpy(dst, tmp, len);
+    auto &c = load_sector(sector, direct);
+    memcpy(dst, c.data, len);
     total += len;
   }
 
   return total;
 }
 
-size_t block_inode::write(size_t offset, const void *buf, size_t len, int) {
+size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+  bool direct = flags & O_DIRECT;
+  bool sync = flags & O_SYNC;
   if (len == 0)
     return 0;
-  
-  char tmp[512];
+
   size_t total = 0;
-  const char *src = (const char*) buf;
-  const size_t SECTOR_SIZE = 512;
+  size_t sector = offset / 512;
+  size_t soff = offset % 512;
+  auto *src = (const char*) buf;
 
-  size_t soff = offset % SECTOR_SIZE;
-  size_t start = offset / SECTOR_SIZE;
-
+  // Partial first sector.
   if (soff > 0) {
-    // We must read first to preserve data in the same sector.
-    if (dev->read(start, tmp) != 0)
-      return 0;
-
-    size_t sz = min(len, SECTOR_SIZE - soff);
-    memcpy(tmp + soff, src, sz);
-    
-    if (dev->write(start, tmp) != 0)
-      return 0;
+    auto &c = load_sector(sector, direct);
+    size_t sz = min(len, 512 - soff);
+    memcpy(c.data + soff, src, sz);
+    c.dirty = true;
 
     src += sz;
     len -= sz;
     total += sz;
-    start++;
+    sector++;
   }
 
-  // Write full sectors.
-  for (size_t i = 0; i < len / SECTOR_SIZE; ++i) {
-    if (dev->write(start + i, src) != 0)
-      return total;
+  // Whole sectors.
+  while (len >= 512) {
+    auto &c = cache[sector];
+    memcpy(c.data, src, 512);
+    c.valid = true;
+    c.dirty = true;
 
-    src += SECTOR_SIZE;
-    len -= SECTOR_SIZE;
-    total += SECTOR_SIZE;
-    start++;
+    src += 512;
+    len -= 512;
+    total += 512;
+    sector++;
   }
 
-  // Write the last bits.
+  // Last partial sector.
   if (len > 0) {
-    if (dev->read(start, tmp) != 0)
-      return total;
-    
-    memcpy(tmp, src, len);
-    if (dev->write(start, tmp) != 0)
-      return total;
+    auto &c = load_sector(sector, direct);
+    memcpy(c.data, src, len);
+    c.dirty = true;
 
     total += len;
   }
 
+  if (direct || sync)
+    flush();
+
   return total;
+}
+
+void block_inode::flush() {
+  for (const auto &[sector, c] : cache) {
+    // Note we can't capture reference directly, since the pair is temporarily constructed.
+    if (c.dirty)
+      flush_sector(sector);
+  }
 }
 
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {

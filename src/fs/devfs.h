@@ -75,6 +75,17 @@ public:
 
 class block_inode : public inode_impl<block_inode> {
   block_device *dev;
+
+  struct cached_sector {
+    unsigned char data[512];
+    bool dirty = false;
+    bool valid = false;
+  };
+  // TODO: change into LRU
+  os::hashmap<unsigned, cached_sector> cache;
+
+  cached_sector &load_sector(unsigned sector, bool force_reload = false);
+  void flush_sector(unsigned sector);
 public:
   using inode_impl::inode_impl;
   block_inode(block_device *dev): inode_impl(devfs, /*uid=*/0, /*gid=*/0), dev(dev) {
@@ -90,6 +101,9 @@ public:
 
   size_t size() override { return 0; }
   long inum() override { return (long) this; }
+
+  // Special functionality
+  void flush();
 };
 
 

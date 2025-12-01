@@ -31,44 +31,6 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
   return 0;
 }
 
-// We must check the validity of user's pointer.
-template<class T> requires (!is_pointer_v<T>)
-optional<T*> asptr(reg_t t) {
-  auto pcb = scheduler.active;
-  va_t va = (va_t) t;
-  for (const auto &vma : pcb->vma) {
-    if (va < vma.end && va >= vma.begin)
-      return (T*) va;
-  }
-  return nullopt;
-}
-
-optional<char*> asstr(reg_t t) {
-  auto p = asptr<void>(t);
-  if (!p)
-    return nullopt;
-  // Also check the length of this string.
-  if (!asptr<void>(t + strlen((char*) *p)))
-    return nullopt;
-  return (char*) *p;
-}
-
-optional<char**> aschptr(reg_t t) {
-  auto pcb = scheduler.active;
-  va_t va = (va_t) t;
-  for (const auto &vma : pcb->vma) {
-    if (va < vma.end && va >= vma.begin) {
-      auto p = (char**) va;
-      // We also check that each string in this char** is alright.
-      for (char **q = p; *q; q++)
-        if (!asptr<char>((reg_t) *q))
-          return nullopt;
-      return p;
-    }
-  }
-  return nullopt;
-}
-
 /*
 See table:
 https://filippo.io/linux-syscall-table/
@@ -142,6 +104,18 @@ long syscall(trapframe *ksp) {
     // brk(addr)
     return pcb->brk(a0);
   }
+  case 32: {
+    // dup(fd)
+    if (!pcb->ftbl.count(a0))
+      return -EBADF;
+    return pcb->ftbl.allocate(pcb->ftbl[a0]);
+  }
+  case 33: {
+    // dup2(fd, newfd)
+    if (!pcb->ftbl.count(a0))
+      return -EBADF;
+    return pcb->ftbl.allocate(pcb->ftbl[a0], a1);
+  }
   case 39: {
     // getpid()
     return pcb->pid;
@@ -153,12 +127,12 @@ long syscall(trapframe *ksp) {
   case 59: {
     // execve(path, argv, envp)
     EnableAccessToUserMemory guard;
-    auto path = asstr(a0);
-    auto argv = aschptr(a1);
-    auto envp = aschptr(a2);
+    auto path = copy_from_user((char *) a0);
+    auto argv = copy_from_user((char **) a1);
+    auto envp = copy_from_user((char **) a2);
     if (!path || !argv || !envp)
       return -EFAULT;
-    return exec(*path, *argv, *envp);
+    return exec(path->get(), argv->get(), envp->get());
   }
   case 60: {
     // exit(ret_code)
@@ -194,15 +168,15 @@ long syscall(trapframe *ksp) {
     // mount(src, tgt, fsty, flags, data)
     // Ignore the data for now.
     EnableAccessToUserMemory guard;
-    auto src = copy_from_user((void*) a0);
+    auto src = copy_from_user((char*) a0);
     if (!src)
       return src;
 
-    auto tgt = copy_from_user((void*) a1);
+    auto tgt = copy_from_user((char*) a1);
     if (!tgt)
       return tgt;
 
-    auto fsty = copy_from_user((void*) a2);
+    auto fsty = copy_from_user((char*) a2);
     if (!fsty)
       return fsty;
 

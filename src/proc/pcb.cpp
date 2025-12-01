@@ -262,7 +262,9 @@ int fork() {
   child->status = Ready;
   child->vma = pcb->vma;
   child->kproc = pcb->kproc;
-  child->uid = pcb->uid;
+  child->uid = pcb->euid;
+  child->euid = pcb->euid;
+  child->suid = pcb->euid;
   child->gid = pcb->gid;
   scheduler.add(child);
   return child->pid;
@@ -334,13 +336,13 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   // Copy the real contents of the strings.
   for (char *const *p = envp; *p; p++) {
     char *str = *p;
-    int len = strlen(str);
+    int len = strlen(str) + 1;
     copy_to_user(usp -= len, str, len, pcb);
     envpp.push_back(usp);
   }
   for (char *const *p = argv; *p; p++) {
     char *str = *p;
-    int len = strlen(str);
+    int len = strlen(str) + 1;
     copy_to_user(usp -= len, str, len, pcb);
     argvp.push_back(usp);
   }
@@ -348,21 +350,28 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   // Copy the pointers.
   // We copy envp pointers first, so that argv will be closer to stack top,
   // as required by the ABI.
-  *(uintptr_t*) (usp -= 8) = 0;
-  for (int i = int(envpp.size()); i >= 0; i--) {
+  constexpr size_t ptrsz = sizeof(uintptr_t);
+  constexpr size_t argcsz = sizeof(int);
+
+  // Insert a null pointer at the end of envp.
+  uintptr_t nulptr = 0;
+  copy_to_user(usp -= ptrsz, &nulptr, ptrsz, pcb);
+  for (int i = int(envpp.size()) - 1; i >= 0; i--) {
     auto ptr = envpp[i];
-    copy_to_user(usp -= 8, &ptr, 8, pcb);
+    copy_to_user(usp -= ptrsz, &ptr, ptrsz, pcb);
   }
 
-  *(uintptr_t*) (usp -= 8) = 0;
-  for (int i = int(argvp.size()); i >= 0; i--) {
+  // Insert a null pointer at the end of argv.
+  copy_to_user(usp -= ptrsz, &nulptr, ptrsz, pcb);
+  for (int i = int(argvp.size()) - 1; i >= 0; i--) {
     auto ptr = argvp[i];
-    copy_to_user(usp -= 8, &ptr, 8, pcb);
+    copy_to_user(usp -= ptrsz, &ptr, ptrsz, pcb);
   }
 
   int argc = argvp.size();
-  copy_to_user(usp -= 4, &argc, 4, pcb);
-  pcb->usp = (va_t) usp;
+  copy_to_user(usp -= argcsz, &argc, argcsz, pcb);
+  // Maintain stack alignment.
+  pcb->usp = (va_t) rounddown<16>(usp);
 
   scheduler.add(pcb);
   return 0;
@@ -397,11 +406,11 @@ expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
   return expected<unique_ptr<char>>(buf);
 }
 
-expected<unique_ptr<char>> copy_from_user(void *usr) {
+expected<unique_ptr<char>> copy_from_user(char *usr) {
   EnableAccessToUserMemory enable;
   vma_map_current(usr);
   vector<char> vec;
-  char *p = (char *) usr;
+  char *p = usr;
   for (; p < roundup<PAGE_SIZE>(usr) && *p; p++)
     vec.push_back(*p);
 
@@ -420,6 +429,31 @@ outer:
   memcpy(buf, vec.data(), sz);
   buf[sz] = 0;
   return expected<unique_ptr<char>>(buf);
+}
+
+expected<unique_ptr<char*>> copy_from_user(char **usr) {
+  EnableAccessToUserMemory enable;
+  vma_map_current(usr);
+  vector<char*> vec;
+  char **p = usr;
+  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++)
+    vec.push_back(*p);
+
+  for (int i = 0; i < 4096; i++) {
+    vma_map_current(p);
+    for (char **finish = p + PAGE_SIZE; p < finish && *p; p++)
+      vec.push_back(*p);
+    
+    if (!*p)
+      goto outer;
+  }
+  return -E2BIG;
+outer:
+  int sz = vec.size();
+  char **buf = new char*[1 + sz];
+  memcpy(buf, vec.data(), sz);
+  buf[sz] = 0;
+  return expected<unique_ptr<char*>>(buf);
 }
 
 }

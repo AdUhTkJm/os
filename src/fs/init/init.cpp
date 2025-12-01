@@ -5,8 +5,8 @@
 
 using reg_t = long;
 
-reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7) {
 #ifdef __riscv
+reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7) {
   register reg_t _a0 asm("a0") = a0;
   register reg_t _a1 asm("a1") = a1;
   register reg_t _a2 asm("a2") = a2;
@@ -25,10 +25,12 @@ reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t 
     : "memory"
   );
   return _a0;
-#else
-  return 0; // For vscode
-#endif
 }
+#else
+reg_t syscall(reg_t, reg_t, reg_t, reg_t, reg_t, reg_t, reg_t, reg_t) {
+  return 0; // For vscode
+}
+#endif
 
 reg_t syscall(reg_t a7) {
   return syscall(0, 0, 0, 0, 0, 0, 0, a7);
@@ -199,7 +201,7 @@ extern "C" void _start() {
 
   int pid = syscall(57);
   if (pid == 0) {
-    int fd = syscall((reg_t) "/mnt", 0, 2); // O_RDONLY
+    int fd = syscall((reg_t) "/mnt/root/bin", 0, 2); // O_RDONLY
     
     // Expand heap.
     unsigned long brk = syscall(0, 12); // brk

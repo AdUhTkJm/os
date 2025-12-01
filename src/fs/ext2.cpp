@@ -23,7 +23,7 @@ ext2_inode::ext2_inode(class fs *fs, const struct meta &meta, long inum):
 ext2_inode::ext2_inode(class fs *fs, long inum):
   inode_impl(fs, -1, -1), meta(), _inum(inum) { }
 
-size_t ext2_inode::locate(size_t byte) {
+size_t ext2_inode::locate(size_t byte, int flags) {
   auto fs = static_cast<ext2*>(this->fs);
   auto block_size = fs->blksz;
   size_t cnt = byte / block_size;
@@ -36,37 +36,154 @@ size_t ext2_inode::locate(size_t byte) {
   unique_ptr<unsigned[]> ptrs(new unsigned[block_size / sizeof(unsigned)]);
   cnt -= 12;
   if (cnt < size) {
-    fs->device->read(fs->offset(meta.indirect1), ptrs.get(), block_size, 0);
+    fs->device->read(fs->offset(meta.indirect1), ptrs.get(), block_size, flags);
     return ptrs[cnt];
   }
 
   // Second indirect pointer here.
   cnt -= size;
   if (cnt < size * size) {
-    fs->device->read(fs->offset(meta.indirect2), ptrs.get(), block_size, 0);
+    fs->device->read(fs->offset(meta.indirect2), ptrs.get(), block_size, flags);
     size_t b1 = ptrs[cnt / size];
     if (!b1)
       return 0;
-    fs->device->read(fs->offset(b1), ptrs.get(), block_size, 0);
+    fs->device->read(fs->offset(b1), ptrs.get(), block_size, flags);
     return ptrs[cnt % size];
   }
 
   cnt -= size * size;
   if (cnt < size * size * size) {
-    fs->device->read(fs->offset(meta.indirect3), ptrs.get(), block_size, 0);
+    fs->device->read(fs->offset(meta.indirect3), ptrs.get(), block_size, flags);
     size_t b2 = ptrs[cnt / (size * size)];
     if (!b2)
       return 0;
-    fs->device->read(fs->offset(b2), ptrs.get(), block_size, 0);
+    fs->device->read(fs->offset(b2), ptrs.get(), block_size, flags);
     size_t b1 = ptrs[(cnt / size) % size];
     if (!b1)
       return 0;
-    fs->device->read(fs->offset(b1), ptrs.get(), block_size, 0);
+    fs->device->read(fs->offset(b1), ptrs.get(), block_size, flags);
     return ptrs[cnt % size];
   }
 
   // This is out of range.
   return -1;
+}
+
+result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
+  auto fs = static_cast<ext2*>(this->fs);
+  unsigned block_size = fs->blksz;
+  auto size = block_size / sizeof(int);
+  if (index < 12) {
+    meta.directptr[index] = value;
+    return result::success;
+  }
+  index -= 12;
+
+  char zeroes[512];
+  memset(zeroes, 0, 512);
+  if (index < size) {
+    // Allocate the single-indirect block if it's not present.
+    if (meta.indirect1 == 0) {
+      unsigned b = fs->balloc();
+      if (b == -1u)
+        return result::failure;
+
+      meta.indirect1 = b;
+      fs->device->write(fs->offset(b), zeroes, block_size, flags);
+    }
+
+    // Find the correct block. Each index is 4-byte long.
+    unsigned b = fs->balloc();
+    fs->device->write(fs->offset(meta.indirect1) + index * sizeof(int), &b, sizeof(int), flags);
+    return result::success;
+  }
+
+  index -= size;
+  if (index < size * size) {
+    // Allocate the double-indirect block if it's not present.
+    if (meta.indirect2 == 0) {
+      unsigned b = fs->balloc();
+      if (b == -1u)
+        return result::failure;
+
+      meta.indirect2 = b;
+      fs->device->write(fs->offset(b), zeroes, block_size, flags);
+    }
+
+    // Find the L1 block.
+    unsigned l1;
+    size_t l1pos = fs->offset(meta.indirect2) + (index / size) * sizeof(int);
+    fs->device->read(l1pos, &l1, sizeof(int), flags);
+    if (l1 == 0) {
+      l1 = fs->balloc();
+      if (l1 == -1u)
+        return result::failure;
+
+      meta.indirect1 = l1;
+      fs->device->write(fs->offset(l1), zeroes, block_size, flags);
+      fs->device->write(l1pos, &l1, sizeof(int), flags);
+    }
+
+    // Find the L0 block.
+    unsigned b = fs->balloc();
+    if (b == -1u)
+      return result::failure;
+    size_t l0pos = fs->offset(l1) + (index % size) * sizeof(int);
+    fs->device->write(l0pos, &b, sizeof(int), flags);
+    return result::success;
+  }
+
+  index -= size * size;
+  if (index <= size * size * size) {
+    // Allocate the triple-indirect block if it's not present.
+    if (meta.indirect3 == 0) {
+      unsigned b = fs->balloc();
+      if (b == -1u)
+        return result::failure;
+
+      meta.indirect3 = b;
+      fs->device->write(fs->offset(b), zeroes, block_size, flags);
+    }
+
+    // Find the L2 block.
+    unsigned l2;
+    size_t l2pos = fs->offset(meta.indirect3) + (index / (size * size)) * sizeof(int);
+    fs->device->read(l2pos, &l2, sizeof(int), flags);
+    if (l2 == 0) {
+      l2 = fs->balloc();
+      if (l2 == -1u)
+        return result::failure;
+
+      meta.indirect2 = l2;
+      fs->device->write(fs->offset(l2), zeroes, block_size, flags);
+      fs->device->write(l2pos, &l2, sizeof(int), flags);
+    }
+
+    // Find the L1 block.
+    unsigned l1;
+    size_t l1pos = fs->offset(meta.indirect3) + ((index / size) % size) * sizeof(int);
+    fs->device->read(l1pos, &l1, sizeof(int), flags);
+    if (l1 == 0) {
+      l1 = fs->balloc();
+      if (l1 == -1u)
+        return result::failure;
+
+      meta.indirect1 = l1;
+      fs->device->write(fs->offset(l1), zeroes, block_size, flags);
+      fs->device->write(l1pos, &l1, sizeof(int), flags);
+    }
+
+    // Find the L0 block.
+    unsigned b = fs->balloc();
+    if (b == -1u)
+      return result::failure;
+    size_t l0pos = fs->offset(l1) + (index % size) * sizeof(int);
+    fs->device->write(l0pos, &b, sizeof(int), flags);
+    return result::success;
+  }
+
+  // Too large.
+  return result::failure;
 }
 
 size_t ext2_inode::read(size_t offset, void *buf, size_t len, int flags) {
@@ -78,7 +195,7 @@ size_t ext2_inode::read(size_t offset, void *buf, size_t len, int flags) {
   size_t read = 0;
 
   while (pos < end) {
-    size_t b = locate(pos);
+    size_t b = locate(pos, flags);
 
     if (b == -1ul)
       return read;
@@ -110,7 +227,7 @@ size_t ext2_inode::write(size_t offset, const void *buf, size_t len, int flags) 
   size_t written = 0;
 
   while (pos < end) {
-    size_t b = locate(pos);
+    size_t b = locate(pos, flags);
     if (b == -1ul)
       return written;
     
@@ -152,6 +269,7 @@ ext2_inode::ftypeflags ext2_inode::fromtype(filetype ty) {
   case filetype::FIFO:
     return FIFO;
   }
+  panic("fromtype: unreachable");
 }
 
 ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
@@ -171,6 +289,7 @@ ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
   case FIFO:
     return filetype::FIFO;
   }
+  panic("totype: unreachable");
 }
 
 int ext2_inode::create(const string &name, filetype ty, int mode) {
@@ -208,6 +327,7 @@ int ext2_inode::create(const string &name, filetype ty, int mode) {
   meta.lnkcnt++;
   linked();
   write(meta.sz, entry.get(), size, 0);
+  fs->update_meta(this);
   return 0;
 }
 
@@ -217,7 +337,31 @@ int ext2_inode::unlink(const string &name) {
 }
 
 inode *ext2_inode::lookup(const string &name) {
-  (void) name;
+  if (type != Dir)
+    return nullptr;
+
+  auto fs = static_cast<ext2*>(this->fs);
+
+  // The basic structure is similar to list().
+  for (unsigned pos = 0; pos < meta.sz;) {
+    // Read the directory entry header.
+    int block = locate(pos, 0);
+    unsigned offset = block * fs->blksz + pos % fs->blksz;
+    direntry entry;
+    fs->device->read(offset, &entry, sizeof(entry), 0);
+    
+    if (entry.size < sizeof(entry))
+      // Corrupt filesystem.
+      return nullptr;
+
+    if (entry.inum != 0) {
+      unique_ptr<char[]> p = new char[entry.namelen];
+      fs->device->read(offset + sizeof(entry), p.get(), entry.namelen, 0);
+      if (name == p.get())
+        return fs->read_from_inum(entry.inum);
+    }
+    pos += entry.size;
+  }
   return nullptr;
 }
 
@@ -229,7 +373,7 @@ vector<inode::item> ext2_inode::list() {
   vector<item> result;
   for (unsigned pos = 0; pos < meta.sz;) {
     // Read the directory entry header.
-    int block = locate(pos);
+    int block = locate(pos, 0);
     unsigned offset = block * fs->blksz + pos % fs->blksz;
     direntry entry;
     fs->device->read(offset, &entry, sizeof(entry), 0);
@@ -298,7 +442,7 @@ void ext2::update_block_group(int id) {
   device->write(gdt_start * blksz + id * sizeof(block_group), &gdt[id], sizeof(block_group), 0);
 }
 
-ext2_inode *ext2::search(int id, block_group &gd) {
+ext2_inode *ext2::search_inode(int groupid, block_group &gd) {
   if (!gd.free_inodes_count)
     return nullptr;
 
@@ -306,7 +450,7 @@ ext2_inode *ext2::search(int id, block_group &gd) {
   unique_ptr<char[]> bitmap(new char[blksz]);
   device->read(offset(gd.inode_bitmap), bitmap.get(), blksz, 0);
 
-  // 2. Search the Bitmap for the first free bit, 0.
+  // Search the Bitmap for the first free bit, 0.
   for (unsigned i = 0; i < blksz; i++) {
     unsigned char byte = bitmap[i];
     
@@ -323,7 +467,7 @@ ext2_inode *ext2::search(int id, block_group &gd) {
       if (i * 8 + j < superblock.first_non_reserved)
         continue;
       
-      unsigned inum = id * superblock.inodes_per_group + i * 8 + j + 1;
+      unsigned inum = groupid * superblock.inodes_per_group + i * 8 + j + 1;
       bitmap[i] |= (1 << j);
       
       gd.free_inodes_count--;
@@ -331,7 +475,7 @@ ext2_inode *ext2::search(int id, block_group &gd) {
       
       // Write back changes.
       device->write(offset(gd.inode_bitmap), bitmap.get(), blksz, 0);
-      update_block_group(id);
+      update_block_group(groupid);
       update_superblock();
 
       return new ext2_inode(this, inum);
@@ -340,12 +484,56 @@ ext2_inode *ext2::search(int id, block_group &gd) {
   return nullptr;
 }
 
+unsigned ext2::search_block(int groupid, block_group &gd) {
+  if (!gd.free_blocks_count)
+    return -1;
+
+  unique_ptr<char[]> bitmap(new char[blksz]);
+  device->read(offset(gd.block_bitmap), bitmap.get(), blksz, 0);
+
+  // Search the Bitmap for the first free bit, 0.
+  for (unsigned i = 0; i < blksz; i++) {
+    unsigned char byte = bitmap[i];
+    
+    // 0 is free and 1 is occupied. Skip the fully occupied byte.
+    if (byte == 0xFF)
+      continue;
+
+    for (int j = 0; j < 8; j++) {
+      if (byte & (1 << j))
+        continue;
+      
+      unsigned inum = groupid * superblock.inodes_per_group + i * 8 + j + 1;
+      bitmap[i] |= (1 << j);
+      
+      gd.free_blocks_count--;
+      superblock.free_blocks--;
+      
+      // Write back changes.
+      device->write(offset(gd.block_bitmap), bitmap.get(), blksz, 0);
+      update_block_group(groupid);
+      update_superblock();
+
+      return inum;
+    }
+  }
+  return -1;
+}
+
 ext2_inode *ext2::get() {
   for (unsigned i = 0; i < gdt.size(); i++) {
-    if (auto ret = search(i, gdt[i]))
+    if (auto ret = search_inode(i, gdt[i]))
       return ret;
   }
   return nullptr;
+}
+
+unsigned ext2::balloc() {
+  for (unsigned i = 0; i < gdt.size(); i++) {
+    if (auto ret = search_block(i, gdt[i]))
+      return ret;
+  }
+  return -1;
 }
 
 void ext2::erase(inode *n) {
@@ -353,9 +541,17 @@ void ext2::erase(inode *n) {
   (void) n;
 }
 
+// These are a pair of functions that read/write metadata.
+
 void ext2::update_meta(ext2_inode *node) {
-  // TODO
-  (void) node;
+  unsigned inum = node->_inum;
+  unsigned group = (inum - 1) / superblock.inodes_per_group;
+  unsigned index = (inum - 1) % superblock.inodes_per_group;
+
+  const block_group &gd = gdt[group];
+
+  size_t offset = gd.inode_table * blksz + index * superblock.inode_size;
+  device->write(offset, &node->meta, superblock.inode_size, 0);
 }
 
 ext2_inode *ext2::read_from_inum(size_t inum) {

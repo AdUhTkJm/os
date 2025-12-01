@@ -49,7 +49,10 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
   friend class ext2;
   // Finds the block number of this byte.
   // There might be some sparse holes, which would mean zero.
-  size_t locate(size_t byte);
+  size_t locate(size_t byte, int flags);
+
+  // Set the index'th block in the pointer table to value `block`.
+  result set_pointer(unsigned index, unsigned value, int flags);
 public:
   using inode_impl::inode_impl;
   ext2_inode(class fs *fs, const struct meta &meta, long inum);
@@ -142,9 +145,12 @@ class ext2 : public fs {
   // Calculate byte offset from beginning, given a block number.
   size_t offset(size_t blk);
 
-  // Search for an unoccupied inode.
-  ext2_inode *search(int id, block_group &gd);
+  // Search for an unoccupied inode/block.
+  ext2_inode *search_inode(int id, block_group &gd);
+  unsigned search_block(int id, block_group &gd);
   
+  // Allocate a new block.
+  unsigned balloc();
   friend class ext2_inode;
 public:
   ext2(inode *device);

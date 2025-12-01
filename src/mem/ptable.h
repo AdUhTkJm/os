@@ -210,7 +210,10 @@ void copy_to_user(void *usr, const void *ker, size_t len);
 // Copies raw data.
 expected<unique_ptr<char>> copy_from_user(void *usr, size_t len);
 // Copies a string.
-expected<unique_ptr<char>> copy_from_user(void *usr);
+expected<unique_ptr<char>> copy_from_user(char *usr);
+// Copies a null-terminated list of strings.
+// Note the internal strings aren't copied.
+expected<unique_ptr<char*>> copy_from_user(char **usr);
 
 }
 #endif
