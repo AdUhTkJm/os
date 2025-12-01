@@ -47,6 +47,8 @@ public:
   int unlink(const string &) override { return -EROFS; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
+  // We don't support symlinks for now.
+  optional<string> readlink() override { return nullopt; }
 
   size_t size() override { return sz; }
   long inum() override { return (long) data; }

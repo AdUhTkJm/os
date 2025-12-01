@@ -7,25 +7,67 @@ inline struct nullopt_t {} nullopt;
 
 template<class T>
 class optional {
-  bool present;
+  bool has_value;
   alignas(T) char data[sizeof(T)];
+
+  T* ptr() { return reinterpret_cast<T*>(data); }
+  const T* ptr() const { return reinterpret_cast<const T*>(data); }
 public:
-  /* implicit */ optional(const T &t): present(true) {
+  optional(const optional&) = delete;
+  optional& operator=(const optional&) = delete;
+
+  /* implicit */ optional(const T &t): has_value(true) {
     new (data) T(t);
   }
+  optional(T &&t): has_value(true) {
+    new (data) T((T &&) t);
+  }
+
   template<class ...Args> requires requires(Args ...args) { T(args...); }
-  optional(Args ...args) {
+  void emplace(Args ...args) {
     new (data) T(args...);
   }
-  optional(): present(false) {}
-  optional(nullopt_t): present(false) {}
+
+  optional(nullopt_t): has_value(false) {}
+  optional(): has_value(false) {}
+  ~optional() {
+    if (has_value)
+      ptr()->~T();
+  }
+
+  optional(optional&& other): has_value(other.has_value) {
+    if (other.has_value) {
+      new (data) T((T &&) *other.ptr());
+      other.ptr()->~T();
+      other.has_value = false;
+    }
+  }
+
+  // Move assignment
+  optional& operator=(optional&& other) {
+    if (this == &other)
+      return *this;
+    if (has_value)
+      ptr()->~T();
+    
+    has_value = other.has_value;
+    if (other.has_value) {
+      new (data) T((T &&) *other.ptr());
+      other.ptr()->~T();
+      other.has_value = false;
+    }
+    return *this;
+  }
 
   T &operator*() { return *(T*) data; }
   T *operator->() { return (T*) data; }
   T *operator&() { return (T*) data; }
-  bool valid() const { return present; }
-  bool operator!() const { return !present; }
-  operator bool() const { return present; }
+  const T &operator*() const { return *(T*) data; }
+  const T *operator->() const { return (T*) data; }
+  const T *operator&() const { return (T*) data; }
+  bool valid() const { return has_value; }
+  bool operator!() const { return !has_value; }
+  explicit operator bool() const { return has_value; }
 };
 
 template<class T, class E = int>
@@ -94,7 +136,7 @@ public:
   const T *operator&() const { return (T*) data; }
   bool valid() const { return has_value; }
   bool operator!() const { return !has_value; }
-  operator int() const { return errcode; }
+  operator E() const { return errcode; }
   explicit operator bool() const { return has_value; }
 };
 

@@ -396,6 +396,22 @@ vector<inode::item> ext2_inode::list() {
   return result;
 }
 
+optional<string> ext2_inode::readlink() {
+  if (type != filetype::Link)
+    return nullopt;
+  // Data is directly stored in the directptr array, plus 3 indirect pointers.
+  if (meta.sz <= 60) {
+    char *str = (char*) &meta.directptr;
+    return string(str, meta.sz);
+  }
+  // If the path is long, then it's the real content.
+  char *content = new char[meta.sz];
+  read(0, content, meta.sz, 0);
+  auto value = string(content, meta.sz);
+  delete[] content;
+  return value;
+}
+
 // Currently we're assuming ext2 header starts at sector 2. This isn't always the case; read sectors 0 & 1 to know.
 ext2::ext2(inode *device): device(device) {
   constexpr auto sbsz = sizeof(struct superblock);

@@ -69,7 +69,7 @@
 
 首先，当然需要读取 FDT，看看究竟有哪些硬件。读完之后，立即启用 UART 中断 (\#10)，以便后续调试，比如按下 Ctrl+C 退出之类的。接下来，理论上可以开始探测其他的硬件了，然后将它们放进 devfs 里——但是这个文件系统还没有 mount。
 
-因此，我们需要先 mount。我选择 mount 这三个文件系统：initramfs, tmpfs 和 devfs。这里的 initramfs 目前还是仅作调试用的。同时，记录一下支持的文件系统和 mount 它们的方式（\cref{sec:vfs}）。
+因此，我们需要先 mount。我选择 mount 这三个文件系统：initramfs, tmpfs 和 devfs。这里的 initramfs 目前还是仅作调试用的。同时，记录一下支持的文件系统和 mount 它们的方式（\cref{subsec:vfs}）。
 
 在 mount 完成之后，就可以开始沟通硬件。VirtIO 驱动（\cref{sec:virtio}）将会根据 FDT 的指示，在合适的位置尝试沟通。
 

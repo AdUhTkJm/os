@@ -21,6 +21,7 @@ public:
   int unlink(const string &name) override;
   inode *lookup(const string &name) override;
   os::vector<item> list() override;
+  optional<string> readlink() override { return nullopt; }
 
   size_t size() override { return data.size(); }
   // Note that `data.data()` will change, so we can't use it.

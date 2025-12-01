@@ -1,11 +1,16 @@
-\section{VFS}
-\label{sec:vfs}
+\section{文件系统}
+\label{sec:fs}
 
-VFS (\textit{virtual memory system}) 顾名思义，就应该用 \cpp{virtual} 函数实现。
+\subsection{VFS}
+\label{subsec:vfs}
+
+VFS (\textit{virtual file system}) 顾名思义，就应该用 \cpp{virtual} 函数实现。
 
 某种程度上来说算是个双关，不过倒也不是开玩笑。Linux 里用的是一大堆函数指针，虚函数用的 vtable 也同样是一大堆函数指针，两者不应该有什么区别。好消息是，vtable 是不需要 C++ runtime 的，所以我的确就这么做了。
 
 不过如果想把父类转为子类的话， \cpp{dynamic_cast} 需要 C++ runtime：它需要启用 -frtti。所幸对于单继承而言，我们有绕过它的方法，这正是 LLVM 所做的。具体的介绍请见 \cref{sec:rtti}。当然，用一个额外的 \cpp{void* data} 确实可以解决一切，但是这也太麻烦了。
+
+值得注意的是，我们其实并不需要动态的 down-casting，但它的存在对于调试很有好处。例如，我可以检查 /mnt 处的 inode 是不是 ext2 类型的，来判断 mount 到底出了什么 bug。
 
 因此，我的 inode 基类如下：
 \begin{minted}{cpp}
@@ -31,4 +36,42 @@ public:
 
 同理，如果 lnkcnt 归零但是有 refcnt，我们也暂时不能删除：可能还有进程在使用它，得等使用完了再删掉。在使用完成后 refcnt 会自然减少，所以不必担心会漏掉。
 
-这样的坏处是，对于 ext2 而言，我们需要维护两份 lnkcnt。一份作为 metadata 写进硬盘，另一份留在内存里，不过只要在创建和删除时注意一下就可以了。
+这样的坏处是，对于 ext2 而言，我们需要维护两份 lnkcnt。一份作为 metadata 写进硬盘，另一份留在内存里，不过只要在创建和删除时注意一下就可以了。ext2 的不少数据也都是这样的。
+
+inode 会持有一个指向它的文件系统的指针： \cpp{class fs *fs}。在内存中的文件系统主要负责分配新的 inode 和回收不用的 inode.对于不在硬盘上的文件系统而言，这就是普通的 new/delete，再加上 refcnt 的管理;对于 ext2 而言，这就不一样了。在\cref{subsec:ext2}中对它有详细描述。
+
+至于文件，则是在 inode 之上再包裹一层：
+\begin{minted}{cpp}
+class file {
+  atomic<unsigned> refcnt;
+public:
+  inode *node;
+  size_t offset;
+  int flags;
+  enum whence {
+    begin, current, end
+  };
+
+  void drop();
+  void ref() { refcnt++; }
+
+  file(inode *node, int flags);
+  ~file();
+
+  size_t read(void *buf, size_t len);
+  size_t write(const void *buf, size_t len);
+  size_t seek(long pos, whence whence); // Returns the old offset.
+  result close();
+};
+\end{minted}
+
+两者之间的关系是极其显然的。这里 file 析构时，也会调用 \cpp{node->drop()} 来释放 inode。
+
+VFS 本体负责查找一个路径所对应的 inode。它会在每个路径的构成部分都检查一遍 mount point，如果有的话就切换到 mount 的文件系统的根部。这之后，它会调用当前 inode 的 lookup() 虚函数来找到下一个 inode，或者依靠 readlink() 来跟随链接。它也会记录每种文件系统的“构造函数”——虽然不是语法意义上的构造函数，并在 mount 系统调用的时候通过这些函数来创建内存中的文件系统。
+
+% Note that this is #include'd in the main file, so the path
+% should be relative to the main file, rather than this file.
+\input{subsystem/vfs/initramfs.tex}
+\input{subsystem/vfs/tmpfs.tex}
+\input{subsystem/vfs/devfs.tex}
+\input{subsystem/vfs/ext2.tex}

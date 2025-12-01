@@ -21,7 +21,7 @@
 
 在这篇文档中，我将以 RISC-V 作为例子，介绍操作系统的启动流程以及各个子系统的实现方式。LoongArch 的支持准备由条件编译指令 \cpp{#ifdef __loongarch__} 控制，但我尚未开始。
 
-这篇文档在一定程度上也算是我的 OS 学习笔记，因此语言上不会非常正式，而且有不少对实现原理的介绍。此外，我并不清楚一部分术语的中文翻译，所以将会用对应的英文词汇替代它们。
+这篇文档在一定程度上也算是我的 OS 学习笔记，因此语言上不会非常正式，而且有不少对实现原理的介绍。此外，一部分术语可能会有中英混用的情况。
 
 \chapter{启动流程}
 \label{chap:boot}
@@ -34,6 +34,10 @@
 \input{subsystem/proc/schedule.tex}
 \input{subsystem/drivers/virtio.tex}
 \input{subsystem/vfs/vfs.tex}
+
+\chapter{系统调用}
+\label{chap:syscall}
+\input{subsystem/interrupt/syscall.tex}
 
 \chapter{C++}
 \label{chap:why_cpp}

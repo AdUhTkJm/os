@@ -93,6 +93,7 @@ public:
   virtual int unlink(const string &name) = 0;
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
+  virtual optional<string> readlink() = 0;
 
   struct item {
     long inum;

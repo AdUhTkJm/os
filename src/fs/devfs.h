@@ -37,6 +37,7 @@ public:
   int unlink(const string &) override { return -ENOTDIR; }
   inode *lookup(const string &) override { return nullptr; }
   vector<item> list() override { return {}; }
+  optional<string> readlink() override { return nullopt; }
 
   size_t size() override { return 0; }
   long inum() override { return (long) this; }
@@ -62,6 +63,7 @@ public:
       result.push_back({ .inum = (long) inode, .name = name });
     return result;
   }
+  optional<string> readlink() override { return nullopt; }
 
   size_t size() override { return 0; }
   long inum() override { return (long) this; }
@@ -98,6 +100,7 @@ public:
   int unlink(const string &) override { return -ENOTDIR; }
   inode *lookup(const string &) override { return nullptr; }
   vector<item> list() override { return {}; }
+  optional<string> readlink() override { return nullopt; }
 
   size_t size() override { return 0; }
   long inum() override { return (long) this; }

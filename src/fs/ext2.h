@@ -72,6 +72,7 @@ public:
   int unlink(const string &name) override;
   inode *lookup(const string &name) override;
   vector<item> list() override;
+  optional<string> readlink() override;
 
   size_t size() override { return meta.sz; }
   long inum() override { return _inum; }
