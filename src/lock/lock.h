@@ -14,11 +14,11 @@ concept locklike = requires(T t) {
 
 class spinlock {
   int v = 0;
-  static void release_impl(int *v);
-  static void acquire_impl(int *v);
+  [[gnu::no_instrument_function]] static void release_impl(int *v);
+  [[gnu::no_instrument_function]] static void acquire_impl(int *v);
 public:
-  void release() { release_impl(&v); }
-  void acquire() { acquire_impl(&v); }
+  [[gnu::no_instrument_function]] void release() { release_impl(&v); }
+  [[gnu::no_instrument_function]] void acquire() { acquire_impl(&v); }
 };
 
 template<locklike T>

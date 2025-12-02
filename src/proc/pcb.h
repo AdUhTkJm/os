@@ -85,6 +85,7 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
   void clear();
+  void clear_vma();
   int open_file(const string &name, int flags, int mode = 0);
   int close_file(int fd);
 
@@ -152,7 +153,6 @@ pcb_t *make_kprocess(T fptr) {
 }
 
 void copy_to_user(void *usr, const void *ker, size_t len);
-void copy_to_user(void *usr, const void *ker, size_t len, pcb_t *pcb);
 
 }
 

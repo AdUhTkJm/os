@@ -2,6 +2,7 @@
 #include "kalloc.h"
 #include "../fdt/fdt.h"
 #include "../utils/libc.h"
+#include "../instr/leak.h"
 
 using namespace os;
 
@@ -150,7 +151,7 @@ void mark_reserved() {
   // Don't touch the space of the free-list allocator.
   // Also don't touch the kernel itself.
   auto endpa = to_pa(__kernel_end);
-  rsv.push_back({ 0x8000'0000, endpa  - 0x8000'0000 });
+  rsv.push_back({ 0x8000'0000, endpa - 0x8000'0000 });
   rsv.push_back({ endpa, FREE_LIST_SIZE * PAGE_SIZE });
 
   for (const auto &[begin, size] : rsv) {
@@ -180,7 +181,7 @@ pa_t pframe() {
   static int pm_from = 0;
   size_t index = find_consecutive(pmmap, 1, pm_from);
   if (index == -1ul)
-    return 0;
+    panic("out of memory");
 
   pmmap[index] = 1;
   pm_from++;
@@ -193,11 +194,15 @@ void pincref(pa_t p) {
 }
 
 void pfree(pa_t p) {
+  if (!p)
+    return;
+  
   if (--meta[p / PAGE_SIZE].refcnt > 0)
     return;
 
   // This region is managed by free list allocator.
-  if (p >= (pa_t) __kernel_end && p <= (pa_t) __kernel_end + FREE_LIST_SIZE) {
+  const auto end = (pa_t) __kernel_end - KERNEL_OFFSET;
+  if (p >= end && p <= end + FREE_LIST_SIZE * PAGE_SIZE) {
     auto *frame = (frame_t *) as_va(p);
     frame->next = free_head;
     free_head = to_pa(frame);
@@ -230,6 +235,9 @@ void *vmalloc_impl(size_t len) {
 }
 
 void vfree(void *p) {
+#ifdef LEAK_DETECT
+  leak::record_free(p);
+#endif
   if (!p)
     return;
   auto q = (size_t *) p;
@@ -246,18 +254,14 @@ void init_bitmap_kalloc() {
 }
 
 void init_freelist_kalloc() {
-  // Grab 64MB of memory. The linker script guarantees alignment.
-  //
-  // We use __builtin_assume_aligned, or otherwise the final
-  // `(end - 1)->next = nullptr` will become 8 `sb`s rather than a 
-  // single `sd`.
+  // Grab 16MB of memory. The linker script guarantees alignment.
   pa_t begin = (pa_t) __kernel_end - KERNEL_OFFSET;
   pa_t end = begin + FREE_LIST_SIZE * PAGE_SIZE;
 
   for (pa_t p = begin; p != end; p += PAGE_SIZE)
     ((frame_t *) as_va(p))->next = p + PAGE_SIZE;
   
-  ((frame_t *) as_va(end - 1))->next = 0;
+  ((frame_t *) as_va(end) - 1)->next = 0;
   free_head = begin;
 }
 

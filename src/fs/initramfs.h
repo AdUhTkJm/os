@@ -57,13 +57,13 @@ public:
 class initramfs : public fs {
 public:
   initramfs() {
-    auto rootnode = new initramfs_inode(this, 0, 0);
+    auto rootnode = new (os::permanent) initramfs_inode(this, 0, 0);
     rootnode->type = inode::Dir;
     rootnode->sz = 0;
     root = new class dentry("", rootnode);
   }
 
-  initramfs_inode *get() override { return new initramfs_inode(this, 0, 0); }
+  initramfs_inode *get() override { return new (os::permanent) initramfs_inode(this, 0, 0); }
   void erase(inode *) override { }
   bool has_backup() override { return false; }
 };

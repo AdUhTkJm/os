@@ -114,7 +114,7 @@ inline constexpr va_t sext(va_t x) {
 // The to_pa() function actually walks the table.
 // This must be always_inline, because it is called both before and after
 // setting up the page table.
-[[gnu::always_inline]] inline constexpr va_t as_va(pa_t pa) {
+[[gnu::always_inline, gnu::no_instrument_function]] inline constexpr va_t as_va(pa_t pa) {
   return pa + KERNEL_OFFSET;
 }
 

@@ -36,9 +36,6 @@ void vma_map_current(void *va, pte_t *pte);
 // If `write` is set to true, also maps COW pages in the range.
 void vma_map_current(void *from, void *to, bool write = false);
 
-struct pcb_t;
-void vma_map(void *from, void *to, pcb_t *pcb, bool write = false);
-
 }
 
 #endif

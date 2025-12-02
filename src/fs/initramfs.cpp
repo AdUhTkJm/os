@@ -75,7 +75,7 @@ void mount_initramfs() {
   initrd_start = (char *) as_va((read_int(pstart) * 1ul << 32) + read_int((char*) pstart + 4));
   
   // Initialize the initramfs and register it in vfs.
-  fs *initramfs = new class initramfs;
+  fs *initramfs = new (os::permanent) class initramfs;
   auto *dentry = initramfs->root;
   inode *root = dentry->node;
   vfs.construct(dentry);

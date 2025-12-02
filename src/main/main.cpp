@@ -27,7 +27,7 @@ a1 = 0x8020'2010
 .text = 0x8020'3000, starting with _start_high
 ...
 */
-[[noreturn]] __attribute__((section(".text.low")))
+[[noreturn, gnu::no_instrument_function]] __attribute__((section(".text.low")))
 void kernel_main() {
   // Map 16GB memory.
   pte_t *root = (pte_t *) 0x80201000ul;
@@ -103,11 +103,12 @@ void main_high() {
   file *init = vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
-  pcb_t *pcb = new pcb_t;
+  pcb_t *pcb = new (os::permanent) pcb_t;
   pcb->pid = nextpid();
   pcb->uid = pcb->gid = pcb->euid = pcb->suid = 0;
   if (load_elf(init, pcb) != 0)
     panic("load_elf: cannot load /init");
+  os::init(pcb);
   scheduler.add(pcb);
   vfs->close(init);
 

@@ -3,10 +3,14 @@
 
 namespace os {
 
-void vma_map_single(void *va, pte_t *root, pcb_t *pcb) {
+void vma_map_single(void *va, pte_t *root) {
   EnableAccessToUserMemory enabler;
+  auto pcb = scheduler.active;
 
   va_t addr = (va_t) va;
+  auto va_page = rounddown<4_kb>(va);
+  int origflags = pte_flags(va_page);
+
   size_t i = 0;
   for (; i < pcb->vma.size(); i++) {
     const auto &vma = pcb->vma[i];
@@ -24,13 +28,22 @@ void vma_map_single(void *va, pte_t *root, pcb_t *pcb) {
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
   if (vma.prot & PROT_WRITE) flags |= PTE_W;
-  auto va_page = rounddown<4_kb>(va);
+
+  if (origflags != -1 && (origflags & PTE_COW)) {
+    // This is a copy-on-write segment. We copy the original contents.
+    memcpy((void *) as_va(pa), va_page, PAGE_SIZE);
+    // Remap the memory and let it point to the new pa.
+    os::pmap(pa, va_page, MAP_4KB, flags | PTE_W, root);
+    return;
+  }
+
   // Temporarily map with write permission, if we need to copy into it.
   os::pmap(pa, va_page, MAP_4KB, vma.backup ? flags | PTE_W : flags, root);
 
   // Copy the contents if it exists.
   if (!vma.backup)
     return;
+  int sstatus; CSRR(sstatus, sstatus);
 
   // Take back the write permission on exit.
   const auto &finisher = [&]() {
@@ -66,11 +79,21 @@ void vma_map_single(void *va, pte_t *root, pcb_t *pcb) {
 }
 
 void vma_map_current(void *va) {
-  return vma_map_single(va, pt_root(), scheduler.active);
+  int flags = pte_flags(va);
+  // Don't remap.
+  if (flags != -1 && !(flags & PTE_COW))
+    return;
+
+  return vma_map_single(va, pt_root());
 }
 
 void vma_map_current(void *va, pte_t *root) {
-  return vma_map_single(va, root, scheduler.active);
+  int flags = pte_flags(va);
+  // Don't remap.
+  if (flags != -1 && !(flags & PTE_COW))
+    return;
+
+  return vma_map_single(va, root);
 }
 
 void vma_map_current(void *from, void *to, bool write) {
@@ -78,17 +101,7 @@ void vma_map_current(void *from, void *to, bool write) {
   for (; p < q; p += PAGE_SIZE) {
     int flags = pte_flags(p);
     if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write))
-      vma_map_current(p, pt_root());
-  }
-}
-
-void vma_map(void *from, void *to, pcb_t *pcb, bool write) {
-  char *p = (char *) from, *q = (char *) to;
-  pte_t *root = (pte_t *) as_va(pcb->pt_root);
-  for (; p < q; p += PAGE_SIZE) {
-    int flags = pte_flags(p, root);
-    if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write))
-      vma_map_single(p, root, pcb);
+      vma_map_single(p, pt_root());
   }
 }
 

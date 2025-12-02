@@ -35,7 +35,7 @@ public:
       ptr()->~T();
   }
 
-  optional(optional&& other): has_value(other.has_value) {
+  optional(optional &&other): has_value(other.has_value) {
     if (other.has_value) {
       new (data) T((T &&) *other.ptr());
       other.ptr()->~T();
@@ -44,7 +44,7 @@ public:
   }
 
   // Move assignment
-  optional& operator=(optional&& other) {
+  optional& operator=(optional &&other) {
     if (this == &other)
       return *this;
     if (has_value)
@@ -61,10 +61,8 @@ public:
 
   T &operator*() { return *(T*) data; }
   T *operator->() { return (T*) data; }
-  T *operator&() { return (T*) data; }
   const T &operator*() const { return *(T*) data; }
   const T *operator->() const { return (T*) data; }
-  const T *operator&() const { return (T*) data; }
   bool valid() const { return has_value; }
   bool operator!() const { return !has_value; }
   explicit operator bool() const { return has_value; }

@@ -31,6 +31,25 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
   return 0;
 }
 
+#define F_GETFD 1
+#define F_SETFD 2
+
+// For details, see https://linux.die.net/man/2/fcntl
+int fcntl(int fd, int ty, int arg) {
+  auto pcb = scheduler.active;
+  if (!pcb->ftbl.count(fd))
+    return -EBADF;
+  switch (ty) {
+  case F_SETFD:
+    pcb->ftbl.set_desc(fd, arg);
+    return 0;
+  case F_GETFD:
+    return *pcb->ftbl.get_desc(fd);
+  default:
+    return -EINVAL;
+  }
+}
+
 /*
 See table:
 https://filippo.io/linux-syscall-table/
@@ -138,6 +157,10 @@ long syscall(trapframe *ksp) {
     // exit(ret_code)
     os::terminate(pcb, a0);
     return 0;
+  }
+  case 72: {
+    // fcntl(fd, ty, args...)
+    return fcntl(a0, a1, a2);
   }
   case 78: {
     // getdents(fd, dirents, cnt)

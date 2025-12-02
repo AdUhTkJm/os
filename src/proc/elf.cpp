@@ -57,7 +57,6 @@ int load_elf(file *content, pcb_t *pcb) {
   }
 
   init_user(pcb);
-  init(pcb);
   return 0;
 }
 

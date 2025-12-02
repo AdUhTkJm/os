@@ -44,13 +44,18 @@ void process_file_table::clear() {
 
 void pcb_t::clear() {
   pt::free(pt_root);
-  pt_root = __kernel_pt_root - KERNEL_OFFSET;
+  pt_root = __kernel_pt_root;
   ftbl.clear();
   status = Zombie;
+  clear_vma();
+}
+
+void pcb_t::clear_vma() {
   for (const auto &vma : this->vma) {
     if (vma.backup)
       vma.backup->drop();
   }
+  this->vma.clear();
 }
 
 int pcb_t::open_file(const string &path, int flags, int mode) {
@@ -270,23 +275,6 @@ int fork() {
   return child->pid;
 }
 
-class File {
-  int fd;
-public:
-  File(const string &path, int flags) {
-    auto pcb = scheduler.active;
-    fd = pcb->open_file(path, flags);
-  }
-  ~File() {
-    auto pcb = scheduler.active;
-    pcb->close_file(fd);
-  }
-  operator file*() const {
-    auto pcb = scheduler.active;
-    return pcb->ftbl[fd];
-  }
-};
-
 /*
 +---------------------------+  <-- usp
 | argc                      |
@@ -313,37 +301,59 @@ public:
 int exec(const string &path, char *const *argv, char *const *envp) {
   auto pcb = scheduler.active;
   pt::free(pcb->pt_root);
-  pfree(pcb->ksp);
-  pcb->vma.clear();
+  pcb->pt_root = __kernel_pt_root;
+  pcb->clear_vma();
   
-  // This performs the initialization of pcb.
   int fd = pcb->open_file(path, O_RDONLY);
-  if (auto ret = load_elf(pcb->ftbl[fd], pcb); ret != 0)
+  printk("file opened: fd = %d\n", fd);
+  if (auto ret = load_elf(pcb->ftbl[fd], pcb); ret != 0) {
+    printk("error: %d\n", ret);
+    pcb->close_file(fd);
+    // This process is in a bad state now. We must terminate it.
+    // We cannot call clear() because that would double-free the root.
+    pcb->ftbl.clear();
+    pcb->status = Zombie;
+    pcb->clear_vma();
+    scheduler.erase(pcb);
     return ret;
+  }
+  pcb->close_file(fd);
+
+  // Reallocate the page table and shallow-copy the higher half of kernel space.
+  // We don't call init() because we don't change ksp, and don't reopen stdin/stdout/stderr.
+  pcb->pt_root = pframe();
+  memcpy((void *) as_va(pcb->pt_root), (void*) as_va(__kernel_pt_root), PAGE_SIZE);
+  // Reset the page table root.
+  {
+    TLBRefreshGuard guard;
+    CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
+  }
+
+  pcb->status = Init;
 
   // Close files according to flags.
-  os::vector<int> toclose;
-  for (auto [fd, f] : pcb->ftbl) {
-    if (pcb->ftbl.get_desc(fd) & FD_CLOEXEC
-     || f->flags & O_CLOEXEC)
-      toclose.push_back(fd);
-  }
-  for (auto fd : toclose)
-    pcb->ftbl.deallocate(fd);
+  // os::vector<int> toclose;
+  // for (auto [fd, f] : pcb->ftbl) {
+  //   if (*pcb->ftbl.get_desc(fd) & FD_CLOEXEC
+  //    || f->flags & O_CLOEXEC)
+  //     toclose.push_back(fd);
+  // }
+  // for (auto fd : toclose)
+  //   pcb->ftbl.deallocate(fd);
 
   char *usp = (char *) pcb->usp;
   os::vector<char*> argvp, envpp;
   // Copy the real contents of the strings.
-  for (char *const *p = envp; *p; p++) {
+  for (char *const *p = envp; p && *p; p++) {
     char *str = *p;
     int len = strlen(str) + 1;
-    copy_to_user(usp -= len, str, len, pcb);
+    copy_to_user(usp -= len, str, len);
     envpp.push_back(usp);
   }
-  for (char *const *p = argv; *p; p++) {
+  for (char *const *p = argv; p && *p; p++) {
     char *str = *p;
     int len = strlen(str) + 1;
-    copy_to_user(usp -= len, str, len, pcb);
+    copy_to_user(usp -= len, str, len);
     argvp.push_back(usp);
   }
 
@@ -355,47 +365,37 @@ int exec(const string &path, char *const *argv, char *const *envp) {
 
   // Insert a null pointer at the end of envp.
   uintptr_t nulptr = 0;
-  copy_to_user(usp -= ptrsz, &nulptr, ptrsz, pcb);
+  printk("ptable root = %p\n", pcb->pt_root);
+  copy_to_user(usp -= ptrsz, &nulptr, ptrsz);
   for (int i = int(envpp.size()) - 1; i >= 0; i--) {
     auto ptr = envpp[i];
-    copy_to_user(usp -= ptrsz, &ptr, ptrsz, pcb);
+    copy_to_user(usp -= ptrsz, &ptr, ptrsz);
   }
 
   // Insert a null pointer at the end of argv.
-  copy_to_user(usp -= ptrsz, &nulptr, ptrsz, pcb);
+  copy_to_user(usp -= ptrsz, &nulptr, ptrsz);
   for (int i = int(argvp.size()) - 1; i >= 0; i--) {
     auto ptr = argvp[i];
-    copy_to_user(usp -= ptrsz, &ptr, ptrsz, pcb);
+    copy_to_user(usp -= ptrsz, &ptr, ptrsz);
   }
 
   int argc = argvp.size();
-  copy_to_user(usp -= argcsz, &argc, argcsz, pcb);
+  copy_to_user(usp -= argcsz, &argc, argcsz);
   // Maintain stack alignment.
   pcb->usp = (va_t) rounddown<16>(usp);
 
-  scheduler.add(pcb);
+  // Set up trapframe.
+  auto trap = (trapframe *) pcb->ksp;
+  trap->sepc = pcb->pc;
+  trap->sscratch = pcb->usp;
+  printk("exec done, pc = %p\n, usp = %p\n", pcb->pc, pcb->usp);
   return 0;
 }
 
-void copy_to_user(void *usr, const void *ker, size_t len, pcb_t *pcb) {
-  EnableAccessToUserMemory enable;
-  vma_map(usr, (char*) usr + len, pcb, /*write=*/true);
-
-  // This root switch has to be atomic. We disable interrupts.
-  [[unlikely]] if (pcb != scheduler.active) {
-    CSRC(sie, 2);
-    CSRW(satp, pcb->pt_root);
-  }
-  
-  memcpy(usr, ker, len);
-  [[unlikely]] if (pcb != scheduler.active) {
-    CSRW(satp, pt_root);
-    CSRS(sie, 2);
-  }
-}
-
 void copy_to_user(void *usr, const void *ker, size_t len) {
-  copy_to_user(usr, ker, len, scheduler.active);
+  EnableAccessToUserMemory enable;
+  vma_map_current(usr, (char*) usr + len, /*write=*/true);
+  memcpy(usr, ker, len);
 }
 
 expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
@@ -407,6 +407,9 @@ expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
 }
 
 expected<unique_ptr<char>> copy_from_user(char *usr) {
+  if (!usr)
+    return expected<unique_ptr<char>>(nullptr);
+
   EnableAccessToUserMemory enable;
   vma_map_current(usr);
   vector<char> vec;
@@ -432,6 +435,9 @@ outer:
 }
 
 expected<unique_ptr<char*>> copy_from_user(char **usr) {
+  if (!usr)
+    return expected<unique_ptr<char*>>(nullptr);
+  
   EnableAccessToUserMemory enable;
   vma_map_current(usr);
   vector<char*> vec;

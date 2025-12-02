@@ -63,8 +63,8 @@ void scheduler_t::erase(pcb_t *pcb) {
   synchronized syn(*lock);
   if (active == pcb) {
     // Now pcb is neither in ready nor in sleep.
-    dispatch_impl();
     pcb->status = Zombie;
+    dispatch_impl();
     return;
   }
   if (pcb->status == Ready)

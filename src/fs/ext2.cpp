@@ -355,8 +355,10 @@ inode *ext2_inode::lookup(const string &name) {
       return nullptr;
 
     if (entry.inum != 0) {
-      unique_ptr<char[]> p = new char[entry.namelen];
+      unique_ptr<char[]> p = new char[entry.namelen + 1];
       fs->device->read(offset + sizeof(entry), p.get(), entry.namelen, 0);
+      p[entry.namelen] = '\0';
+      // For string comparison, we must make sure `p` is a null-terminated string.
       if (name == p.get())
         return fs->read_from_inum(entry.inum);
     }

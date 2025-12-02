@@ -118,7 +118,7 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
     mmwr<uint32_t>(base + QUEUE_DRIVER_HIGH, avail >> 32);
     mmwr<uint32_t>(base + QUEUE_DEVICE_LOW, used & 0xffff'ffff);
     mmwr<uint32_t>(base + QUEUE_DEVICE_HIGH, used >> 32);
-    queue = new vq::queue {
+    queue = new (os::permanent) vq::queue {
       (vq::desc(*)[vq::size]) as_va(desc),
       (vq::avail_ring*) as_va(avail),
       (vq::used_ring*) as_va(used)
@@ -328,7 +328,7 @@ void probe() {
     if (device_id != 2)
       continue;
 
-    auto dev = new block_device(device, legacy);
+    auto dev = new (os::permanent) block_device(device, legacy);
     (*disks)[block_device_cnt] = dev;
 
     // Set up PLIC interrupt.
@@ -338,7 +338,7 @@ void probe() {
     // Create a node in devfs.
     char buf[4] = "sda";
     buf[2] += block_device_cnt; // sda, sdb, sdc ...
-    devnode->record(buf, new block_inode(dev));
+    devnode->record(buf, new (os::permanent) block_inode(dev));
 
     (*intr)[device.interrupt] = dev;
 

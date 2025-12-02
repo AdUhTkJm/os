@@ -19,6 +19,15 @@ void operator delete[](void *ptr, size_t);
 
 namespace os {
 
+struct permanent_t {} const permanent;
+
+}
+
+void *operator new(size_t len, os::permanent_t);
+void *operator new[](size_t len, os::permanent_t);
+
+namespace os {
+
 template<class T>
 constexpr T max(const T& a, const T& b) {
   return a > b ? a : b;

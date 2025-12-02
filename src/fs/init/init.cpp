@@ -197,11 +197,12 @@ int printf(const char *fmt, ...) {
 
 extern "C" void _start() {
   // mount
-  syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", 165);
+  int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", 165);
+  printf("mnt ret = %d\n", ret);
 
   int pid = syscall(57);
   if (pid == 0) {
-    int fd = syscall((reg_t) "/mnt/root/bin", 0, 2); // O_RDONLY
+    // int fd = syscall((reg_t) "/mnt/root/bin", 0, 2); // O_RDONLY
     
     // Expand heap.
     unsigned long brk = syscall(0, 12); // brk
@@ -210,15 +211,19 @@ extern "C" void _start() {
     printf("brk = %p\n", newend);
 
     // getdents
-    int ret = syscall(fd, brk, 4096, 78);
-    printf("getdents ret = %d\n", ret);
-    auto p = (linux_dirent*) brk;
-    for (auto q = p; (char*) q < (char*) p + ret; q = (linux_dirent *) ((char *) q + q->len)) {
-      printf("inum = %p, len = %d, item = %s\n", q->inum, q->len, q->name);
-    }
+    // ret = syscall(fd, brk, 4096, 78);
+    // printf("getdents ret = %d\n", ret);
+    // auto p = (linux_dirent*) brk;
+    // for (auto q = p; (char*) q < (char*) p + ret; q = (linux_dirent *) ((char *) q + q->len)) {
+    //   printf("inum = %p, len = %d, item = %s\n", q->inum, q->len, q->name);
+    // }
+    // // close
+    // syscall(fd, 3);
 
-    syscall(fd, 3);
-    syscall(0, 60);
+    // execve
+    syscall((reg_t) "/mnt/root/bin/sh", 0, 0, 59);
+
+    printf("unreachable\n");
   }
   syscall(0, 60);
 }
