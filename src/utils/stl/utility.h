@@ -20,11 +20,14 @@ void operator delete[](void *ptr, size_t);
 namespace os {
 
 struct permanent_t {} const permanent;
+struct safe_t {} const safe;
 
 }
 
 void *operator new(size_t len, os::permanent_t);
 void *operator new[](size_t len, os::permanent_t);
+void *operator new(size_t len, os::safe_t);
+void *operator new[](size_t len, os::safe_t);
 
 namespace os {
 

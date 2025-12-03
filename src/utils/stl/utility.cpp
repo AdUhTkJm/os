@@ -9,6 +9,10 @@ void *operator new(size_t len, os::permanent_t) {
   return os::vmalloc(len, /*permanent=*/ true);
 }
 
+void *operator new(size_t len, os::safe_t) {
+  return os::vmalloc(len, /*permanent=*/ true);
+}
+
 void operator delete(void *ptr, size_t) {
   os::vfree(ptr);
 }
@@ -22,6 +26,10 @@ void *operator new[](size_t len) {
 }
 
 void *operator new[](size_t len, os::permanent_t) {
+  return os::vmalloc(len, /*permanent=*/ true);
+}
+
+void *operator new[](size_t len, os::safe_t) {
   return os::vmalloc(len, /*permanent=*/ true);
 }
 

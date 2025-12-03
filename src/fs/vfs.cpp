@@ -54,7 +54,10 @@ dentry* vfs::check_mount(dentry* cur) {
   return nullptr;
 }
 
-expected<dentry*> vfs::lookup(const string &path) {
+expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) {
+  if (depth < 0)
+    return -ENOENT;
+
   // We assume the first mounted FS is the root of the entire VFS.
   assert(!mounts.empty());
 
@@ -64,7 +67,17 @@ expected<dentry*> vfs::lookup(const string &path) {
   dentry *cur = mounts[0].root;
 
   for (auto name : split(path, "/")) {
-    if (!cur || cur->node->type != inode::Dir)
+    if (!cur)
+      return -ENOTDIR;
+
+    if (cur->node->type == inode::Link) {
+      auto path = cur->node->readlink();
+      if (!path)
+        return -ENOENT;
+      return lookup_impl(*path, lastsym, depth - 1);
+    }
+    
+    if (cur->node->type != inode::Dir)
       return -ENOTDIR;
 
     if (dentry *root = check_mount(cur))
@@ -95,7 +108,18 @@ expected<dentry*> vfs::lookup(const string &path) {
   }
   if (dentry *root = check_mount(cur))
     cur = root;
+  if (lastsym && cur->node->type == inode::Link) {
+    auto path = cur->node->readlink();
+    if (!path)
+      return -ENOENT;
+    return lookup_impl(*path, lastsym, depth - 1);
+  }
   return cur;
+}
+
+expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
+  // Put a maximum on recursion depth to avoid infinite loops.
+  return lookup_impl(path, lastsym, 40);
 }
 
 file *vfs::open(const string &path, int flags) {

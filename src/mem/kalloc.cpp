@@ -235,7 +235,7 @@ void *vmalloc_impl(size_t len) {
 }
 
 void vfree(void *p) {
-#ifdef LEAK_DETECT
+#ifdef FUNC_INSTRUMENT
   leak::record_free(p);
 #endif
   if (!p)

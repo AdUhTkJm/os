@@ -19,7 +19,7 @@
 
 从语言上来看，这个 OS 完全采用 C++ 实现\footnote{这里面有个微型 libc，这个是纯 C 的，但占比可以忽略不计。}。请注意这是 C++20，并且采用了许多 gcc/clang 独有的扩展；微软的 MSVC 或旧版本的编译器是无法编译它的。这是一个与几乎所有现有操作系统都不相同的决定。在我看来，操作系统使用 C 主要是历史原因，而 C++ 不失为一种好的选择。更重要的一点是，我对它比较熟悉。至于 Rust，我个人感觉它“不够自由”，所以我不喜欢它。在\cref{chap:why_cpp}中，我介绍了在没有 C++ runtime 时的一些 workaround 和一些好用的特性。
 
-在这篇文档中，我将以 RISC-V 作为例子，介绍操作系统的启动流程以及各个子系统的实现方式。LoongArch 的支持准备由条件编译指令 \cpp{#ifdef __loongarch__} 控制，但我尚未开始。
+在这篇文档中，我将以 RISC-V 作为例子，介绍操作系统的启动流程以及各个子系统的实现方式。其中内容较多的部分，我将会单独提出为一章来介绍，例如文件系统所在的\cref{chap:fs}；而其他较为简单的子系统则合并在一章之中，也就是\cref{chap:subsystem}。LoongArch 的支持准备由条件编译指令 \cpp{#ifdef __loongarch__} 控制，但我尚未开始。
 
 这篇文档在一定程度上也算是我的 OS 学习笔记，因此语言上不会非常正式，而且有不少对实现原理的介绍。此外，一部分术语可能会有中英混用的情况。
 
@@ -33,6 +33,9 @@
 \input{subsystem/proc/pcb.tex}
 \input{subsystem/proc/schedule.tex}
 \input{subsystem/drivers/virtio.tex}
+
+\chapter{文件系统}
+\label{chap:fs}
 \input{subsystem/vfs/vfs.tex}
 
 \chapter{系统调用}

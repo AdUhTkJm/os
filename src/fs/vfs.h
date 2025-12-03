@@ -164,11 +164,13 @@ class vfs {
   os::hashmap<string, expected<fs*>(*)(const char *)> creators;
 
   dentry *check_mount(dentry *cur);
+  expected<dentry *> lookup_impl(const string &path, bool lastsym, int depth);
 public:
   vfs(dentry *root): root(root) { }
 
   // Returns the (optional) entry and an error code.
-  expected<dentry *> lookup(const string &path);
+  // If `lastsym` is set to false, the last component will not be resolved when it is a symlink.
+  expected<dentry *> lookup(const string &path, bool lastsym = true);
   // When there is a process, use `pcb->open_file` instead. This is for boot.
   file *open(const string &path, int flags);
   void close(file *f);

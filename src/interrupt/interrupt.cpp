@@ -255,6 +255,9 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
       printk("exception: scause = %ld, stval = %ld, sepc = %p\n", scause, stval, sepc);
       break;
     }
+#ifdef FUNC_INSTRUMENT
+    os::stackdump();
+#endif
     panic("exception occurred in kernel");
   } else {
     switch (scause) {

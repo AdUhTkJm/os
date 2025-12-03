@@ -1,8 +1,5 @@
-\section{文件系统}
-\label{sec:fs}
-
-\subsection{VFS}
-\label{subsec:vfs}
+\section{VFS}
+\label{sec:vfs}
 
 VFS (\textit{virtual file system}) 顾名思义，就应该用 \cpp{virtual} 函数实现。
 
@@ -67,7 +64,11 @@ public:
 
 两者之间的关系是极其显然的。这里 file 析构时，也会调用 \cpp{node->drop()} 来释放 inode。
 
+\section{文件查找}
+
 VFS 本体负责查找一个路径所对应的 inode。它会在每个路径的构成部分都检查一遍 mount point，如果有的话就切换到 mount 的文件系统的根部。这之后，它会调用当前 inode 的 lookup() 虚函数来找到下一个 inode，或者依靠 readlink() 来跟随链接。它也会记录每种文件系统的“构造函数”——虽然不是语法意义上的构造函数，并在 mount 系统调用的时候通过这些函数来创建内存中的文件系统。
+
+VFS 还维护着一个 dcache，将 \cpp{pair<inode *, string>} 映射到 \cpp{dentry*}。这里的 dentry 是一个记载着 inode 和它的名称的结构；inode 本身是没有记录名称的。换句话说，dcache 会记录之前查找过的 inode 对应的目录下的文件，这样再次查找时就无需从头开始了。
 
 % Note that this is #include'd in the main file, so the path
 % should be relative to the main file, rather than this file.

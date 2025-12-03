@@ -96,6 +96,17 @@ extern "C" void __cyg_profile_func_exit(void *, void *) {
     stack.top--;
 }
 
+namespace os {
+
+void stackdump() {
+  printk("Stack dump:\n");
+  for (int i = stack.top - 1; i >= 0; i--) {
+    printk("  #%d: %p (%s)\n", i, stack.frames[i], lookup_symbol((uintptr_t) stack.frames[i]));
+  }
+}
+
+}
+
 namespace os::leak {
 
 void record_alloc(void *ptr, size_t size) {

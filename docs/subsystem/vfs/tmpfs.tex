@@ -1,8 +1,8 @@
-\subsection{tmpfs}
-\label{subsec:tmpfs}
+\section{tmpfs}
+\label{sec:tmpfs}
 
 这个 tmpfs 可以看做是 initramfs 的“非只读版”。Linux 的 tmpfs 会在内存不足的时候交换到硬盘，不过我暂时没有实现这个功能。现在的 tmpfs 只是纯粹的 RAM 内部的文件系统。
 
 每个 tmpfs 的 inode 都持有当前数据，并负责数据的分配与释放。在往 inode 里写东西的时候，我们可能需要动态扩容，而这和 std::vector 所做的事情完全一致。当然，在没有 std 的情况下，不难手搓一个简易版的 os::vector。总而言之，直接往 inode 里塞一个 \cpp{vector<char>} 就可以解决几乎一切问题了。
 
-
+tmpfs 的 inode 序号就是它本身的地址。

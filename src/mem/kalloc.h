@@ -36,7 +36,7 @@ void *vmalloc(size_t len, bool permanent = false) {
   size_t *ptr = roundup<Align>(v);
   for (auto p = v; p != ptr; p++)
     *p = 0;
-#ifdef LEAK_DETECT
+#ifdef FUNC_INSTRUMENT
   if (!permanent)
     leak::record_alloc(ptr, len);
 #else

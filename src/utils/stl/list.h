@@ -2,6 +2,7 @@
 #define LIST_H
 
 #include "../helper_meta.h"
+#include "utility.h"
 #include <stddef.h>
 
 namespace os {
@@ -106,7 +107,7 @@ public:
   }
 
   void push_back(const T &item) {
-    node *n = new node { item, nullptr, nullptr };
+    node *n = new (safe) node { item, nullptr, nullptr };
     sz++;
     if (!tail) {
       head = tail = n;

@@ -19,7 +19,7 @@ parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
 parser.add_argument("--docs", action="store_true")
-parser.add_argument("--leak", action="store_true")
+parser.add_argument("-i", "--instrument", action="store_true")
 
 args = parser.parse_args()
 
@@ -50,8 +50,8 @@ CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
 INITRAMFS_PATH = SRC_DIR / "fs/init"
 
-if args.leak:
-  flags = ["-DLEAK_DETECT", "-finstrument-functions"]
+if args.instrument:
+  flags = ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
   CFLAGS.extend(flags)
   CXXFLAGS.extend(flags)
 

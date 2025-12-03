@@ -7,49 +7,91 @@
 namespace os {
 
 class string {
-  char *p;
+  static constexpr size_t SSO_CAP = 24;
+  union {
+    char sso[SSO_CAP];
+    char *heap;
+  } u;
   size_t len;
+
+  bool small() const { return len < SSO_CAP; }
+  bool large() const { return len >= SSO_CAP; }
 public:
   constexpr static size_t npos = -1ul;
 
-  string(): string("") {}
-  /* implicit */ string(const char *q): p(new char[strlen(q) + 1]), len(strlen(q)) {
-    strcpy(p, q);
+  string(): u({ .heap = nullptr }), len(0) {}
+
+  /* implicit */ string(const char *q): len(strlen(q)) {
+    if (small()) {
+      memcpy(u.sso, q, len + 1);
+    } else {
+      u.heap = new char[len + 1];
+      memcpy(u.heap, q, len + 1);
+    }
   }
-  string(const char *q, size_t sz): p(new char[sz + 1]), len(sz) {
-    memcpy(p, q, sz);
-    p[sz] = 0;
+
+  string(const char *q, size_t sz): len(sz) {
+    if (small()) {
+      memcpy(u.sso, q, sz);
+      u.sso[sz] = 0;
+    } else {
+      u.heap = new char[sz + 1];
+      memcpy(u.heap, q, sz);
+      u.heap[sz] = 0;
+    }
   }
-  string(const string &other): p(new char[other.len + 1]), len(other.len) {
-    strcpy(p, other.p);
+
+  string(const string &other) : len(other.len) {
+    if (small()) {
+      memcpy(u.sso, other.u.sso, len + 1);
+    } else {
+      u.heap = new char[len + 1];
+      memcpy(u.heap, other.u.heap, len + 1);
+    }
   }
-  string(string &&other): p(other.p), len(other.len) {
-    other.p = nullptr;
+
+  string(string &&other) : len(other.len) {
+    u = other.u;
     other.len = 0;
+    other.u.heap = nullptr;
   }
 
   string &operator=(const string &other) {
     if (this == &other)
       return *this;
 
-    delete[] p;
-    p = new char[other.len + 1];
-    strcpy(p, other.p);
+    if (large())
+      delete[] u.heap;
     len = other.len;
+    if (small()) {
+      memcpy(u.sso, other.u.sso, len + 1);
+    } else {
+      u.heap = new char[len + 1];
+      memcpy(u.heap, other.u.heap, len + 1);
+    }
     return *this;
   }
 
   string &operator=(string &&other) {
-    delete[] p;
-    p = other.p; other.p = nullptr;
+    if (this == &other)
+      return *this;
+    
+    if (large())
+      delete[] u.heap;
     len = other.len;
+    u = other.u;
+    other.len = 0;
+    other.u.heap = nullptr;
     return *this;
   }
+
+  const char *c_str() const { return small() ? u.sso : u.heap; }
+  char *c_str() { return small() ? u.sso : u.heap; }
 
   size_t rfind(char t, size_t start = npos) const {
     start = min(start, len - 1);
     for (size_t i = start; i--; ) {
-      if (p[i] == t)
+      if (c_str()[i] == t)
         return i;
     }
     return npos;
@@ -57,34 +99,33 @@ public:
 
   string substr(size_t from, size_t l = npos) const {
     size_t end = min(from + l, len);
-    return string(p + from, end - from);
+    return string(c_str() + from, end - from);
   }
 
-  ~string() { delete[] p; }
+  ~string() {
+    if (large())
+      delete[] u.heap;
+  }
 
   bool empty() const { return len == 0; }
   size_t size() const { return len; };
 
-  const char *c_str() const { return p; }
-  char *c_str() { return p; }
-  void dump() { printk("len = %ld, content = %s\n", len, p); }
+  char &operator[](size_t s) { return c_str()[s]; }
+  char operator[](size_t s) const { return c_str()[s]; }
 
-  char &operator[](size_t s) { return p[s]; }
-  char operator[](size_t s) const { return p[s]; }
+  bool operator==(const string &other) const { return strcmp(c_str(), other.c_str()) == 0; }
+  bool operator!=(const string &other) const { return strcmp(c_str(), other.c_str()) != 0; }
+  bool operator<=(const string &other) const { return strcmp(c_str(), other.c_str()) <= 0; }
+  bool operator>=(const string &other) const { return strcmp(c_str(), other.c_str()) >= 0; }
+  bool operator<(const string &other) const { return strcmp(c_str(), other.c_str()) < 0; }
+  bool operator>(const string &other) const { return strcmp(c_str(), other.c_str()) > 0; }
 
-  bool operator==(const string &other) const { return strcmp(p, other.p) == 0; }
-  bool operator!=(const string &other) const { return strcmp(p, other.p) != 0; }
-  bool operator<=(const string &other) const { return strcmp(p, other.p) <= 0; }
-  bool operator>=(const string &other) const { return strcmp(p, other.p) >= 0; }
-  bool operator<(const string &other) const { return strcmp(p, other.p) < 0; }
-  bool operator>(const string &other) const { return strcmp(p, other.p) > 0; }
-
-  bool operator==(const char *other) const { return strcmp(p, other) == 0; }
-  bool operator!=(const char *other) const { return strcmp(p, other) != 0; }
-  bool operator<=(const char *other) const { return strcmp(p, other) <= 0; }
-  bool operator>=(const char *other) const { return strcmp(p, other) >= 0; }
-  bool operator<(const char *other) const { return strcmp(p, other) < 0; }
-  bool operator>(const char *other) const { return strcmp(p, other) > 0; }
+  bool operator==(const char *other) const { return strcmp(c_str(), other) == 0; }
+  bool operator!=(const char *other) const { return strcmp(c_str(), other) != 0; }
+  bool operator<=(const char *other) const { return strcmp(c_str(), other) <= 0; }
+  bool operator>=(const char *other) const { return strcmp(c_str(), other) >= 0; }
+  bool operator<(const char *other) const { return strcmp(c_str(), other) < 0; }
+  bool operator>(const char *other) const { return strcmp(c_str(), other) > 0; }
 };
 
 struct string_view {

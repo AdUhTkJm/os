@@ -27,7 +27,18 @@ stvec_pos:
 \section{容器}
 \label{sec:container}
 
-在操作系统中，很常见的一类“容器”是 intrusive list。不过在各种地方都要摆弄二级指针还是太麻烦了，C++ 就可以帮我们很好地解决这一点。
+\subsection{侵入式链表}
+
+在操作系统中，很常见的一类“容器”是侵入式链表。不过在各种地方都要摆弄二级指针还是太麻烦了，C++ 就可以帮我们很好地解决这一点。
+
+TODO
+
+\subsection{SSO}
+\label{subsect:sso}
+
+我实现了 SSO (\textit{short string optimization})，它可以减少 string 的动态内存分配。在 24 bytes 以内（不包含）的字符串都将被分配在栈上，而不是堆上。由于整个 OS 中，string 大量被默认构造（例如 vector<string>, hashmap<string, ...>），这减少的分配量是十分可观的。
+
+TODO
 
 \section{RTTI}
 \label{sec:rtti}

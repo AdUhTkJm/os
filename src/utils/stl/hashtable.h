@@ -161,7 +161,7 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
 
   auto oldcap = cap;
   cap = len;
-  auto new_table = new entry[cap];
+  auto new_table = new (safe) entry[cap];
   for (size_t i = 0; i < cap; ++i)
     new_table[i].state = Empty;
 
@@ -179,14 +179,14 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq>::hashmap(size_t capacity) : cap(max(16ul, capacity)), sz(0) {
-  table = new entry[capacity];
+  table = new (safe) entry[capacity];
   for (size_t i = 0; i < capacity; i++)
     table[i].state = Empty;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq>::hashmap(const hashmap &other) : cap(other.cap), sz(other.sz) {
-  table = new entry[cap];
+  table = new (safe) entry[cap];
   for (size_t i = 0; i < cap; i++)
     table[i] = other.table[i];
 }
@@ -194,7 +194,7 @@ hashmap<K, V, Hash, Eq>::hashmap(const hashmap &other) : cap(other.cap), sz(othe
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq> &hashmap<K, V, Hash, Eq>::operator=(const hashmap &other) {
   cap = other.cap; sz = other.sz;
-  table = new entry[cap];
+  table = new (safe) entry[cap];
   for (size_t i = 0; i < cap; i++)
     table[i] = other.table[i];
   return *this;
