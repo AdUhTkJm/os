@@ -216,6 +216,8 @@ void pfree(pa_t p) {
 pa_t pmalloc(int pagecnt) {
   if (!pminit)
     return 0;
+  if (pagecnt == 1)
+    return pframe();
 
   // We always search from the beginning. (The round-robin won't be in sync with pframe().)
   auto index = find_consecutive(pmmap, pagecnt, 0);

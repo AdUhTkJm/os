@@ -53,7 +53,7 @@ int tmpfs_inode::unlink(const string &name) {
 os::vector<inode::item> tmpfs_inode::list() {
   os::vector<item> result;
   for (auto [name, inode] : children)
-    result.push_back({ .inum = (long) inode, .name = name });
+    result.push_back({ .inum = (long) inode, .name = name, .ty = inode->type });
   return result;
 }
 

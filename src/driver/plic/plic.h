@@ -21,8 +21,9 @@ namespace plic {
 
 void enable(int device);
 void init();
-void handle();
 void record(int device, void (*handler)(int));
+
+[[gnu::no_instrument_function]] void handle();
 
 }
 

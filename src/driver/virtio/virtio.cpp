@@ -20,7 +20,7 @@ namespace os::virtio {
 static_storage<os::hashmap<int, block_device*>> disks;
 static_storage<os::hashmap<int, block_device*>> intr;
 
-void block_device_handler(int irq) {
+[[gnu::no_instrument_function]] void block_device_handler(int irq) {
   if (!intr->count(irq))
     return;
 
@@ -31,11 +31,12 @@ void block_device_handler(int irq) {
   // Also note that used ring change won't be handled here.
   // That's the job of the function after recovery from suspend().
   int status = mmrd<uint32_t>(dev->base + INTERRUPT_STATUS);
-  if (status != 1)
+  if (!(status & 1))
     return;
   mmwr(dev->base + INTERRUPT_ACK, status);
   auto pcb = dev->wait.front();
   dev->wait.pop_front();
+  os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
   scheduler.wakeup(pcb);
 }
 
@@ -206,9 +207,8 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
 
   // Tell device that a new request has come.
   __asm__ volatile("fence" ::: "memory");
-  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-  
   wait.push_back(scheduler.active);
+  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   suspend();
 
   auto status = mmrd<uint8_t>(stat);

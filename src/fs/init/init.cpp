@@ -2,6 +2,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include "../../interrupt/sysret.h"
+#include "../../interrupt/sysids.h"
 
 using reg_t = long;
 
@@ -56,16 +57,16 @@ unsigned strlen(const char *s) {
 }
 
 void kputs(const char *c) {
-  syscall(/*stdout=*/ 1, (reg_t) c, strlen(c), /*write*/ 1);
+  syscall(/*stdout=*/ 1, (reg_t) c, strlen(c), write);
 }
 
 void kputch(char c) {
-  syscall(/*stdout=*/ 1, (reg_t) &c, 1, /*write*/ 1);
+  syscall(/*stdout=*/ 1, (reg_t) &c, 1, write);
 }
 
 char kgetch() {
   char c;
-  syscall(/*stdin=*/0, (reg_t) &c, 1, /*read*/0);
+  syscall(/*stdin=*/0, (reg_t) &c, 1, read);
   return c;
 }
 
@@ -197,33 +198,21 @@ int printf(const char *fmt, ...) {
 
 extern "C" void _start() {
   // mount
-  int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", 165);
+  int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
   printf("mnt ret = %d\n", ret);
 
-  int pid = syscall(57);
+  int pid = syscall(clone);
   if (pid == 0) {
-    // int fd = syscall((reg_t) "/mnt/root/bin", 0, 2); // O_RDONLY
-    
     // Expand heap.
-    unsigned long brk = syscall(0, 12); // brk
-    printf("brk = %p\n", brk);
-    unsigned long newend = syscall(brk + 4096, 12); // brk
+    unsigned long p = syscall(0, brk);
+    printf("brk = %p\n", p);
+    unsigned long newend = syscall(p + 4096, brk);
     printf("brk = %p\n", newend);
 
-    // getdents
-    // ret = syscall(fd, brk, 4096, 78);
-    // printf("getdents ret = %d\n", ret);
-    // auto p = (linux_dirent*) brk;
-    // for (auto q = p; (char*) q < (char*) p + ret; q = (linux_dirent *) ((char *) q + q->len)) {
-    //   printf("inum = %p, len = %d, item = %s\n", q->inum, q->len, q->name);
-    // }
-    // // close
-    // syscall(fd, 3);
-
     // execve
-    syscall((reg_t) "/mnt/root/bin/sh", 0, 0, 59);
+    syscall((reg_t) "/mnt/root/bin/sh", 0, 0, execve);
 
     printf("unreachable\n");
   }
-  syscall(0, 60);
+  syscall(0, exit);
 }

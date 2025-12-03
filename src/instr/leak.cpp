@@ -68,6 +68,9 @@ const Symbol symbols[] = {
 constexpr size_t symcnt = sizeof(symbols) / sizeof(Symbol);
 
 const char* lookup_symbol(uintptr_t pc) {
+  if (pc >= symbols[symcnt - 1].addr)
+    return "<unknown>";
+
   int l = 0, r = symcnt;
 
   while (l + 1 < r) {

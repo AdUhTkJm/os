@@ -3,6 +3,7 @@
 
 #include "utility.h"
 #include "hash.h"
+#include "vector.h"
 
 namespace os {
 
@@ -107,6 +108,31 @@ public:
       delete[] u.heap;
   }
 
+  string &operator+=(const string &other) {
+    return *this = *this + other;
+  }
+
+  string operator+(const string &other) const {
+    string s;
+    s.len = len + other.len;
+    if (s.large())
+      s.u.heap = new char[s.len + 1];
+    memcpy(s.c_str(), c_str(), len);
+    memcpy(s.c_str() + len, other.c_str(), other.len);
+    s[s.len] = 0;
+    return s;
+  }
+
+  string join(const vector<string> &v) const {
+    string result;
+    for (size_t i = 0; i < v.size(); i++) {
+      result += v[i];
+      if (i + 1 < v.size())
+        result += *this;
+    }
+    return result;
+  }
+
   bool empty() const { return len == 0; }
   size_t size() const { return len; };
 
@@ -127,6 +153,10 @@ public:
   bool operator<(const char *other) const { return strcmp(c_str(), other) < 0; }
   bool operator>(const char *other) const { return strcmp(c_str(), other) > 0; }
 };
+
+inline string operator+(const char *p, const string &q) {
+  return string(p) + q;
+}
 
 struct string_view {
   const char *start = nullptr;

@@ -5,11 +5,12 @@
 
 namespace {
   
-void console_input_handler(int) {
+void console_input_handler(int irq) {
   // Read the register.
   char c = os::mmrd<char>(UART_BASE + UART_RBR);
   os::console_input_buf->push_back(c);
   os::console->wake();
+  os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
   
   // Ctrl+C
   if (c == 0x03)
@@ -55,14 +56,13 @@ void init() {
   record(UART0_IRQ, console_input_handler);
 }
 
-void handle() {
+[[gnu::no_instrument_function]] void handle() {
   // Claim the interrupt to get the IRQ ID.
   unsigned irq = mmrd<unsigned>(PLIC_BASE + PLIC_CLAIM_S_OFFSET);
-  
   if (handlers->count(irq))
     handlers->at(irq)(irq);
-  
-  mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
+  else
+    mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
 }
 
 void record(int device, void(*handler)(int)) {

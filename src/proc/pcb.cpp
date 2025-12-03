@@ -317,6 +317,7 @@ int exec(const string &path, char *const *argv, char *const *envp) {
     scheduler.erase(pcb);
     return ret;
   }
+  printk("elf loaded, pc = %p\n", pcb->pc);
   pcb->close_file(fd);
 
   // Reallocate the page table and shallow-copy the higher half of kernel space.
@@ -332,14 +333,14 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   pcb->status = Init;
 
   // Close files according to flags.
-  // os::vector<int> toclose;
-  // for (auto [fd, f] : pcb->ftbl) {
-  //   if (*pcb->ftbl.get_desc(fd) & FD_CLOEXEC
-  //    || f->flags & O_CLOEXEC)
-  //     toclose.push_back(fd);
-  // }
-  // for (auto fd : toclose)
-  //   pcb->ftbl.deallocate(fd);
+  os::vector<int> toclose;
+  for (auto [fd, f] : pcb->ftbl) {
+    if (*pcb->ftbl.get_desc(fd) & FD_CLOEXEC
+     || f->flags & O_CLOEXEC)
+      toclose.push_back(fd);
+  }
+  for (auto fd : toclose)
+    pcb->ftbl.deallocate(fd);
 
   char *usp = (char *) pcb->usp;
   os::vector<char*> argvp, envpp;
@@ -388,7 +389,7 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
   trap->sscratch = pcb->usp;
-  printk("exec done, pc = %p\n, usp = %p\n", pcb->pc, pcb->usp);
+  printk("exec done, pc = %p, usp = %p\n", pcb->pc, pcb->usp);
   return 0;
 }
 

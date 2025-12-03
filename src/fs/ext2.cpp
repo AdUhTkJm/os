@@ -367,6 +367,27 @@ inode *ext2_inode::lookup(const string &name) {
   return nullptr;
 }
 
+static inode::filetype direntry_to_type(unsigned char ty) {
+  switch (ty) {
+  case 1:
+    return inode::File;
+  case 2:
+    return inode::Dir;
+  case 3:
+    return inode::CharDevice;
+  case 4:
+    return inode::BlockDevice;
+  case 5:
+    return inode::FIFO;
+  case 6:
+    return inode::Socket;
+  case 7:
+    return inode::Link;
+  default:
+    return (inode::filetype) -1;
+  }
+}
+
 vector<inode::item> ext2_inode::list() {
   if (type != Dir)
     return {};
@@ -390,7 +411,7 @@ vector<inode::item> ext2_inode::list() {
       auto name = string(p, entry.namelen);
       delete[] p;
       result.push_back({
-        .inum = entry.inum, .name = name,
+        .inum = entry.inum, .name = name, .ty = direntry_to_type(entry.type)
       });
     }
     pos += entry.size;
@@ -595,7 +616,10 @@ expected<fs*> ext2_creator(const char *src) {
   inode *node = pcb->ftbl[fd]->node;
   if (node->type != inode::BlockDevice)
     return -ENOTBLK;
-  return new ext2(node);
+  auto ext = new ext2(node);
+  if (!ext->root)
+    return -EINVAL;
+  return ext;
 }
 
 }

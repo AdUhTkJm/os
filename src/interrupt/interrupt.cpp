@@ -1,4 +1,5 @@
 #include "sysret.h"
+#include "sysids.h"
 #include "../utils/libc.h"
 #include "../utils/helper.h"
 #include "../driver/plic/plic.h"
@@ -31,9 +32,6 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
   return 0;
 }
 
-#define F_GETFD 1
-#define F_SETFD 2
-
 // For details, see https://linux.die.net/man/2/fcntl
 int fcntl(int fd, int ty, int arg) {
   auto pcb = scheduler.active;
@@ -52,9 +50,9 @@ int fcntl(int fd, int ty, int arg) {
 
 /*
 See table:
-https://filippo.io/linux-syscall-table/
+https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
 */
-long syscall(trapframe *ksp) {
+long syshandle(trapframe *ksp) {
   auto a0 = ksp->regs[8];
   auto a1 = ksp->regs[9];
   auto a2 = ksp->regs[10];
@@ -63,44 +61,7 @@ long syscall(trapframe *ksp) {
   auto pcb = scheduler.active;
   ksp->sepc += 4;
   switch (a7) {
-  case 0: {
-    // read(fd, buf, len)
-    auto file = pcb->ftbl[a0];
-    if (!file)
-      return -ENOENT;
-
-    char *buf = new char[a2];
-    auto ret = file->read(buf, a2);
-    copy_to_user((void *) a1, buf, a2);
-    return ret;
-  }
-  case 1: {
-    // write(fd, buf, len)
-    auto file = pcb->ftbl[a0];
-    if (!file)
-      return -ENOENT;
-
-    auto buf = copy_from_user((void*) a1, a2);
-    if (!buf)
-      return -EFAULT;
-    auto ret = file->write(buf->get(), a2);
-    return ret;
-  }
-  case 2: {
-    // open(path, flags, mode)
-    // mode will be ignored when not creating file, as expected.
-    auto path = copy_from_user((char *) a0);
-    if (!path)
-      return -EFAULT;
-    auto ret = pcb->open_file(path->get(), a1, a2);
-    return ret;
-  }
-  case 3: {
-    // close(fd)
-    return pcb->close_file(a0);
-  }
-  case 8: {
-    // lseek(fd, offset, whence)
+  case lseek: { // lseek(fd, offset, whence)
     file::whence whence = 
       a3 == 0 ? file::begin
     : a3 == 1 ? file::current
@@ -119,31 +80,60 @@ long syscall(trapframe *ksp) {
     f->seek(a1, whence);
     return 0;
   }
-  case 12: {
+  case read: { // read(fd, buf, len)
+    auto file = pcb->ftbl[a0];
+    if (!file)
+      return -ENOENT;
+
+    char *buf = new char[a2];
+    auto ret = file->read(buf, a2);
+    copy_to_user((void *) a1, buf, a2);
+    return ret;
+  }
+  case write: { // write(fd, buf, len)
+    auto file = pcb->ftbl[a0];
+    if (!file)
+      return -ENOENT;
+
+    auto buf = copy_from_user((void*) a1, a2);
+    if (!buf)
+      return -EFAULT;
+    auto ret = file->write(buf->get(), a2);
+    return ret;
+  }
+  case openat: {
+    // open(dirfd, path, flags, mode)
+    // mode will be ignored when not creating file, as expected.
+    auto path = copy_from_user((char *) a1);
+    if (!path)
+      return -EFAULT;
+    if ((*path)[0] != '/') { // Relative. Deal with it later.
+      return -EBADF;
+    }
+    auto ret = pcb->open_file(path->get(), a2, a3);
+    return ret;
+  }
+  case close: {
+    // close(fd)
+    return pcb->close_file(a0);
+  }
+  case brk: {
     // brk(addr)
     return pcb->brk(a0);
   }
-  case 32: {
+  case dup: {
     // dup(fd)
     if (!pcb->ftbl.count(a0))
       return -EBADF;
     return pcb->ftbl.allocate(pcb->ftbl[a0]);
   }
-  case 33: {
-    // dup2(fd, newfd)
-    if (!pcb->ftbl.count(a0))
-      return -EBADF;
-    return pcb->ftbl.allocate(pcb->ftbl[a0], a1);
-  }
-  case 39: {
-    // getpid()
+  case getpid: {
     return pcb->pid;
   }
-  case 57: {
-    // fork()
+  case clone: {
     return fork();
   }
-  case 59: {
+  case execve: {
     // execve(path, argv, envp)
     EnableAccessToUserMemory guard;
     auto path = copy_from_user((char *) a0);
@@ -153,16 +143,16 @@ long syscall(trapframe *ksp) {
       return -EFAULT;
     return exec(path->get(), argv->get(), envp->get());
   }
-  case 60: {
+  case exit: {
     // exit(ret_code)
     os::terminate(pcb, a0);
     return 0;
   }
-  case 72: {
+  case syscall::fcntl: {
     // fcntl(fd, ty, args...)
     return fcntl(a0, a1, a2);
   }
-  case 78: {
+  case getdents64: {
     // getdents(fd, dirents, cnt)
     if (!pcb->ftbl.count(a0))
       return -EBADF;
@@ -171,23 +161,24 @@ long syscall(trapframe *ksp) {
     
     char *pos = (char *) a1;
     for (const auto &item : items) {
-      constexpr unsigned nameoff = offsetof(linux_dirent, name);
+      constexpr unsigned nameoff = offsetof(linux_dirent64, name);
       unsigned short len = nameoff + item.name.size() + 2;
       if (va_t(pos) - a1 + len >= va_t(a2))
         return -EINVAL;
 
-      linux_dirent entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len };
+      unsigned char type = inode::as_dt(item.ty);
+      linux_dirent64 entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len, .type = type };
       copy_to_user(pos, &entry, nameoff);
       copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1);
       pos += len;
     }
     return va_t(pos) - a1;
   }
-  case 110: {
+  case getppid: {
     // getppid()
     return pcb->parent->pid;
   }
-  case 165: {
+  case syscall::mount: {
     // mount(src, tgt, fsty, flags, data)
     // Ignore the data for now.
     EnableAccessToUserMemory guard;
@@ -216,7 +207,7 @@ long syscall(trapframe *ksp) {
 
 namespace os {
 
-void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
+[[gnu::no_instrument_function]] void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
   reg_t sstatus;
   CSRR(sstatus, sstatus);
   bool from_kernel = sstatus & (1 << 8);
@@ -268,7 +259,7 @@ void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
     case 8: { // System call
       auto pcb = scheduler.active;
       auto trap = (trapframe *) pcb->ksp;
-      trap->regs[8] = syscall(trap); // a0
+      trap->regs[8] = syshandle(trap); // a0
       break;
     }
     case 12: // Instruction page fault

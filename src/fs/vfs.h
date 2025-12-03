@@ -27,6 +27,19 @@
 
 #define FD_CLOEXEC  0x1
 
+#define F_GETFD 1
+#define F_SETFD 2
+
+#define DT_UNKNOWN	0
+#define DT_FIFO	1
+#define DT_CHR		2
+#define DT_DIR		4
+#define DT_BLK		6
+#define DT_REG		8
+#define DT_LNK		10
+#define DT_SOCK 12
+#define DT_WHT	14
+
 namespace os {
 
 class inode;
@@ -82,6 +95,7 @@ public:
   const uint64_t rtti;
 
   enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket, FIFO };
+  static unsigned char as_dt(filetype ty);
 
   virtual ~inode() = default;
   virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;
@@ -98,6 +112,7 @@ public:
   struct item {
     long inum;
     string name;
+    filetype ty;
   };
   // List all children.
   virtual os::vector<item> list() = 0;
@@ -197,6 +212,7 @@ extern os::static_storage<vfs> vfs;
 
 string dirname(const string &path);
 string basename(const string &path);
+string normalize(const string &path);
 
 }
 

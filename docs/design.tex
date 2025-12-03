@@ -13,7 +13,7 @@
 \chapter{前言}
 \label{chap:preface}
 
-这是我的第一个 OS 内核。既然没有经验，看不懂别人的操作系统，只好自己从零搭一个了。这个操作系统没有使用任何来自第三方的代码，不过使用了 OS 中常见的概念和抽象，例如 VFS 等。或许很多东西并不是最佳实践，但是能跑起来才是最重要的。
+这是我的第一个 OS 内核。既然没有经验，看不懂别人的操作系统，只好自己从零搭一个了。这个操作系统没有基于已有的 OS 代码进行开发，不过使用了 OS 中常见的概念和抽象，例如 VFS 等，同时使用了少量的第三方代码，在 \cref{chapter:thirdparty} 中列出。或许很多东西并不是最佳实践，但是能跑起来才是最重要的。
 
 从项目数据上来看，\input{data/git_summary.tex}。请注意这里的“代码行数”包括所有被 git 统计的文件，例如这篇文档也在其中：LaTeX 代码也是代码。
 
@@ -45,6 +45,11 @@
 \chapter{C++}
 \label{chap:why_cpp}
 \input{whycpp.tex}
+
+\chapter{使用代码}
+\begin{itemize}
+\textbf{sysids.h} 来自 musl-libc，记录每个 syscall 对应的数值。
+\end{itemize}
 
 \bibliographystyle{plain}
 \bibliography{bibtex}

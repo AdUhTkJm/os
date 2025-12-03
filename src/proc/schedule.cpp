@@ -35,7 +35,7 @@ void scheduler_t::dispatch_impl() {
     next = n;
   }
   ready.pop_front();
-  printk("dispatched pid %d\n", next->pid);
+  // printk("dispatched pid %d\n", next->pid);
 
   CSRR(sepc, active->pc);
   active = next;
@@ -86,6 +86,12 @@ void scheduler_t::wakeup(pcb_t *pcb) {
   pcb->status = Ready;
   sleep.erase(pcb);
   ready.push_back(pcb);
+  // Preempt the idle pcb immediately. Don't wait till timer fire.
+  if (active->pid == 0) {
+    ready.push_back(active);
+    active->status = Ready;
+    dispatch_impl();
+  }
 }
 
 }

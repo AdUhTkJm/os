@@ -69,7 +69,6 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
   if (len == 0)
     return 0;
 
-  size_t total = 0;
   size_t sector = offset / 512;
   size_t soff = offset % 512;
   char *dst = (char*) buf;
@@ -82,7 +81,6 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
     dst += sz;
     len -= sz;
-    total += sz;
     sector++;
   }
 
@@ -93,7 +91,6 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
     dst += 512;
     len -= 512;
-    total += 512;
     sector++;
   }
 
@@ -101,10 +98,10 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
   if (len > 0) {
     auto &c = load_sector(sector, direct);
     memcpy(dst, c.data, len);
-    total += len;
+    dst += len;
   }
 
-  return total;
+  return dst - (char *) buf;
 }
 
 size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags) {

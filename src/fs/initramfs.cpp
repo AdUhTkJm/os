@@ -60,7 +60,7 @@ vector<inode::item> initramfs_inode::list() {
   vector<item> result;
   result.reserve(children.size());
   for (auto [name, inode] : children)
-    result.push_back({ .inum = (long) inode, .name = name });
+    result.push_back({ .inum = (long) inode, .name = name, .ty = inode->type });
   return result;
 }
 

@@ -54,6 +54,11 @@ dentry* vfs::check_mount(dentry* cur) {
   return nullptr;
 }
 
+// Finds the next path to look up, given the current path and the symlink target.
+string resolve_link(string path, const string &link) {
+  return link[0] == '/' ? link : normalize(path + "/" + link);
+}
+
 expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) {
   if (depth < 0)
     return -ENOENT;
@@ -65,16 +70,21 @@ expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) 
     return mounts[0].root;
 
   dentry *cur = mounts[0].root;
+  vector<string> comps;
 
   for (auto name : split(path, "/")) {
+    comps.push_back(name);
     if (!cur)
       return -ENOTDIR;
 
     if (cur->node->type == inode::Link) {
-      auto path = cur->node->readlink();
-      if (!path)
+      auto link = cur->node->readlink();
+      if (!link)
         return -ENOENT;
-      return lookup_impl(*path, lastsym, depth - 1);
+      comps.pop_back();
+      string v = resolve_link(string("/").join(comps), *link);
+      printk("link resolved to %s\n", v.c_str());
+      return lookup_impl(v, lastsym, depth - 1);
     }
     
     if (cur->node->type != inode::Dir)
@@ -106,20 +116,25 @@ expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) 
 
     return -ENOENT;
   }
+
   if (dentry *root = check_mount(cur))
     cur = root;
+  
   if (lastsym && cur->node->type == inode::Link) {
-    auto path = cur->node->readlink();
-    if (!path)
+    auto link = cur->node->readlink();
+    if (!link)
       return -ENOENT;
-    return lookup_impl(*path, lastsym, depth - 1);
+
+    string v = resolve_link(dirname(path), *link);
+    printk("link resolved to %s\n", v.c_str());
+    return lookup_impl(v, lastsym, depth - 1);
   }
   return cur;
 }
 
 expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
   // Put a maximum on recursion depth to avoid infinite loops.
-  return lookup_impl(path, lastsym, 40);
+  return lookup_impl(normalize(path), lastsym, 40);
 }
 
 file *vfs::open(const string &path, int flags) {
@@ -170,6 +185,26 @@ void inode::unlinked() {
   }
 }
 
+unsigned char inode::as_dt(filetype ty) {
+  switch (ty) {
+  case BlockDevice:
+    return DT_BLK;
+  case File:
+    return DT_REG;
+  case Dir:
+    return DT_DIR;
+  case FIFO:
+    return DT_FIFO;
+  case CharDevice:
+    return DT_CHR;
+  case Link:
+    return DT_LNK;
+  case Socket:
+    return DT_SOCK;
+  }
+  __builtin_unreachable();
+}
+
 file::~file() {
   node->drop();
 }
@@ -216,6 +251,23 @@ string dirname(const string &path) {
     return "/";
 
   return path.substr(0, pos);
+}
+
+string normalize(const string &path) {
+  vector<string> v;
+
+  for (const auto &part : split(path, "/")) {
+    if (part == "" || part == ".")
+        continue;
+    if (part == "..") {
+      if (!v.empty())
+        v.pop_back();
+      continue;
+    }
+    v.push_back(part);
+  }
+
+  return "/" + string("/").join(v);
 }
 
 }

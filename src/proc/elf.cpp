@@ -17,8 +17,9 @@ int load_elf(file *content, pcb_t *pcb) {
   if (header.e_machine != EM_MACHINE)
     return -ENOEXEC;
 
+  // It is very likely that pcb_p == scheduler.active.
+  // We must be aware: many other procedures implicitly touches it.
   pcb->status = Init;
-  pcb->pc = header.e_entry;
 
   content->seek(header.e_phoff, file::begin);
   // The random offset.
@@ -36,7 +37,7 @@ int load_elf(file *content, pcb_t *pcb) {
       // Read the content of the mapped section.
       auto before = content->seek(phdr.p_offset, file::begin);
       char *text = (char *) vmalloc(phdr.p_filesz);
-      content->write(text, phdr.p_filesz);
+      content->read(text, phdr.p_filesz);
       content->seek(before, file::begin);
 
       va_t va = phdr.p_vaddr + offset;
@@ -57,6 +58,7 @@ int load_elf(file *content, pcb_t *pcb) {
   }
 
   init_user(pcb);
+  pcb->pc = header.e_entry;
   return 0;
 }
 
