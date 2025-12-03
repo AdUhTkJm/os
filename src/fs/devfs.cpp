@@ -170,18 +170,19 @@ devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {
 
 devfs::devfs() {
   auto node = new devroot(this);
-  root = new dentry("/dev", node);
+  root = new dentry("/dev", node, nullptr);
 }
 
 void mount_dev() {
   auto root = devfs->root;
+  auto pcb = scheduler.active;
   // console is initialized in PLIC handler.
   cast<devroot>(root->node)->record("console", &*console);
-  auto dentry = vfs->lookup("/dev");
+  auto dentry = pcb->vfs->lookup("/dev");
   if (!dentry)
     panic("devfs: cannot find /dev");
   
-  vfs->mount(*dentry, root);
+  vfs::mount(*dentry, root);
 }
 
 }

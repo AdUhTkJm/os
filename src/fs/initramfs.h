@@ -60,13 +60,13 @@ public:
     auto rootnode = new (os::permanent) initramfs_inode(this, 0, 0);
     rootnode->type = inode::Dir;
     rootnode->sz = 0;
-    root = new class dentry("", rootnode);
+    root = new class dentry("", rootnode, nullptr);
   }
 
   initramfs_inode *get() override { return new (os::permanent) initramfs_inode(this, 0, 0); }
   void erase(inode *) override { }
   bool has_backup() override { return false; }
-};
+} extern *initramfs;
 
 }
 

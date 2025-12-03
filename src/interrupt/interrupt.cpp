@@ -11,9 +11,7 @@ namespace {
 using namespace os;
 
 int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags) {
-  // Ignore flags for now.
-  (void) flags;
-
+  auto vfs = scheduler.active->vfs;
   auto maybe_mntpoint = vfs->lookup(tgt);
   if (!maybe_mntpoint)
     return -maybe_mntpoint;
@@ -21,14 +19,23 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
   dentry *mntpoint = *maybe_mntpoint;
   if (mntpoint->node->type != inode::Dir)
     return -ENOTDIR;
-  if (vfs->mounted(mntpoint))
+  // This place is mounted.
+  if (mntpoint->mnt)
     return -EBUSY;
+
+  if (flags & MS_MOVE) {
+    auto source = vfs->lookup(src);
+    if (!source)
+      return -ENOENT;
+    vfs::move_mount(*source, mntpoint);
+    return 0;
+  }
 
   expected<class fs*> fs = vfs->get(fsty, src);
   if (!fs)
     return fs;
 
-  vfs->mount(mntpoint, (*fs)->root);
+  vfs::mount(mntpoint, (*fs)->root);
   return 0;
 }
 
@@ -48,160 +55,189 @@ int fcntl(int fd, int ty, int arg) {
   }
 }
 
+#define SYSHANDLE_BEGIN \
+long syshandle(trapframe *ksp) { \
+  auto a0 = ksp->regs[8];     \
+  auto a1 = ksp->regs[9];     \
+  auto a2 = ksp->regs[10];    \
+  auto a3 = ksp->regs[11];    \
+  auto a7 = ksp->regs[15];    \
+  auto pcb = scheduler.active;\
+  ksp->sepc += 4;             \
+  switch (a7) {
+
+#define SYSHANDLE_END \
+  default: \
+    printk("unknown syscall: %d\n", a7); \
+    return -1; \
+  } \
+}
+
+#define HANDLE(x, ...) case syscall::x:
+
 /*
 See table:
 https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
 */
-long syshandle(trapframe *ksp) {
-  auto a0 = ksp->regs[8];
-  auto a1 = ksp->regs[9];
-  auto a2 = ksp->regs[10];
-  auto a3 = ksp->regs[11];
-  auto a7 = ksp->regs[15];
-  auto pcb = scheduler.active;
-  ksp->sepc += 4;
-  switch (a7) {
-  case lseek: { // lseek(fd, offset, whence)
-    file::whence whence = 
-      a3 == 0 ? file::begin
-    : a3 == 1 ? file::current
-    : a3 == 2 ? file::end
-    : (file::whence) -1;
-    if (int(whence) == -1)
-      return -EINVAL;
+SYSHANDLE_BEGIN
 
-    file *f = pcb->ftbl[a0];
-    if (!f)
-      return -EBADF;
+HANDLE(lseek, fd, offset, whence) {
+  file::whence whence = 
+    a3 == 0 ? file::begin
+  : a3 == 1 ? file::current
+  : a3 == 2 ? file::end
+  : (file::whence) -1;
+  if (int(whence) == -1)
+    return -EINVAL;
 
-    if (f->node->type == inode::CharDevice)
-      return -EINVAL;
-    
-    f->seek(a1, whence);
-    return 0;
-  }
-  case read: { // read(fd, buf, len)
-    auto file = pcb->ftbl[a0];
-    if (!file)
-      return -ENOENT;
+  file *f = pcb->ftbl[a0];
+  if (!f)
+    return -EBADF;
 
-    char *buf = new char[a2];
-    auto ret = file->read(buf, a2);
-    copy_to_user((void *) a1, buf, a2);
-    return ret;
-  }
-  case write: { // write(fd, buf, len)
-    auto file = pcb->ftbl[a0];
-    if (!file)
-      return -ENOENT;
-
-    auto buf = copy_from_user((void*) a1, a2);
-    if (!buf)
-      return -EFAULT;
-    auto ret = file->write(buf->get(), a2);
-    return ret;
-  }
-  case openat: {
-    // open(dirfd, path, flags, mode)
-    // mode will be ignored when not creating file, as expected.
-    auto path = copy_from_user((char *) a1);
-    if (!path)
-      return -EFAULT;
-    if ((*path)[0] != '/') { // Relative. Deal with it later.
-      return -EBADF;
-    }
-    auto ret = pcb->open_file(path->get(), a2, a3);
-    return ret;
-  }
-  case close: {
-    // close(fd)
-    return pcb->close_file(a0);
-  }
-  case brk: {
-    // brk(addr)
-    return pcb->brk(a0);
-  }
-  case dup: {
-    // dup(fd)
-    if (!pcb->ftbl.count(a0))
-      return -EBADF;
-    return pcb->ftbl.allocate(pcb->ftbl[a0]);
-  }
-  case getpid: {
-    return pcb->pid;
-  }
-  case clone: {
-    return fork();
-  }
-  case execve: {
-    // execve(path, argv, envp)
-    EnableAccessToUserMemory guard;
-    auto path = copy_from_user((char *) a0);
-    auto argv = copy_from_user((char **) a1);
-    auto envp = copy_from_user((char **) a2);
-    if (!path || !argv || !envp)
-      return -EFAULT;
-    return exec(path->get(), argv->get(), envp->get());
-  }
-  case exit: {
-    // exit(ret_code)
-    os::terminate(pcb, a0);
-    return 0;
-  }
-  case syscall::fcntl: {
-    // fcntl(fd, ty, args...)
-    return fcntl(a0, a1, a2);
-  }
-  case getdents64: {
-    // getdents(fd, dirents, cnt)
-    if (!pcb->ftbl.count(a0))
-      return -EBADF;
-    auto file = pcb->ftbl[a0];
-    auto items = file->node->list();
-    
-    char *pos = (char *) a1;
-    for (const auto &item : items) {
-      constexpr unsigned nameoff = offsetof(linux_dirent64, name);
-      unsigned short len = nameoff + item.name.size() + 2;
-      if (va_t(pos) - a1 + len >= va_t(a2))
-        return -EINVAL;
-
-      unsigned char type = inode::as_dt(item.ty);
-      linux_dirent64 entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len, .type = type };
-      copy_to_user(pos, &entry, nameoff);
-      copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1);
-      pos += len;
-    }
-    return va_t(pos) - a1;
-  }
-  case getppid: {
-    // getppid()
-    return pcb->parent->pid;
-  }
-  case syscall::mount: {
-    // mount(src, tgt, fsty, flags, data)
-    // Ignore the data for now.
-    EnableAccessToUserMemory guard;
-    auto src = copy_from_user((char*) a0);
-    if (!src)
-      return src;
-
-    auto tgt = copy_from_user((char*) a1);
-    if (!tgt)
-      return tgt;
-
-    auto fsty = copy_from_user((char*) a2);
-    if (!fsty)
-      return fsty;
-
-    auto ret = mount(src->get(), tgt->get(), fsty->get(), a3);
-    return ret;
-  }
-  default:
-    printk("unknown syscall: %d\n", a7);
-    return -1;
-  }
+  if (f->node->type == inode::CharDevice)
+    return -EINVAL;
+  
+  f->seek(a1, whence);
+  return 0;
 }
+
+HANDLE(read, fd, buf, len) {
+  auto file = pcb->ftbl[a0];
+  if (!file)
+    return -ENOENT;
+
+  char *buf = new char[a2];
+  auto ret = file->read(buf, a2);
+  copy_to_user((void *) a1, buf, a2);
+  return ret;
+}
+
+HANDLE(write, fd, but, len) {
+  auto file = pcb->ftbl[a0];
+  if (!file)
+    return -ENOENT;
+
+  auto buf = copy_from_user((void*) a1, a2);
+  if (!buf)
+    return -EFAULT;
+  auto ret = file->write(buf->get(), a2);
+  return ret;
+}
+
+HANDLE(openat, dirfd, path, flags, mode) {
+  // mode will be ignored when not creating file, as expected.
+  auto path = copy_from_user((char *) a1);
+  if (!path)
+    return -EFAULT;
+  if ((*path)[0] != '/') { // Relative. Deal with it later.
+    return -EBADF;
+  }
+  auto ret = pcb->open_file(path->get(), a2, a3);
+  return ret;
+}
+
+HANDLE(close, fd) {
+  return pcb->close_file(a0);
+}
+
+HANDLE(brk, addr) {
+  return pcb->brk(a0);
+}
+
+HANDLE(dup, fd) {
+  if (!pcb->ftbl.count(a0))
+    return -EBADF;
+  return pcb->ftbl.allocate(pcb->ftbl[a0]);
+}
+
+HANDLE(getpid) {
+  return pcb->pid;
+}
+
+HANDLE(clone) {
+  return fork();
+}
+
+HANDLE(execve, path, argv, envp) {
+  EnableAccessToUserMemory guard;
+  auto path = copy_from_user((char *) a0);
+  auto argv = copy_from_user((char **) a1);
+  auto envp = copy_from_user((char **) a2);
+  if (!path || !argv || !envp)
+    return -EFAULT;
+  return exec(path->get(), argv->get(), envp->get());
+}
+
+HANDLE(exit, ret) {
+  os::terminate(pcb, a0);
+  return 0;
+}
+
+HANDLE(fcntl, fd, ty, args) {
+  return fcntl(a0, a1, a2);
+}
+
+HANDLE(getdents64, fd, dirents, cnt) {
+  if (!pcb->ftbl.count(a0))
+    return -EBADF;
+  auto file = pcb->ftbl[a0];
+  auto items = file->node->list();
+  
+  char *pos = (char *) a1;
+  for (const auto &item : items) {
+    constexpr unsigned nameoff = offsetof(linux_dirent64, name);
+    unsigned short len = nameoff + item.name.size() + 2;
+    if (va_t(pos) - a1 + len >= va_t(a2))
+      return -EINVAL;
+
+    unsigned char type = inode::as_dt(item.ty);
+    linux_dirent64 entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len, .type = type };
+    copy_to_user(pos, &entry, nameoff);
+    copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1);
+    pos += len;
+  }
+  return va_t(pos) - a1;
+}
+
+HANDLE(getppid) {
+  return pcb->parent->pid;
+}
+
+HANDLE(mount, src, tgt, fsty, flags, data) {
+  // Ignore the data for now.
+  auto src = copy_from_user((char*) a0);
+  if (!src)
+    return src;
+
+  auto tgt = copy_from_user((char*) a1);
+  if (!tgt)
+    return tgt;
+
+  auto fsty = copy_from_user((char*) a2);
+  if (!fsty)
+    return fsty;
+
+  auto ret = mount(src->get(), tgt->get(), fsty->get(), a3);
+  return ret;
+}
+
+HANDLE(chroot, path) {
+  auto path = copy_from_user((char *) a0);
+  if (!path)
+    return path;
+
+  auto dentry = pcb->vfs->lookup(path->get(), /*lastsym=*/ false);
+  printk("lookup: %s\n", path->get());
+  if (!dentry)
+    return dentry;
+  printk("dentry name: %s, mnt = %p\n", (*dentry)->name.c_str(), (*dentry)->mnt);
+  auto mnt = (*dentry)->mnt;
+  if (!mnt)
+    return -EINVAL;
+  return pcb->vfs->chroot(mnt);
+}
+
+SYSHANDLE_END
 
 }
 

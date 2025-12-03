@@ -6,6 +6,7 @@
 #include "../mem/vma.h"
 #include "../mem/kalloc.h"
 #include "../utils/stl/optional.h"
+#include "../fs/initramfs.h"
 
 namespace os {
 
@@ -56,7 +57,7 @@ public:
   void clear();
   int count(int fd) { return open.count(fd); }
   
-  file *&operator[](int x) { return open[x]; }
+  file *operator[](int x) { return open.count(x) ? open[x] : nullptr; }
   void set_desc(int fd, fddesc desc) { this->desc[fd] = desc; }
   optional<fddesc> get_desc(int fd) { return desc.count(fd) ? optional(desc[fd]) : nullopt; }
   
@@ -81,6 +82,7 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   ctxframe ctx;           // System call progress, for resuming blocking syscalls.
   os::intrusive_list<pcb_t> children;
   int uid, gid, euid, suid;
+  class vfs *vfs;
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
@@ -148,6 +150,9 @@ pcb_t *make_kprocess(T fptr) {
   pcb->gid = pcb->uid = 0; // root
   // We aren't lazy-allocating here.
   pcb->usp = (va_t) vmalloc<16>(16_kb);
+  pcb->vfs = new vfs;
+  pcb->vfs->root = initramfs->root;
+  pcb->vfs->base = initramfs->root->belong;
   init(pcb);
   return pcb;
 }

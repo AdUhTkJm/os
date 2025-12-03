@@ -9,6 +9,7 @@ namespace os {
 static_storage<hashmap<int, pcb_t*>> pid_map_s;
 
 int process_file_table::allocate(file *f, int fd) {
+  f->ref();
   // A file descriptor number is specified.
   if (fd != -1) {
     deallocate(fd);
@@ -22,7 +23,6 @@ int process_file_table::allocate(file *f, int fd) {
     if (!open.count(i)) {
       open[i] = f;
       desc[fd] = 0;
-      f->ref();
       return i;
     }
   }
@@ -37,9 +37,9 @@ void process_file_table::deallocate(int fd) {
 }
 
 void process_file_table::clear() {
-  for (auto [_, f] : open) {
+  for (auto [fd, f] : open)
     f->close();
-  }
+  open.clear();
 }
 
 void pcb_t::clear() {
@@ -47,6 +47,7 @@ void pcb_t::clear() {
   pt_root = __kernel_pt_root;
   ftbl.clear();
   status = Zombie;
+  vfs->drop();
   clear_vma();
 }
 
@@ -172,7 +173,7 @@ void init(pcb_t *pcb) {
 
   // Open stdin, stdout and stderr.
   // Note they are different files, but point to the same place.
-  auto console = vfs->lookup("/dev/console");
+  auto console = pcb->vfs->lookup("/dev/console");
   if (!console)
     panic("no console!");
   pcb->ftbl.allocate(new file((*console)->node, O_RDONLY), 0); // stdin
@@ -271,6 +272,8 @@ int fork() {
   child->euid = pcb->euid;
   child->suid = pcb->euid;
   child->gid = pcb->gid;
+  child->vfs = pcb->vfs;
+  child->vfs->ref();
   scheduler.add(child);
   return child->pid;
 }
@@ -308,12 +311,14 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   printk("file opened: fd = %d\n", fd);
   if (auto ret = load_elf(pcb->ftbl[fd], pcb); ret != 0) {
     printk("error: %d\n", ret);
-    pcb->close_file(fd);
     // This process is in a bad state now. We must terminate it.
     // We cannot call clear() because that would double-free the root.
+    //
+    // Moreover, note that fd isn't opened so shouldn't be closed.
     pcb->ftbl.clear();
     pcb->status = Zombie;
     pcb->clear_vma();
+    pcb->vfs->drop();
     scheduler.erase(pcb);
     return ret;
   }

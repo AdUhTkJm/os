@@ -4,6 +4,7 @@
 #include "../utils/libc.h"
 #include "../mem/ptable.h"
 #include "../proc/elf.h"
+#include "../proc/schedule.h"
 
 namespace {
 
@@ -21,6 +22,8 @@ size_t as_int(const char *p) {
 }
 
 namespace os {
+
+class initramfs *initramfs;
 
 size_t initramfs_inode::read(size_t offset, void *buf, size_t len, int) {
   ssize_t l = min(long(sz) - long(offset), long(len));
@@ -75,11 +78,15 @@ void mount_initramfs() {
   initrd_start = (char *) as_va((read_int(pstart) * 1ul << 32) + read_int((char*) pstart + 4));
   
   // Initialize the initramfs and register it in vfs.
-  fs *initramfs = new (os::permanent) class initramfs;
+  initramfs = new (os::permanent) class initramfs;
   auto *dentry = initramfs->root;
   inode *root = dentry->node;
-  vfs.construct(dentry);
-  vfs->mount(dentry, dentry);
+  auto pcb = scheduler.active;
+  pcb->vfs = new class vfs;
+  pcb->vfs->ref();
+  vfs::mount(dentry, dentry);
+  pcb->vfs->base = dentry->belong;
+  dentry->belong->parent = dentry->belong;
   
   for (auto *cpio = (cpio_newc_header_t *) initrd_start;;) {
     if (strncmp(cpio->magic, "070701", 6) != 0)

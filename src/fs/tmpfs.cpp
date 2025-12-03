@@ -43,6 +43,7 @@ int tmpfs_inode::unlink(const string &name) {
   if (!children.count(name))
     return -ENOENT;
 
+  vfs::invalidate(this, name);
   auto node = children[name];
   node->unlinked();
 
@@ -66,16 +67,17 @@ inode *tmpfs_inode::lookup(const string &name) {
 tmpfs::tmpfs(int uid, int gid): uid(uid), gid(gid) {
   auto node = get();
   node->type = inode::Dir;
-  root = new dentry("tmp", node);
+  root = new dentry("tmp", node, nullptr);
 }
 
 static_storage<class tmpfs> tmpfs;
 
 void mount_tmp() {
   tmpfs.construct(0, 0);
-  auto mountpoint = vfs->lookup("/tmp");
+  auto pcb = scheduler.active;
+  auto mountpoint = pcb->vfs->lookup("/tmp");
   assert(mountpoint);
-  vfs->mount(*mountpoint, tmpfs->root);
+  vfs::mount(*mountpoint, tmpfs->root);
 }
 
 expected<fs*> tmp_creator(const char*) {

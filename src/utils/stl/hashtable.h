@@ -86,6 +86,7 @@ public:
   void reserve(size_t len);
   bool contains(const K& key);
   int count(const K& key) { return contains(key); }
+  void clear();
 
   V &operator[](const K &key);
 
@@ -221,6 +222,13 @@ V &hashmap<K, V, Hash, Eq>::operator[](const K &key) {
     return (*insert(key, V())).second;
 
   return find_slot(key)->value;
+}
+
+template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
+void hashmap<K, V, Hash, Eq>::clear() {
+  delete[] table;
+  table = new (safe) entry[cap = 16];
+  sz = 0;
 }
 
 }

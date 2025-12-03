@@ -49,6 +49,10 @@ reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a7) {
   return syscall(a0, a1, a2, 0, 0, 0, 0, a7);
 }
 
+reg_t syscall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a7) {
+  return syscall(a0, a1, a2, a3, 0, 0, 0, a7);
+}
+
 unsigned strlen(const char *s) {
   unsigned result = 0;
   while (*s++)
@@ -197,20 +201,25 @@ int printf(const char *fmt, ...) {
 }
 
 extern "C" void _start() {
-  // mount
+  // Mount ext2.
   int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
-  printf("mnt ret = %d\n", ret);
+  (void) ret;
 
   int pid = syscall(clone);
   if (pid == 0) {
     // Expand heap.
     unsigned long p = syscall(0, brk);
-    printf("brk = %p\n", p);
-    unsigned long newend = syscall(p + 4096, brk);
-    printf("brk = %p\n", newend);
+    syscall(p + 4096, brk);
 
-    // execve
-    syscall((reg_t) "/mnt/root/bin/sh", 0, 0, execve);
+    // Move mount.
+    syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, 8192, mount);
+    syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, 8192, mount);
+
+    // Switch root to ext2.
+    syscall((reg_t) "/mnt", chroot);
+    
+    // Execute the shell.
+    syscall((reg_t) "/bin/sh", 0, 0, execve);
 
     printf("unreachable\n");
   }

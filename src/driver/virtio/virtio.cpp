@@ -302,7 +302,7 @@ void probe() {
     return WalkResult::Continue;
   });
 
-  auto dentry = vfs->lookup("/dev");
+  auto dentry = scheduler.active->vfs->lookup("/dev");
   if (!dentry)
     panic("virtio: cannot find /dev");
   auto devnode = dyn_cast<devroot>((*dentry)->node);

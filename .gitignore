@@ -5,3 +5,4 @@ compile_commands.json
 qemu.log
 testsuite
 busybox
+scripts/rootfs

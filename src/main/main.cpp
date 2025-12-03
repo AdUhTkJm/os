@@ -83,7 +83,9 @@ void main_high() {
   
   os::init_bitmap_kalloc();
 
-  os::mount_initramfs(); // Constructs vfs.
+  // Initialize global vfs structure.
+  vfs::init();
+  os::mount_initramfs();
   os::plic::init();
   os::mount_dev();
   os::mount_tmp();
@@ -91,8 +93,8 @@ void main_high() {
   os::virtio::probe();
 
   // Register known, mountable fs'es.
-  vfs->record("ext2", ext2_creator);
-  vfs->record("tmp", tmp_creator);
+  vfs::record("ext2", ext2_creator);
+  vfs::record("tmp", tmp_creator);
   
   // Create an idle kernel process.
   scheduler.init();
@@ -100,17 +102,19 @@ void main_high() {
   scheduler.add(k_idle);
 
   // Start the init user process.
-  file *init = vfs->open("/init", O_RDONLY);
+  pcb_t *pcb = new (os::permanent) pcb_t;
+  pcb->vfs = boot_pcb->vfs;
+  pcb->vfs->ref();
+  file *init = pcb->vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
-  pcb_t *pcb = new (os::permanent) pcb_t;
   pcb->pid = nextpid();
   pcb->uid = pcb->gid = pcb->euid = pcb->suid = 0;
   if (load_elf(init, pcb) != 0)
     panic("load_elf: cannot load /init");
   os::init(pcb);
   scheduler.add(pcb);
-  vfs->close(init);
+  pcb->vfs->close(init);
 
   // Enable timer.
   sbi_set_timer(rv_rdtime() + 3000000);

@@ -10,6 +10,8 @@
 #include "stl/bitmap.h"
 #include "stl/list.h"
 
+#include "../lock/lock.h"
+
 extern "C" [[noreturn]] void panic(const char *);
 
 namespace os {
@@ -20,6 +22,8 @@ private:
   alignas(T) char storage[sizeof(T)];
   bool init;
 public:
+  spinlock lock;
+
   T &operator*() {
     return *(T*) storage;
   }

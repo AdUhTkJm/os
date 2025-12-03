@@ -40,6 +40,34 @@
 #define DT_SOCK 12
 #define DT_WHT	14
 
+#define MS_RDONLY	1 /* Readonly. */
+#define MS_NOSUID	2 /* Ignore suid and sgid bits.  */
+#define MS_NODEV  4 /* Disallow access to device special files.  */
+#define MS_NOEXEC	8 /* Disallow program execution.  */
+#define MS_SYNCHRONOUS 16 /* Writes are synced at once.  */
+#define MS_REMOUNT  32 /* Alter flags of a mounted FS.  */
+#define MS_MANDLOCK	64 /* Allow mandatory locks on an FS.  */
+#define MS_DIRSYNC	128  /* Directory modifications are synchronous.  */
+#define MS_NOSYMFOLLOW 256 /* Do not follow symlinks.  */
+#define MS_NOATIME	1024 /* Do not update access times.  */
+#define MS_NODIRATIME	2048 /* Do not update directory access times.  */
+#define MS_BIND	 4096 /* Bind directory at different place.  */
+#define MS_MOVE	 8192
+#define MS_REC	16384
+#define MS_SILENT	32768
+#define MS_POSIXACL	(1 << 16) /* VFS does not apply the umask.  */
+#define MS_UNBINDABLE	(1 << 17)
+#define MS_PRIVATE	(1 << 18)
+#define MS_SLAVE	(1 << 19)
+#define MS_SHARED	(1 << 20)
+#define MS_RELATIME	(1 << 21)
+#define MS_KERNMOUNT	(1 << 22)
+#define MS_I_VERSION	(1 << 23)
+#define MS_STRICTATIME	(1 << 24)
+#define MS_LAZYTIME	(1 << 25)
+#define MS_ACTIVE	(1 << 30)
+#define MS_NOUSER	(1 << 31)
+
 namespace os {
 
 class inode;
@@ -81,7 +109,7 @@ public:
   size_t read(void *buf, size_t len);
   size_t write(const void *buf, size_t len);
   size_t seek(long pos, whence whence); // Returns the old offset.
-  result close();
+  void close() { drop(); }
 };
 
 class inode {
@@ -149,39 +177,37 @@ public:
   }
 };
 
-// Directory entry, as a cache.
-// This does not own an inode and will not change the node's refcnt.
-class dentry {
-public:
-  dentry *parent;
-  string name;
-  inode *node;
-  class fs *fs;
-
-  dentry(const string &name, inode *node, dentry *parent = nullptr):
-    parent(parent), name(name), node(node), fs(node->fs) {}
-};
-
+class dentry;
 class vfs {
-  struct mount {
+private:
+  atomic<unsigned> refcnt;
+
+  // The way to create a new `fs` structure from the opaque `source`.
+  // This is limited by the way of system call; we can't use templates.
+  static static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> creators;
+  static spinlock mountlock;
+  // TODO: make it an LRU cache.
+  static static_storage<os::hashmap<pair<inode*, string>, dentry*>> dcache;
+
+  expected<dentry *> lookup_impl(const string &path, bool lastsym, int depth);
+public:
+  struct mount_t : intrusive_list_node<mount_t> {
     // The path in the host filesystem.
     dentry *host;
     // The root of the mounted filesystem.
     dentry *root;
-  };
-
-  os::vector<struct mount> mounts;
+    // The parent mount.
+    mount_t *parent;
+    // The submounts.
+    intrusive_list<mount_t> children;
+    int flags;
+  } *base;
   dentry *root = nullptr;
-  // TODO: make it an LRU cache.
-  os::hashmap<pair<inode*, string>, dentry*> dcache;
-  // The way to create a new `fs` structure from the opaque `source`.
-  // This is limited by the way of system call; we can't use templates.
-  os::hashmap<string, expected<fs*>(*)(const char *)> creators;
 
-  dentry *check_mount(dentry *cur);
-  expected<dentry *> lookup_impl(const string &path, bool lastsym, int depth);
-public:
-  vfs(dentry *root): root(root) { }
+  // Don't copy refcnt.
+  vfs() {}
+  vfs(const vfs &other): base(other.base), root(other.root) {}
+  vfs &operator=(const vfs &other) { base = other.base; root = other.root; return *this; }
 
   // Returns the (optional) entry and an error code.
   // If `lastsym` is set to false, the last component will not be resolved when it is a symlink.
@@ -190,12 +216,22 @@ public:
   file *open(const string &path, int flags);
   void close(file *f);
 
-  void mount(dentry *host, dentry *root);
-  bool mounted(dentry *host) { return check_mount(host) != nullptr; }
+  // These change global filesystem topology.
+  static void mount(dentry *host, dentry *root, int flags = 0);
+  static int move_mount(dentry *source, dentry *target);
+  int chroot(mount_t *mnt);
+
+  static void invalidate(inode *node, const string &name);
+
+  void ref() { refcnt++; }
+  void drop() { if (--refcnt) delete this; }
 
   // Constructs a new in-memory `fs` structure according to the given fs.
   expected<fs*> get(const string &fsname, const char *src);
-  void record(const string &fsname, expected<fs*>(*creator)(const char*));
+  static void record(const string &fsname, expected<fs*>(*creator)(const char*));
+
+  // Initialize the global structure.
+  static void init();
 };
 
 class SeekGuard {
@@ -208,7 +244,20 @@ public:
   ~SeekGuard() { f->seek(pos, file::begin); }
 };
 
-extern os::static_storage<vfs> vfs;
+// Directory entry, as a cache.
+// This does not own an inode and will not change the node's refcnt.
+class dentry {
+public:
+  dentry *parent;
+  string name;
+  inode *node;
+
+  vfs::mount_t *belong;        // The mount that this dentry belongs to.
+  vfs::mount_t *mnt = nullptr; // The mount point here.
+  
+  dentry(const string &name, inode *node, vfs::mount_t *belong, dentry *parent = nullptr):
+    parent(parent), name(name), node(node), belong(belong) {}
+};
 
 string dirname(const string &path);
 string basename(const string &path);
