@@ -33,6 +33,7 @@ void vma_map_single(void *va, pte_t *root) {
     // This is a copy-on-write segment. We copy the original contents.
     memcpy((void *) as_va(pa), va_page, PAGE_SIZE);
     // Remap the memory and let it point to the new pa.
+    printk("cow: %p (flags %x)\n", va, flags);
     os::pmap(pa, va_page, MAP_4KB, flags | PTE_W, root);
     return;
   }
@@ -59,9 +60,11 @@ void vma_map_single(void *va, pte_t *root) {
   // We read from beginning.
   if (vma.begin / PAGE_SIZE == addr / PAGE_SIZE) {
     SeekGuard guard(vma.backup, vma.offset);
-    auto end = min(rounddown<4_kb>(vma.begin + PAGE_SIZE), vma.end);
+    auto page = rounddown<4_kb>(vma.begin);
+    auto end = min(page + PAGE_SIZE, vma.end);
     auto read = vma.backup->read((void *) vma.begin, end - vma.begin);
-    memset((char*) va_page + read, 0, PAGE_SIZE - read);
+    memset((char*) page, 0, vma.begin - page);
+    memset((char*) vma.begin + read, 0, end - vma.begin - read);
     return;
   }
 
@@ -69,7 +72,6 @@ void vma_map_single(void *va, pte_t *root) {
   SeekGuard guard(vma.backup, vma.offset + ((va_t) va_page - vma.begin));
   auto read = vma.backup->read(va_page, PAGE_SIZE);
   memset((char*) va_page + read, 0, PAGE_SIZE - read);
-  printk("va = %p (data = %p)\n", va, *(size_t *) va);
 }
 
 void vma_map_current(void *va) {

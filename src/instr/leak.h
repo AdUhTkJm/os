@@ -1,13 +1,11 @@
-// leak_tracker.h  (include in kernel build)
-#pragma once
+#ifndef LEAK_H
+#define LEAK_H
+
 #include <stdint.h>
 #include <stddef.h>
+#include "stack.h"
 
-#if defined(FUNC_INSTRUMENT) || defined(IN_VSCODE)
-
-// GCC will call them on function enter/exit when compiled with -finstrument-functions.
-extern "C" [[gnu::no_instrument_function]] void __cyg_profile_func_enter(void *this_fn, void *call_site);
-extern "C" [[gnu::no_instrument_function]] void __cyg_profile_func_exit(void *this_fn, void *call_site);
+#ifdef FUNC_INSTRUMENT
 
 namespace os::leak {
 
@@ -18,10 +16,6 @@ namespace os::leak {
 
 }
 
-namespace os {
-  
-[[gnu::no_instrument_function]] void stackdump();
-
-}
+#endif
 
 #endif

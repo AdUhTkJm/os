@@ -242,6 +242,9 @@ SYSHANDLE_END
 namespace os {
 
 [[gnu::no_instrument_function]] void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
+#ifdef FUNC_INSTRUMENT
+  os::stack::reset();
+#endif
   reg_t sstatus;
   CSRR(sstatus, sstatus);
   bool from_kernel = sstatus & (1 << 8);
@@ -281,13 +284,18 @@ namespace os {
       break;
     }
 #ifdef FUNC_INSTRUMENT
-    os::stackdump();
+    os::stack::dump();
 #endif
     panic("exception occurred in kernel");
   } else {
     switch (scause) {
     case 2: // Invalid instruction
       printk("exception (user): invalid instruction %p when executing %p\n", stval, sepc);
+      os::terminate(scheduler.active, -127);
+      break;
+    case 5:
+      printk("exception (user): load access fault at %p when executing %p\n", stval, sepc);
+      printk("page table flags: %x, physical address: %p\n", pte_flags(stval), to_pa(stval));
       os::terminate(scheduler.active, -127);
       break;
     case 8: { // System call
@@ -306,7 +314,8 @@ namespace os {
       vma_map_current((void*) stval);
       break;
     default:
-      printk("exception (user): scause = %ld, stval = %ld, sepc = %p\n", scause & 0xff, stval, sepc);
+      printk("exception (user): scause = %ld, stval = %p, sepc = %p\n", scause & 0xff, stval, sepc);
+      os::terminate(scheduler.active, -127);
     }
   }
 }

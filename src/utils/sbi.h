@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #ifdef __cplusplus
-#define C extern "C"
+#define C extern "C" [[gnu::no_instrument_function]] 
 #else
 #define C
 /* Inline behaves slightly different in C and C++. */

@@ -9,7 +9,7 @@
 #endif
 
 #ifdef __cplusplus
-#  define C extern "C"
+#  define C extern "C" [[gnu::no_instrument_function]] 
 // #include must be together for the build script to detect dependencies.
 #include "helper.hpp"
 #else

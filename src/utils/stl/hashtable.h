@@ -175,7 +175,7 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
       insert(key, value);
   }
 
-  delete old_table;
+  delete[] old_table;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
@@ -203,7 +203,7 @@ hashmap<K, V, Hash, Eq> &hashmap<K, V, Hash, Eq>::operator=(const hashmap &other
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 hashmap<K, V, Hash, Eq>::~hashmap() {
-  delete table;
+  delete[] table;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>

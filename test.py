@@ -19,7 +19,10 @@ parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
 parser.add_argument("--docs", action="store_true")
-parser.add_argument("-i", "--instrument", action="store_true")
+parser.add_argument("--no-instrument", action="store_true")
+parser.add_argument("--no-debug-memory", action="store_true")
+parser.add_argument("--no-bound-check", action="store_true")
+parser.add_argument("--no-protect-pt", action="store_true")
 
 args = parser.parse_args()
 
@@ -50,8 +53,24 @@ CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
 INITRAMFS_PATH = SRC_DIR / "fs/init"
 
-if args.instrument:
+if not args.no_instrument:
   flags = ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
+  CFLAGS.extend(flags)
+  CXXFLAGS.extend(flags)
+
+# debug_memory relies on instrumentation.
+if not args.no_debug_memory and not args.no_instrument:
+  flags = ["-DDEBUG_MEMORY"]
+  CFLAGS.extend(flags)
+  CXXFLAGS.extend(flags)
+
+if not args.no_bound_check:
+  flags = ["-DBOUND_CHECK"]
+  CFLAGS.extend(flags)
+  CXXFLAGS.extend(flags)
+
+if not args.no_protect_pt:
+  flags = ["-DPROTECT_PT"]
   CFLAGS.extend(flags)
   CXXFLAGS.extend(flags)
 
@@ -170,7 +189,6 @@ def archive_objects(obj_files, lib_path: Path):
   proc.check_call([AR, "rcs", str(lib_path)] + [str(obj) for obj in obj_files])
 
 def link_libraries(lib_files, output_binary):
-  print(f"Linking {output_binary}")
   result = proc.run([COMPILER] + LDFLAGS + ["-o", str(output_binary)] + ["-Wl,--start-group"] + [str(lib) for lib in lib_files] + ["-Wl,--end-group"], stderr=proc.PIPE)
   # Manually ignore a warning.
   for line in result.stderr.decode("utf-8").split("\n"):
@@ -206,6 +224,7 @@ def build_initramfs():
 def build():
   # Create a symbol table.
   proc.check_call(["scripts/symtbl.sh"])
+
   build_initramfs()
 
   global include_cache, include_hashes
@@ -272,6 +291,13 @@ def build():
     lib_files.append(lib_path)
 
   # Step 3: Link all .a's into final binary
+  link_libraries(lib_files, FINAL_BINARY)
+
+  # Recreate the symbol table, and recompile the file.
+  proc.check_call(["scripts/symtbl.sh"])
+  proc.check_call([COMPILER, *CXXFLAGS, "src/instr/leak.cpp", "-o", "build/instr/leak.o"])
+  proc.check_call([AR, "rcs", "build/instr/instr.o", *[f"build/instr/{x}" for x in os.listdir("build/instr")]])
+  print(f"Linking {FINAL_BINARY}")
   link_libraries(lib_files, FINAL_BINARY)
 
   save_include_cache({

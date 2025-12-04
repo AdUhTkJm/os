@@ -37,7 +37,6 @@ void scheduler_t::dispatch_impl() {
   ready.pop_front();
 
   active = next;
-  printk("dispatched pid %d\n", next->pid);
   trap_return_setup(next);
   
   // Now we switch to it.

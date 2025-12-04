@@ -10,8 +10,14 @@ using namespace os;
 constexpr size_t VM_SIZE = 1_gb;
 constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 
-// The entire physical memory space we're able to manage. (2 GB.)
+// The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
+// When we enable DEBUG_MEMORY, the meta becomes incredibly large.
+#ifdef DEBUG_MEMORY
+constexpr va_t MAX_PA_SIZE = 512_mb;
+#else
 constexpr va_t MAX_PA_SIZE = 2_gb;
+#endif
+
 // This amount of 4KB frames from __kernel_base will be managed by
 // the free-list allocator, mainly for bootstrapping.
 // All other regions will be managed by the bitmap allocator.
@@ -28,22 +34,27 @@ pa_t free_head;
 
 // No extra paddings.
 static_assert(sizeof(frame_t) == PAGE_SIZE);
+
+// 1 for occupied, 0 for free.
 os::bitmap<VM_SIZE / PAGE_SIZE> vmmap;
 os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
 
 uintptr_t physbegin, physend;
 
-// 1 for occupied, 0 for free.
-#ifndef IN_VSCODE
 struct pframe_meta {
+#ifdef DEBUG_MEMORY
+  void *alloc_pc;
+  stack::shadow_stack stack;
+#endif
   unsigned char refcnt;
-} meta[MAX_PA_SIZE / PAGE_SIZE];
+};
+
+#ifndef IN_VSCODE
+pframe_meta meta[MAX_PA_SIZE / PAGE_SIZE];
 #else
 // This is mainly for VSCode performance reasons.
 // An array of length 4194304 will have dramatic performance drop.
-struct pframe_meta {
-  unsigned char refcnt;
-} meta[1];
+pframe_meta meta[1];
 #endif
 bool pminit;
 
@@ -165,52 +176,70 @@ void mark_reserved() {
 
 namespace os {
 
+void pincref(pa_t p) {
+  meta[p / PAGE_SIZE].refcnt++;
+}
+
 pa_t pframe() {
   if (!free_head && !pminit)
     panic("out of memory");
-  // Free-list part.
+
+  size_t pa;
   if (free_head) {
-    pa_t pa = free_head;
+    // Free-list part.
+    pa = free_head;
     frame_t *head = (frame_t *) as_va(free_head);
     free_head = (pa_t) head->next;
-    meta[pa / PAGE_SIZE].refcnt++;
-    return pa;
+  } else {
+    // Bitmap part.
+    static int pm_from = 0;
+    size_t index = find_consecutive(pmmap, 1, pm_from);
+    if (index == -1ul)
+      panic("out of memory");
+
+    pmmap[index] = 1;
+    pm_from = index + 1;
+    pa = index * PAGE_SIZE + physbegin;
   }
 
-  // Bitmap part.
-  static int pm_from = 0;
-  size_t index = find_consecutive(pmmap, 1, pm_from);
-  if (index == -1ul)
-    panic("out of memory");
-
-  pmmap[index] = 1;
-  pm_from++;
-  meta[index].refcnt++;
-  return index * PAGE_SIZE + physbegin;
-}
-
-void pincref(pa_t p) {
-  meta[p / PAGE_SIZE].refcnt++;
+  auto pos = pa / PAGE_SIZE;
+  meta[pos].refcnt++;
+#ifdef DEBUG_MEMORY
+  meta[pos].alloc_pc = __builtin_return_address(0);
+  os::stack::copy(&meta[pos].stack);
+#endif
+  return pa;
 }
 
 void pfree(pa_t p) {
   if (!p)
     return;
   
-  if (--meta[p / PAGE_SIZE].refcnt > 0)
+  auto pos = p / PAGE_SIZE;
+#ifdef DEBUG_MEMORY
+  if (meta[pos].refcnt == 0) {
+    printk("%p double-freed (previous allocation %p).\n", p, meta[pos].alloc_pc);
+    os::stack::dump(meta[pos].stack);
+    panic("memory: pfree");
+  }
+#endif
+  
+  if (--meta[pos].refcnt > 0)
     return;
 
   // This region is managed by free list allocator.
   const auto end = (pa_t) __kernel_end - KERNEL_OFFSET;
-  if (p >= end && p <= end + FREE_LIST_SIZE * PAGE_SIZE) {
+  if (p >= end && p < end + FREE_LIST_SIZE * PAGE_SIZE) {
     auto *frame = (frame_t *) as_va(p);
     frame->next = free_head;
     free_head = to_pa(frame);
+    return;
   }
 
   // This is managed by the bitmap allocator.
   auto base = (uintptr_t) p;
-  pmmap[base / PAGE_SIZE] = 0;
+  auto index = (base - physbegin) / PAGE_SIZE;
+  pmmap[index] = 0;
 }
 
 pa_t pmalloc(int pagecnt) {

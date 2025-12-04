@@ -15,6 +15,8 @@ pa_t pframe();
 void pfree(pa_t p);
 // Increase the page's reference count by 1.
 void pincref(pa_t p);
+// Decreases the page's reference count by 1.
+void drop(pa_t p);
 
 // Gives a consecutive chunk of physical memory.
 pa_t pmalloc(int pagecnt);

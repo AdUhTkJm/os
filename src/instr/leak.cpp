@@ -2,20 +2,18 @@
 #include "leak.h"
 #include "../lock/lock.h"
 
+#ifdef FUNC_INSTRUMENT
+
 // Config.
 #define MAX_THREADS 1
-#define SHADOW_DEPTH 32
 #define NBUCKETS 4096
 #define MAX_RECORDS 16384
 
+using namespace os::stack;
+
 namespace {
 
-struct shadow_stack {
-  void *frames[SHADOW_DEPTH];
-  int top;
-};
-
-static shadow_stack stack;
+shadow_stack stack;
 
 struct alloc_record {
   void *ptr;
@@ -26,8 +24,8 @@ struct alloc_record {
   bool used;
 };
 
-static alloc_record pool[MAX_RECORDS];
-static alloc_record *alloc_table[NBUCKETS];
+alloc_record pool[MAX_RECORDS];
+alloc_record *alloc_table[NBUCKETS];
 os::spinlock table_lock;
 
 // We're implementing a basic hash table.
@@ -67,7 +65,43 @@ const Symbol symbols[] = {
 
 constexpr size_t symcnt = sizeof(symbols) / sizeof(Symbol);
 
-const char* lookup_symbol(uintptr_t pc) {
+}
+
+extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
+  if (stack.top < SHADOW_DEPTH)
+    stack.frames[stack.top++] = this_fn;
+}
+
+extern "C" void __cyg_profile_func_exit(void *, void *) {
+  if (stack.top > 0)
+    stack.top--;
+}
+
+namespace os::stack {
+
+void dump() {
+  printk("Stack dump:\n");
+  for (int i = ::stack.top - 1; i >= 0; i--) {
+    printk("  #%d: %p (%s)\n", i, ::stack.frames[i], lookup_symbol((uintptr_t) ::stack.frames[i]));
+  }
+}
+
+void dump(const shadow_stack &stack) {
+  printk("Stack dump:\n");
+  for (int i = stack.top - 1; i >= 0; i--) {
+    printk("  #%d: %p (%s)\n", i, stack.frames[i], lookup_symbol((uintptr_t) stack.frames[i]));
+  }
+}
+
+void reset() {
+  ::stack.top = 0;
+}
+
+void copy(shadow_stack *stack) {
+  memcpy(stack, &::stack, sizeof(shadow_stack));
+}
+
+const char* lookup_symbol(unsigned long pc) {
   if (symcnt == 0 || pc >= symbols[symcnt - 1].addr)
     return "<unknown>";
 
@@ -89,27 +123,6 @@ const char* lookup_symbol(uintptr_t pc) {
 
 }
 
-extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
-  if (stack.top < SHADOW_DEPTH)
-    stack.frames[stack.top++] = this_fn;
-}
-
-extern "C" void __cyg_profile_func_exit(void *, void *) {
-  if (stack.top > 0)
-    stack.top--;
-}
-
-namespace os {
-
-void stackdump() {
-  printk("Stack dump:\n");
-  for (int i = stack.top - 1; i >= 0; i--) {
-    printk("  #%d: %p (%s)\n", i, stack.frames[i], lookup_symbol((uintptr_t) stack.frames[i]));
-  }
-}
-
-}
-
 namespace os::leak {
 
 void record_alloc(void *ptr, size_t size) {
@@ -117,9 +130,9 @@ void record_alloc(void *ptr, size_t size) {
 
   // Snapshot the shadow stack.
   void *frames[SHADOW_DEPTH];
-  int depth = os::min(SHADOW_DEPTH, stack.top);
+  int depth = os::min(SHADOW_DEPTH, ::stack.top);
   for (int i = 0; i < depth; ++i)
-    frames[i] = stack.frames[i];
+    frames[i] = ::stack.frames[i];
 
   table_lock.acquire();
   alloc_record *r = pool_alloc();
@@ -178,3 +191,5 @@ void dump() {
 }
 
 }
+
+#endif

@@ -62,6 +62,8 @@ void main_high() {
   memset(__bss_begin, 0, __bss_end - __bss_begin);
   auto pt_root = (pte_t *) as_va((pa_t) 0x80201000);
   punmap((va_t) 0x80000000ul, MAP_1GB, pt_root);
+  // Clear the half of user-space to make sure there won't be bad entries when copying.
+  memset(pt_root, 0, PAGE_SIZE / 2);
 
   // Set up free list allocator.
   os::init_freelist_kalloc();
