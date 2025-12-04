@@ -165,7 +165,7 @@ HANDLE(execve, path, argv, envp) {
   auto envp = copy_from_user((char **) a2);
   if (!path || !argv || !envp)
     return -EFAULT;
-  return exec(path->get(), argv->get(), envp->get());
+  return exec(path->get(), *argv, *envp);
 }
 
 HANDLE(exit, ret) {
@@ -227,10 +227,8 @@ HANDLE(chroot, path) {
     return path;
 
   auto dentry = pcb->vfs->lookup(path->get(), /*lastsym=*/ false);
-  printk("lookup: %s\n", path->get());
   if (!dentry)
     return dentry;
-  printk("dentry name: %s, mnt = %p\n", (*dentry)->name.c_str(), (*dentry)->mnt);
   auto mnt = (*dentry)->mnt;
   if (!mnt)
     return -EINVAL;
@@ -304,8 +302,7 @@ namespace os {
     case 13: // Load page fault
       vma_map_current((void*) stval);
       break;
-    case 15: // Store page fault
-      // This also work on COW pages. No special care needed.
+    case 15: // Store page fault. This also work on COW pages; no special care needed.
       vma_map_current((void*) stval);
       break;
     default:

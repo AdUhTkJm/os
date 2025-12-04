@@ -212,8 +212,7 @@ expected<unique_ptr<char>> copy_from_user(void *usr, size_t len);
 // Copies a string.
 expected<unique_ptr<char>> copy_from_user(char *usr);
 // Copies a null-terminated list of strings.
-// Note the internal strings aren't copied.
-expected<unique_ptr<char*>> copy_from_user(char **usr);
+expected<vector<string>> copy_from_user(char **usr);
 
 }
 #endif

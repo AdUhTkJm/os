@@ -223,8 +223,6 @@ void trap_return_setup(pcb_t *pcb) {
 
   pcb->status = Running;
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
-  auto trap = (trapframe *) pcb->ksp;
-  trap->sepc = pcb->pc;
 }
 
 int fork() {
@@ -301,7 +299,12 @@ int fork() {
 | environment strings       |
 +---------------------------+
 */
-int exec(const string &path, char *const *argv, char *const *envp) {
+#define COPY_ENTRY(ty, val) \
+    entry.type = ty; \
+    entry.value = val; \
+    copy_to_user(usp -= sizeof(auxv_entry), &entry, sizeof(auxv_entry));
+
+int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
   auto pcb = scheduler.active;
   pt::free(pcb->pt_root);
   pcb->pt_root = __kernel_pt_root;
@@ -309,8 +312,9 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   
   int fd = pcb->open_file(path, O_RDONLY);
   printk("file opened: fd = %d\n", fd);
-  if (auto ret = load_elf(pcb->ftbl[fd], pcb); ret != 0) {
-    printk("error: %d\n", ret);
+  auto auxv = load_elf(pcb->ftbl[fd], pcb);
+  if (!auxv) {
+    printk("error: %d\n", auxv.error());
     // This process is in a bad state now. We must terminate it.
     // We cannot call clear() because that would double-free the root.
     //
@@ -320,7 +324,7 @@ int exec(const string &path, char *const *argv, char *const *envp) {
     pcb->clear_vma();
     pcb->vfs->drop();
     scheduler.erase(pcb);
-    return ret;
+    return auxv;
   }
   printk("elf loaded, pc = %p\n", pcb->pc);
   pcb->close_file(fd);
@@ -350,28 +354,60 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   char *usp = (char *) pcb->usp;
   os::vector<char*> argvp, envpp;
   // Copy the real contents of the strings.
-  for (char *const *p = envp; p && *p; p++) {
-    char *str = *p;
-    int len = strlen(str) + 1;
-    copy_to_user(usp -= len, str, len);
+  // Also copy the current path.
+  copy_to_user(usp -= (path.size() + 1), path.c_str(), path.size() + 1);
+  auto pathptr = usp;
+  for (auto &str : envp) {
+    int len = str.size() + 1;
+    copy_to_user(usp -= len, str.c_str(), len);
     envpp.push_back(usp);
   }
-  for (char *const *p = argv; p && *p; p++) {
-    char *str = *p;
-    int len = strlen(str) + 1;
-    copy_to_user(usp -= len, str, len);
+  for (auto &str : argv) {
+    int len = str.size() + 1;
+    copy_to_user(usp -= len, str.c_str(), len);
     argvp.push_back(usp);
+  }
+  
+  // Pad to 16-bytes.
+  usp = rounddown<16>(usp);
+
+  // Copy the AUXV entries.
+  // TODO: consider ELF32 as well. busybox is ELF64 so doesn't matter.
+  struct auxv_entry {
+    long type;
+    long value;
+  } entry;
+  
+  // Refer to https://elixir.bootlin.com/musl/v1.2.2/source/ldso/dlstart.c,
+  // as well as https://elixir.bootlin.com/musl/v1.2.2/source/ldso/dynlink.c.
+  if (auxv->used) {
+    // TODO: get real random source
+    char *random;
+    memcpy(random = usp -= 16, "aduhtkjm_1234567", 16);
+
+    COPY_ENTRY(AT_NULL, 0);
+    COPY_ENTRY(AT_EXECFN, (va_t) pathptr);
+    COPY_ENTRY(AT_ENTRY, auxv->entry);
+    COPY_ENTRY(AT_PHENT, sizeof(program_header));
+    COPY_ENTRY(AT_PHDR, auxv->phdr);
+    COPY_ENTRY(AT_PHNUM, auxv->phnum);
+    COPY_ENTRY(AT_BASE, interp_pos);
+    COPY_ENTRY(AT_PAGESZ, PAGE_SIZE);
+    COPY_ENTRY(AT_UID, pcb->uid);
+    COPY_ENTRY(AT_GID, pcb->gid);
+    COPY_ENTRY(AT_EUID, pcb->euid);
+    COPY_ENTRY(AT_EGID, pcb->egid);
+    COPY_ENTRY(AT_RANDOM, (va_t) random);
+    COPY_ENTRY(AT_SECURE, 0);
   }
 
   // Copy the pointers.
   // We copy envp pointers first, so that argv will be closer to stack top,
   // as required by the ABI.
   constexpr size_t ptrsz = sizeof(uintptr_t);
-  constexpr size_t argcsz = sizeof(int);
 
   // Insert a null pointer at the end of envp.
   uintptr_t nulptr = 0;
-  printk("ptable root = %p\n", pcb->pt_root);
   copy_to_user(usp -= ptrsz, &nulptr, ptrsz);
   for (int i = int(envpp.size()) - 1; i >= 0; i--) {
     auto ptr = envpp[i];
@@ -385,10 +421,12 @@ int exec(const string &path, char *const *argv, char *const *envp) {
     copy_to_user(usp -= ptrsz, &ptr, ptrsz);
   }
 
-  int argc = argvp.size();
-  copy_to_user(usp -= argcsz, &argc, argcsz);
-  // Maintain stack alignment.
-  pcb->usp = (va_t) rounddown<16>(usp);
+  size_t argc = argvp.size();
+  copy_to_user(usp -= ptrsz, &argc, ptrsz);
+  // We shouldn't maintain alignment; ld.so will do it for us.
+  pcb->usp = (va_t) usp;
+  if (!auxv->used)
+    pcb->usp = rounddown<16>(pcb->usp);
 
   // Set up trapframe.
   auto trap = (trapframe *) pcb->ksp;
@@ -397,6 +435,7 @@ int exec(const string &path, char *const *argv, char *const *envp) {
   printk("exec done, pc = %p, usp = %p\n", pcb->pc, pcb->usp);
   return 0;
 }
+#undef COPY_ENTRY
 
 void copy_to_user(void *usr, const void *ker, size_t len) {
   EnableAccessToUserMemory enable;
@@ -420,8 +459,11 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
   vma_map_current(usr);
   vector<char> vec;
   char *p = usr;
-  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++)
+  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
     vec.push_back(*p);
+  }
+  if (!*p)
+    goto finish;
 
   for (int i = 0; i < 4096; i++) {
     vma_map_current(p);
@@ -429,10 +471,10 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
       vec.push_back(*p);
     
     if (!*p)
-      goto outer;
+      goto finish;
   }
   return -E2BIG;
-outer:
+finish:
   int sz = vec.size();
   char *buf = new char[1 + sz];
   memcpy(buf, vec.data(), sz);
@@ -440,32 +482,42 @@ outer:
   return expected<unique_ptr<char>>(buf);
 }
 
-expected<unique_ptr<char*>> copy_from_user(char **usr) {
+expected<vector<string>> copy_from_user(char **usr) {
   if (!usr)
-    return expected<unique_ptr<char*>>(nullptr);
+    return vector<string>();
   
   EnableAccessToUserMemory enable;
   vma_map_current(usr);
-  vector<char*> vec;
+  vector<string> vec;
   char **p = usr;
-  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++)
-    vec.push_back(*p);
+  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
+    auto str = copy_from_user(*p);
+    if (!str)
+      return str.error();
+    vec.push_back(str->get());
+  }
+  if (!*p)
+    goto finish;
 
   for (int i = 0; i < 4096; i++) {
     vma_map_current(p);
-    for (char **finish = p + PAGE_SIZE; p < finish && *p; p++)
-      vec.push_back(*p);
+    for (char **finish = p + PAGE_SIZE; p < finish && *p; p++) {
+      auto str = copy_from_user(*p);
+      if (!str)
+        return str.error();
+      vec.push_back(str->get());
+    }
     
     if (!*p)
-      goto outer;
+      goto finish;
   }
   return -E2BIG;
-outer:
+finish:
   int sz = vec.size();
   char **buf = new char*[1 + sz];
   memcpy(buf, vec.data(), sz);
   buf[sz] = 0;
-  return expected<unique_ptr<char*>>(buf);
+  return vec;
 }
 
 }

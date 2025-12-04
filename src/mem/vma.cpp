@@ -43,12 +43,11 @@ void vma_map_single(void *va, pte_t *root) {
   // Copy the contents if it exists.
   if (!vma.backup)
     return;
-  int sstatus; CSRR(sstatus, sstatus);
 
   // Take back the write permission on exit.
   const auto &finisher = [&]() {
     if (!(flags & PTE_W))
-      os::pmap(pa, va_page, MAP_4KB, flags, root);
+      os::pmap(pa, va_page, MAP_4KB, flags & ~PTE_W, root);
   };
   struct takeback {
     decltype(finisher) f;
@@ -61,21 +60,16 @@ void vma_map_single(void *va, pte_t *root) {
   if (vma.begin / PAGE_SIZE == addr / PAGE_SIZE) {
     SeekGuard guard(vma.backup, vma.offset);
     auto end = min(rounddown<4_kb>(vma.begin + PAGE_SIZE), vma.end);
-    vma.backup->read((void *) vma.begin, end - vma.begin);
-    return;
-  }
-
-  // `end` and this address are in the same page.
-  // We shouldn't read past the end.
-  if (vma.end / PAGE_SIZE == addr / PAGE_SIZE) {
-    SeekGuard guard(vma.backup, vma.offset + ((va_t) va_page - vma.begin));
-    vma.backup->read(va_page, vma.end - (va_t) va_page);
+    auto read = vma.backup->read((void *) vma.begin, end - vma.begin);
+    memset((char*) va_page + read, 0, PAGE_SIZE - read);
     return;
   }
 
   // This is in the middle. We read the entire page.
   SeekGuard guard(vma.backup, vma.offset + ((va_t) va_page - vma.begin));
-  vma.backup->read(va_page, PAGE_SIZE);
+  auto read = vma.backup->read(va_page, PAGE_SIZE);
+  memset((char*) va_page + read, 0, PAGE_SIZE - read);
+  printk("va = %p (data = %p)\n", va, *(size_t *) va);
 }
 
 void vma_map_current(void *va) {

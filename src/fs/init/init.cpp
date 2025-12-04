@@ -219,7 +219,8 @@ extern "C" void _start() {
     syscall((reg_t) "/mnt", chroot);
     
     // Execute the shell.
-    syscall((reg_t) "/bin/sh", 0, 0, execve);
+    const char *argv[] = { "/bin/echo", "Hello World!\n", nullptr };
+    syscall((reg_t) "/bin/echo", (reg_t) argv, 0, execve);
 
     printf("unreachable\n");
   }

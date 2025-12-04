@@ -110,7 +110,7 @@ void main_high() {
     panic("initramfs: cannot find /init");
   pcb->pid = nextpid();
   pcb->uid = pcb->gid = pcb->euid = pcb->suid = 0;
-  if (load_elf(init, pcb) != 0)
+  if (!load_elf(init, pcb).valid())
     panic("load_elf: cannot load /init");
   os::init(pcb);
   scheduler.add(pcb);

@@ -35,14 +35,9 @@ void scheduler_t::dispatch_impl() {
     next = n;
   }
   ready.pop_front();
-  // printk("dispatched pid %d\n", next->pid);
 
-  CSRR(sepc, active->pc);
   active = next;
-  // If this is inside a system call, then we must advance pc by 4.
-  // This is because we're returning to the next instruction.
-  if (next->ctx_valid)
-    next->pc += 4;
+  printk("dispatched pid %d\n", next->pid);
   trap_return_setup(next);
   
   // Now we switch to it.

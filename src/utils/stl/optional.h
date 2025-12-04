@@ -135,6 +135,7 @@ public:
   bool valid() const { return has_value; }
   bool operator!() const { return !has_value; }
   operator E() const { return errcode; }
+  E error() const { return errcode; }
   explicit operator bool() const { return has_value; }
 };
 

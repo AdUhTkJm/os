@@ -50,6 +50,9 @@ public:
   iterator begin() { return dat; }
   iterator end() { return dat + sz; }
 
+  const_iterator begin() const { return dat; }
+  const_iterator end() const { return dat + sz; }
+
   void push_back(const V &v) {
     if (sz == cap)
       reserve(max(16ul, cap * 2));

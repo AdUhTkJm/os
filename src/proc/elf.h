@@ -39,7 +39,7 @@ Also see https://gist.github.com/x0nu11byt3/bcb35c3de461e5fb66173071a2379779.
 
 namespace os {
 
-struct elf_header_t {
+struct elf_header {
   char e_ident[16];
   uint16_t e_type;
   uint16_t e_machine;
@@ -66,8 +66,29 @@ struct elf_header_t {
 #define PT_TLS		7		/* Thread-local storage segment */
 #define	PT_NUM		8		/* Number of defined types */
 
+// Taken from Linux header.
+#define AT_NULL		0		/* End of vector */
+#define AT_IGNORE	1		/* Entry should be ignored */
+#define AT_EXECFD	2		/* File descriptor of program */
+#define AT_PHDR		3		/* Program headers for program */
+#define AT_PHENT	4		/* Size of program header entry */
+#define AT_PHNUM	5		/* Number of program headers */
+#define AT_PAGESZ	6		/* System page size */
+#define AT_BASE		7		/* Base address of interpreter */
+#define AT_FLAGS	8		/* Flags */
+#define AT_ENTRY	9		/* Entry point of program */
+#define AT_NOTELF	10		/* Program is not ELF */
+#define AT_UID		11		/* Real uid */
+#define AT_EUID		12		/* Effective uid */
+#define AT_GID		13		/* Real gid */
+#define AT_EGID		14		/* Effective gid */
+#define AT_CLKTCK	17		/* Frequency of times() */
+#define	AT_SECURE	23		/* Boolean, was exec setuid-like?  */
+#define AT_RANDOM	25		/* Address of 16 random bytes.  */
+#define AT_EXECFN	31		/* Filename of executable.  */
+
 /* ELF Program header. */
-struct elf_phdr_t {
+struct program_header {
   uint32_t p_type;
   uint32_t p_flags;
   uint64_t p_offset;
@@ -78,8 +99,18 @@ struct elf_phdr_t {
   uint64_t p_align;
 };
 
+constexpr auto interp_pos = 0x10'0000'0000ul;
+
+// Necessary information for dynamic linker.
+struct auxv {
+  va_t phdr;
+  size_t phnum;
+  va_t entry;
+  bool used;
+};
+
 // Changes the content of `pcb` by parsing the ELF file.
-int load_elf(file *content, pcb_t *pcb);
+expected<auxv> load_elf(file *content, pcb_t *pcb);
 
 }
 

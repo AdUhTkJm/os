@@ -72,16 +72,17 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   pa_t pt_root;           // Root page table entry.
   va_t ksp;               // Kernel stack for this process.
   va_t usp;               // User stack top for this process.
-  va_t pc;                // Program counter.
+  va_t pc;                // Program counter. Note this is the initial pc; other pc's are recorded in trap->sepc.
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
   int ret;                // Return value.
-  bool ctx_valid = false; // Whether the syscall progress is valid. See below.
+  bool ctx_valid = false; // Whether the syscall context is valid. See below.
   bool kproc = false;     // Whether this is a kernel process.
   process_file_table ftbl;// Process file table.
-  ctxframe ctx;           // System call progress, for resuming blocking syscalls.
+  ctxframe ctx;           // System call context, for resuming blocking syscalls.
   os::intrusive_list<pcb_t> children;
-  int uid, gid, euid, suid;
+  int uid, euid, suid;
+  int gid, egid, sgid;
   class vfs *vfs;
 
   // Note this is not the destructor. PCB will need to release its resources
@@ -131,7 +132,7 @@ int nextpid();
 int fork();
 
 // Replaces a process image.
-int exec(const string &path, char *const *argv, char *const *envp);
+int exec(const string &path, const vector<string> &argv, const vector<string> &envp);
 
 // Even though it does not return for now, it will eventually look as if it "returned".
 extern "C" void context_save(void *ctx, bool *ctx_valid);
