@@ -6,7 +6,7 @@
 
 namespace os {
 
-static_storage<hashmap<int, pcb_t*>> pid_map_s;
+static_storage<hashmap<int, pcb_t*>> pidmap;
 
 int process_file_table::allocate(file *f, int fd) {
   f->ref();
@@ -153,12 +153,12 @@ void init_user(pcb_t *pcb) {
   // Allocate a heap. It is initially quite small.
   pcb->vma.push_back({
     .begin = heap_start, .end = heap_start + PAGE_SIZE, .prot = PROT_READ | PROT_WRITE,
-    .flags = MAP_PRIVATE | VMA_IS_HEAP, .backup = nullptr, .offset = 0
+    .flags = MAP_PRIVATE | VMA_IS_HEAP, .backup = nullptr, .offset = 0, .maxread = 0
   });
   // Allocate a stack. Note it grows downwards.
   pcb->vma.push_back({
     .begin = stack_top - user_stack_size, .end = pcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
-    .flags = MAP_PRIVATE | VMA_IS_STACK, .backup = nullptr, .offset = 0
+    .flags = MAP_PRIVATE | VMA_IS_STACK, .backup = nullptr, .offset = 0, .maxread = 0
   });
 }
 
@@ -188,7 +188,7 @@ void terminate(pcb_t *pcb, int ret) {
   pcb->ret = ret;
   // Change all child processes to children of init.
   // It is expected that init will recycle them later.
-  auto init = (*pid_map_s)[1];
+  auto init = (*pidmap)[1];
   for (auto child : pcb->children) {
     child.parent = init;
     init->children.push_back(&child);
@@ -225,6 +225,34 @@ void trap_return_setup(pcb_t *pcb) {
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
 }
 
+// Taken from <sched.h>
+
+#define CLONE_VM      0x00000100 /* Set if VM shared between processes.  */
+#define CLONE_FS      0x00000200 /* Set if fs info shared between processes.  */
+#define CLONE_FILES   0x00000400 /* Set if open files shared between processes.  */
+#define CLONE_SIGHAND 0x00000800 /* Set if signal handlers shared.  */
+#define CLONE_PIDFD   0x00001000 /* Set if a pidfd should be placed in parent.  */
+#define CLONE_PTRACE  0x00002000 /* Set if tracing continues on the child.  */
+#define CLONE_VFORK   0x00004000 /* Set if the parent wants the child to wake it up on mm_release.  */
+#define CLONE_PARENT  0x00008000 /* Set if we want to have the same parent as the cloner.  */
+#define CLONE_THREAD  0x00010000 /* Set to add to same thread group.  */
+#define CLONE_NEWNS   0x00020000 /* Set to create new namespace.  */
+#define CLONE_SYSVSEM 0x00040000 /* Set to shared SVID SEM_UNDO semantics.  */
+#define CLONE_SETTLS  0x00080000 /* Set TLS info.  */
+#define CLONE_PARENT_SETTID 0x00100000 /* Store TID in userlevel buffer before MM copy.  */
+#define CLONE_CHILD_CLEARTID 0x00200000 /* Register exit futex and memory location to clear.  */
+#define CLONE_DETACHED 0x00400000 /* Create clone detached.  */
+#define CLONE_UNTRACED 0x00800000 /* Set if the tracing process can't force CLONE_PTRACE on this clone.  */
+#define CLONE_CHILD_SETTID 0x01000000 /* Store TID in userlevel buffer in the child.  */
+#define CLONE_NEWCGROUP    0x02000000	/* New cgroup namespace.  */
+#define CLONE_NEWUTS	0x04000000	/* New utsname group.  */
+#define CLONE_NEWIPC	0x08000000	/* New ipcs.  */
+#define CLONE_NEWUSER	0x10000000	/* New user namespace.  */
+#define CLONE_NEWPID	0x20000000	/* New pid namespace.  */
+#define CLONE_NEWNET	0x40000000	/* New network namespace.  */
+#define CLONE_IO	0x80000000	/* Clone I/O context.  */
+#define CLONE_NEWTIME	0x00000080  /* New time namespace */
+
 int fork() {
   auto pcb = scheduler.active;
   auto child = new pcb_t;
@@ -241,6 +269,7 @@ int fork() {
   child->pc = trap->sepc;
 
   child->pid = nextpid();
+  (*pidmap)[child->pid] = child;
   
   TLBRefreshGuard guard;
 
@@ -308,10 +337,14 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   auto pcb = scheduler.active;
   pt::free(pcb->pt_root);
   pcb->pt_root = __kernel_pt_root;
+  // Reset the page table root immediately.
+  {
+    TLBRefreshGuard guard;
+    CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
+  }
   pcb->clear_vma();
   
   int fd = pcb->open_file(path, O_RDONLY);
-  printk("file opened: fd = %d\n", fd);
   auto auxv = load_elf(pcb->ftbl[fd], pcb);
   if (!auxv) {
     printk("error: %d\n", auxv.error());
@@ -326,7 +359,6 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     scheduler.erase(pcb);
     return auxv;
   }
-  printk("elf loaded, pc = %p\n", pcb->pc);
   pcb->close_file(fd);
 
   // Reallocate the page table and shallow-copy the higher half of kernel space.
@@ -371,6 +403,13 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   // Pad to 16-bytes.
   usp = rounddown<16>(usp);
 
+  // If there is an even number of argv, envp and auxv combined together, then we'll
+  // need an extra 8-byte padding here to counter for the argc.
+  constexpr int AUXV_SIZE = 14;
+  if ((argv.size() + envp.size() + AUXV_SIZE) % 2 == 0) {
+    usp -= 8;
+  }
+
   // Copy the AUXV entries.
   // TODO: consider ELF32 as well. busybox is ELF64 so doesn't matter.
   struct auxv_entry {
@@ -385,6 +424,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     char *random;
     memcpy(random = usp -= 16, "aduhtkjm_1234567", 16);
 
+    static_assert(AUXV_SIZE % 2 == 0);
     COPY_ENTRY(AT_NULL, 0);
     COPY_ENTRY(AT_EXECFN, (va_t) pathptr);
     COPY_ENTRY(AT_ENTRY, auxv->entry);
@@ -425,14 +465,15 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   copy_to_user(usp -= ptrsz, &argc, ptrsz);
   // We shouldn't maintain alignment; ld.so will do it for us.
   pcb->usp = (va_t) usp;
-  if (!auxv->used)
-    pcb->usp = rounddown<16>(pcb->usp);
+  assert(pcb->usp % 16 == 0);
 
   // Set up trapframe.
   auto trap = (trapframe *) pcb->ksp;
   trap->sepc = pcb->pc;
   trap->sscratch = pcb->usp;
   printk("exec done, pc = %p, usp = %p\n", pcb->pc, pcb->usp);
+  hexdump((void*) pcb->usp, stack_top - pcb->usp);
+  trap->regs[2] = stack_top - user_stack_size; // TLS
   return 0;
 }
 #undef COPY_ENTRY

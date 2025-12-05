@@ -23,6 +23,8 @@ parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
 parser.add_argument("--no-bound-check", action="store_true")
 parser.add_argument("--no-protect-pt", action="store_true")
+parser.add_argument("--no-debug", action="store_true")
+parser.add_argument("--gdb", action="store_true")
 
 args = parser.parse_args()
 
@@ -52,6 +54,9 @@ LDFLAGS = ["-T", "link.ld", "-nostdlib", "-mcmodel=medany"]
 CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
 INITRAMFS_PATH = SRC_DIR / "fs/init"
+SPECIAL_FLAGS = {
+  "src/interrupt/interrupt.cpp": ["-Wno-unused-variable"]
+}
 
 if not args.no_instrument:
   flags = ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
@@ -71,6 +76,11 @@ if not args.no_bound_check:
 
 if not args.no_protect_pt:
   flags = ["-DPROTECT_PT"]
+  CFLAGS.extend(flags)
+  CXXFLAGS.extend(flags)
+
+if not args.no_debug:
+  flags = ["-g"]
   CFLAGS.extend(flags)
   CXXFLAGS.extend(flags)
 
@@ -170,7 +180,11 @@ flagmap = {
 }
 
 def get_flags(path: Path):
-  return flagmap[path.suffix]
+  flags = flagmap[path.suffix]
+  path = str(path)
+  if path in SPECIAL_FLAGS:
+    flags.extend(SPECIAL_FLAGS[path])
+  return flags
 
 def compile_file(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,11 +336,12 @@ if __name__ == "__main__":
   if args.run:
     # -d in_asm -D qemu.log
     asm = "-d in_asm -D qemu.log" if args.assembly else ""
+    gdb = "-S -s" if args.gdb else ""
     proc.check_call(
 f"""
-~/.local/qemu/build/qemu-system-riscv64 -s -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel \
+~/.local/qemu/build/qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 -drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
-{asm}
+{asm} {gdb}
 """
   ,shell=True)

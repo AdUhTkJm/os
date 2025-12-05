@@ -14,11 +14,18 @@ void vma_map_single(void *va, pte_t *root) {
   size_t i = 0;
   for (; i < pcb->vma.size(); i++) {
     const auto &vma = pcb->vma[i];
-    if (addr <= vma.end && addr >= vma.begin)
+    if (addr < vma.end && addr >= vma.begin)
       break;
   }
   if (i == pcb->vma.size()) {
-    printk("Unmapped address %p. Terminate the process.\n", va);
+    // Examine scause to determine.
+    int scause; CSRR(scause, scause);
+    auto type = scause == 12 ? "execute" : scause == 13 ? "load" : scause == 15 ? "store" : nullptr;
+    if (type) {
+      va_t sepc = ((trapframe *) pcb->ksp)->sepc;
+      printk("Unmapped address %p on %s, requested from %p. Terminate the process.\n", va, type, sepc);
+    } else
+      printk("Unmapped address %p. Terminate the process.\n", va);
     os::terminate(pcb, -127);
     return;
   }
@@ -33,7 +40,6 @@ void vma_map_single(void *va, pte_t *root) {
     // This is a copy-on-write segment. We copy the original contents.
     memcpy((void *) as_va(pa), va_page, PAGE_SIZE);
     // Remap the memory and let it point to the new pa.
-    printk("cow: %p (flags %x)\n", va, flags);
     os::pmap(pa, va_page, MAP_4KB, flags | PTE_W, root);
     return;
   }
@@ -60,18 +66,27 @@ void vma_map_single(void *va, pte_t *root) {
   // We read from beginning.
   if (vma.begin / PAGE_SIZE == addr / PAGE_SIZE) {
     SeekGuard guard(vma.backup, vma.offset);
-    auto page = rounddown<4_kb>(vma.begin);
-    auto end = min(page + PAGE_SIZE, vma.end);
-    auto read = vma.backup->read((void *) vma.begin, end - vma.begin);
-    memset((char*) page, 0, vma.begin - page);
-    memset((char*) vma.begin + read, 0, end - vma.begin - read);
+    auto off = vma.begin % PAGE_SIZE;
+    auto read = min(PAGE_SIZE - off, vma.maxread);
+    vma.backup->read((void *) vma.begin, read);
+    memset((char*) rounddown<4_kb>(vma.begin), 0, off);
+    memset((char*) vma.begin + read, 0, PAGE_SIZE - off - read);
     return;
   }
 
   // This is in the middle. We read the entire page.
-  SeekGuard guard(vma.backup, vma.offset + ((va_t) va_page - vma.begin));
-  auto read = vma.backup->read(va_page, PAGE_SIZE);
-  memset((char*) va_page + read, 0, PAGE_SIZE - read);
+  va_t off = (va_t) va_page - vma.begin;
+
+  // Note that these are unsigned, so a direct subtraction and then max(..., 0) won't work.
+  size_t read = off < vma.maxread ? min((size_t) PAGE_SIZE, vma.maxread - off) : 0;
+
+  if (read > 0) {
+    SeekGuard guard(vma.backup, vma.offset + off);
+    vma.backup->read((void *) va_page, read);
+  }
+
+  if (read < PAGE_SIZE)
+    memset((char*) va_page + read, 0, PAGE_SIZE - read);
 }
 
 void vma_map_current(void *va) {

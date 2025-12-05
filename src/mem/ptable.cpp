@@ -14,7 +14,7 @@ namespace {
   using namespace os::pt;
 
   pa_t copy_impl(pte_t *pt, int lvl) {
-    pa_t root = pframe();
+    pa_t root = pframe_zeroed();
     unsigned end = 512;
     if (lvl == 2) {
       // Only recurse into the bottom 256 entries.
@@ -83,7 +83,7 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   // Note that in kernel, physical address and virtual address is identical.
   // So no worries about which we use.
   if (!is_valid(pte_l2)) {
-    pa_pt_l1 = pframe();
+    pa_pt_l1 = pframe_zeroed();
     // Populate the L2 page table entry. It should record physical address
     // of the L1 page table.
     pte_l2 = (PA_AS_PPN(pa_pt_l1) << PTE_PPN_OFFSET) | PTE_V;
@@ -92,7 +92,7 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   // When the table is valid but is leaf, split it.
   if (is_leaf(pte_l2)) {
     // Still, create a L1 page table.
-    pa_pt_l1 = pframe();
+    pa_pt_l1 = pframe_zeroed();
 
     // Fill the L1 table, such that the map doesn't change.
     auto *pt_l1 = (pte_t *) as_va(pa_pt_l1);
@@ -129,12 +129,12 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   pa_t pa_pt_l0 = 0;
 
   if (!is_valid(pte_l1)) {
-    pa_pt_l0 = pframe();
+    pa_pt_l0 = pframe_zeroed();
     pte_l1 = (PA_AS_PPN(pa_pt_l0) << PTE_PPN_OFFSET) | PTE_V;
   }
 
   if (is_leaf(pte_l1)) {
-    pa_pt_l0 = pframe();
+    pa_pt_l0 = pframe_zeroed();
     auto orig_pa = PTE_TO_PA(pte_l1);
     auto *pt_l0 = (pte_t *) as_va(pa_pt_l0);
     for (int i = 0; i < 512; i++) {

@@ -9,6 +9,8 @@ namespace os {
 
 // Gives a free 4KB physical frame.
 pa_t pframe();
+// Gives a zeroed free 4KB physical frame.
+pa_t pframe_zeroed();
 // Frees a 4KB physical frame.
 // If the reference count is greater than 1, does not free,
 // but decreases the reference count.

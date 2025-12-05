@@ -6,3 +6,4 @@ qemu.log
 testsuite
 busybox
 scripts/rootfs
+mnt

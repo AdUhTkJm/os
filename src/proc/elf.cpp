@@ -44,7 +44,7 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma_t vma = {
         .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
-        .backup = ldso, .offset = phdr.p_offset
+        .backup = ldso, .offset = phdr.p_offset, .maxread = phdr.p_filesz
       };
       ldso->ref();
       pcb->vma.push_back(vma);
@@ -96,7 +96,7 @@ expected<auxv> load_elf(file *content, pcb_t *pcb) {
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma_t vma = {
         .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
-        .backup = content, .offset = phdr.p_offset
+        .backup = content, .offset = phdr.p_offset, .maxread = phdr.p_filesz
       };
       content->ref();
       pcb->vma.push_back(vma);

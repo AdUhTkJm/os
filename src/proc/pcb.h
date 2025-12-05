@@ -84,6 +84,9 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   int uid, euid, suid;
   int gid, egid, sgid;
   class vfs *vfs;
+  void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
+  int tid;                // Thread id. (TODO: separation)
+  void *tls;              // Thread-local storage.
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
@@ -113,7 +116,7 @@ Note for ksp:
 
 static_assert(offsetof(pcb_t, ksp) == 32);
 
-extern static_storage<hashmap<int, pcb_t*>> pid_map_s;
+extern static_storage<hashmap<int, pcb_t*>> pidmap;
 
 void init(pcb_t *pcb);
 void init_user(pcb_t *pcb);

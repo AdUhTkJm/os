@@ -24,7 +24,7 @@ struct vma_t {
   uintptr_t begin, end;
   int prot, flags;
   file *backup;
-  size_t offset;
+  size_t offset, maxread;
 };
 
 // Map according to the current process's VMA.

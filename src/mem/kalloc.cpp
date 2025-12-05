@@ -211,6 +211,12 @@ pa_t pframe() {
   return pa;
 }
 
+pa_t pframe_zeroed() {
+  auto p = pframe();
+  memset((void *) as_va(p), 0, PAGE_SIZE);
+  return p;
+}
+
 void pfree(pa_t p) {
   if (!p)
     return;
