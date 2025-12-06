@@ -81,7 +81,9 @@ void mount_initramfs() {
   initramfs = new (os::permanent) class initramfs;
   auto *dentry = initramfs->root;
   inode *root = dentry->node;
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  
   pcb->vfs = new class vfs;
   pcb->vfs->ref();
   vfs::mount(dentry, dentry);

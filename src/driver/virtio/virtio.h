@@ -156,7 +156,7 @@ class block_device : public os::block_device {
   void *queue; // Either queue or queue_legacy.
   int descid;
   bool legacy;
-  os::list<pcb_t*> wait;
+  os::list<tcb_t*> wait;
 
   struct request {
     uint32_t type;

@@ -34,10 +34,10 @@ static_storage<os::hashmap<int, block_device*>> intr;
   if (!(status & 1))
     return;
   mmwr(dev->base + INTERRUPT_ACK, status);
-  auto pcb = dev->wait.front();
+  auto tcb = dev->wait.front();
   dev->wait.pop_front();
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
-  scheduler.wakeup(pcb);
+  scheduler.wakeup(tcb);
 }
 
 // Configures the underlying device.
@@ -207,7 +207,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
 
   // Tell device that a new request has come.
   __asm__ volatile("fence" ::: "memory");
-  wait.push_back(scheduler.active);
+  wait.push_back(active());
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   suspend();
 
@@ -302,7 +302,7 @@ void probe() {
     return WalkResult::Continue;
   });
 
-  auto dentry = scheduler.active->vfs->lookup("/dev");
+  auto dentry = active()->pcb->vfs->lookup("/dev");
   if (!dentry)
     panic("virtio: cannot find /dev");
   auto devnode = dyn_cast<devroot>((*dentry)->node);

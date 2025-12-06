@@ -18,6 +18,7 @@ parser.add_argument("-r", "--run", action="store_true")
 parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
+parser.add_argument("-m", "--mount", action="store_true")
 parser.add_argument("--docs", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
@@ -327,6 +328,10 @@ if __name__ == "__main__":
   if args.docs:
     proc.check_call("cd docs && xelatex design.tex", shell=True)
     print("Docs built.")
+
+  if args.mount:
+    proc.run(f"sudo mount -o loop build/rootfs/rootfs.ext2 mnt", shell=True)
+    exit(0)
 
   build()
   if args.objdump:

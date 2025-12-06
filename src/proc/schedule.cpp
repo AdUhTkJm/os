@@ -3,11 +3,12 @@
 namespace os {
 
 scheduler_t scheduler;
+static_storage<tcb_t> boot_tcb;
 static_storage<pcb_t> boot_pcb;
 
-void scheduler_t::add(pcb_t *pcb) {
+void scheduler_t::add(tcb_t *tcb) {
   synchronized syn(*lock);
-  ready.push_back(pcb);
+  ready.push_back(tcb);
 }
 
 void scheduler_t::dispatch() {
@@ -22,12 +23,12 @@ void scheduler_t::dispatch_impl() {
   auto next = ready.begin();
   // This is the boot-time PCB. When scheduler is activated,
   // it's now useless.
-  [[unlikely]] if (next->pid == -1) {
+  [[unlikely]] if (next->pcb->pid == -1) {
     ready.pop_front();
     next = ready.begin();
   }
   // This is the idle PCB. Don't dispatch it if we have something else.
-  if (next->pid == 0 && ready.size() > 1) {
+  if (next->pcb->pid == 0 && ready.size() > 1) {
     ready.pop_front();
     auto n = ready.begin();
     // We can't push `next` back when it's in list.
@@ -53,7 +54,7 @@ void scheduler_t::dispatch_impl() {
   __builtin_unreachable();
 }
 
-void scheduler_t::erase(pcb_t *pcb) {
+void scheduler_t::erase(tcb_t *pcb) {
   synchronized syn(*lock);
   if (active == pcb) {
     // Now pcb is neither in ready nor in sleep.
@@ -75,13 +76,13 @@ void scheduler_t::yield(bool sleepy) {
   dispatch_impl();
 }
 
-void scheduler_t::wakeup(pcb_t *pcb) {
+void scheduler_t::wakeup(tcb_t *tcb) {
   synchronized syn(*lock);
-  pcb->status = Ready;
-  sleep.erase(pcb);
-  ready.push_back(pcb);
+  tcb->status = Ready;
+  sleep.erase(tcb);
+  ready.push_back(tcb);
   // Preempt the idle pcb immediately. Don't wait till timer fire.
-  if (active->pid == 0) {
+  if (active->pcb->pid == 0) {
     ready.push_back(active);
     active->status = Ready;
     dispatch_impl();

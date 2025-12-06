@@ -50,7 +50,7 @@ stvec_pos:
   # Load the ksp of the process.
   la sp, _ZN2os9schedulerE # os::scheduler
   ld sp, 48(sp)            # scheduler_t::active
-  ld sp, 32(sp)            # pcb_t::ksp
+  ld sp, 24(sp)            # tcb_t::ksp
 
   # Save registers to the kernel stack.
   sd ra, 0(sp)
@@ -99,7 +99,7 @@ __handler_end:
   # (The process might have changed.)
   la t0, _ZN2os9schedulerE
   ld t1, 48(t0)
-  ld sp, 32(t1)
+  ld sp, 24(t1)
 
   # Restore the registers.
   ld t0, 256(sp)

@@ -70,10 +70,12 @@ void main_high() {
 
   // Set up (boot-time) kernel stack.
   boot_pcb.construct();
-  RD(sp, boot_pcb->ksp);
+  boot_tcb.construct();
+  RD(sp, boot_tcb->ksp);
   boot_pcb->pid = -1; // This is not a valid process.
   boot_pcb->pt_root = 0x80201000;
-  scheduler.active = &boot_pcb;
+  boot_tcb->pcb = boot_pcb;
+  scheduler.active = &boot_tcb;
 
   onboot = false;
 
@@ -104,18 +106,24 @@ void main_high() {
   scheduler.add(k_idle);
 
   // Start the init user process.
+  pidmap.construct();
   pcb_t *pcb = new (os::permanent) pcb_t;
+  tcb_t *tcb = new (os::permanent) tcb_t;
+  tcb->pcb = pcb;
+
   pcb->vfs = boot_pcb->vfs;
   pcb->vfs->ref();
   file *init = pcb->vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
   pcb->pid = nextpid();
+  tcb->tid = pcb->nexttid();
+  (*pidmap)[pcb->pid] = pcb;
   pcb->uid = pcb->gid = pcb->euid = pcb->suid = 0;
-  if (!load_elf(init, pcb).valid())
+  if (!load_elf(init, tcb).valid())
     panic("load_elf: cannot load /init");
-  os::init(pcb);
-  scheduler.add(pcb);
+  os::init(tcb);
+  scheduler.add(tcb);
   pcb->vfs->close(init);
 
   // Enable timer.

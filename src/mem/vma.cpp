@@ -5,7 +5,8 @@ namespace os {
 
 void vma_map_single(void *va, pte_t *root) {
   EnableAccessToUserMemory enabler;
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
 
   va_t addr = (va_t) va;
   auto va_page = rounddown<4_kb>(va);
@@ -22,11 +23,11 @@ void vma_map_single(void *va, pte_t *root) {
     int scause; CSRR(scause, scause);
     auto type = scause == 12 ? "execute" : scause == 13 ? "load" : scause == 15 ? "store" : nullptr;
     if (type) {
-      va_t sepc = ((trapframe *) pcb->ksp)->sepc;
+      va_t sepc = ((trapframe *) tcb->ksp)->sepc;
       printk("Unmapped address %p on %s, requested from %p. Terminate the process.\n", va, type, sepc);
     } else
       printk("Unmapped address %p. Terminate the process.\n", va);
-    os::terminate(pcb, -127);
+    os::terminate(tcb, -127);
     return;
   }
   auto pa = os::pframe();

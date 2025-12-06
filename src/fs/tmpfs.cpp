@@ -30,10 +30,10 @@ int tmpfs_inode::create(const string &name, filetype ty, int mode) {
     return -ENOTDIR;
 
   auto node = cast<tmpfs_inode>(fs->get());
-  auto pcb = scheduler.active;
+  auto tcb = active();
   node->type = ty;
-  node->uid = pcb->uid;
-  node->gid = pcb->gid;
+  node->uid = tcb->pcb->uid;
+  node->gid = tcb->pcb->gid;
   node->mode = mode;
   children[name] = node;
   return 0;
@@ -74,14 +74,16 @@ static_storage<class tmpfs> tmpfs;
 
 void mount_tmp() {
   tmpfs.construct(0, 0);
-  auto pcb = scheduler.active;
-  auto mountpoint = pcb->vfs->lookup("/tmp");
+  auto tcb = active();
+  auto mountpoint = tcb->pcb->vfs->lookup("/tmp");
   assert(mountpoint);
   vfs::mount(*mountpoint, tmpfs->root);
 }
 
 expected<fs*> tmp_creator(const char*) {
-  pcb_t *pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
   return new class tmpfs(pcb->uid, pcb->gid);
 }
 

@@ -23,7 +23,7 @@ public:
 extern static_storage<class devfs> devfs;
 
 class console_inode : public inode_impl<console_inode> {
-  os::list<pcb_t *> wait;
+  os::list<tcb_t *> wait;
   spinlock lock;
 public:
   using inode_impl::inode_impl;

@@ -110,7 +110,7 @@ struct auxv {
 };
 
 // Changes the content of `pcb` by parsing the ELF file.
-expected<auxv> load_elf(file *content, pcb_t *pcb);
+expected<auxv> load_elf(file *content, tcb_t *pcb);
 
 }
 

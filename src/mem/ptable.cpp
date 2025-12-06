@@ -220,7 +220,7 @@ pte_t *pt_root() {
   [[unlikely]] if (onboot)
     return (pte_t *) as_va(__kernel_pt_root);
 
-  return (pte_t *) as_va(scheduler.active->pt_root);
+  return (pte_t *) as_va(active()->pcb->pt_root);
 }
 
 pa_t to_pa(va_t va, const pte_t *root) {

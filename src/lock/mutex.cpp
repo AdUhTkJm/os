@@ -6,7 +6,7 @@ namespace os {
 void mutex::acquire() {
   lock.acquire();
   if (pid == -1) {
-    pid = scheduler.active->pid;
+    pid = active()->pcb->pid;
     lock.release();
     return;
   }
@@ -26,7 +26,7 @@ void mutex::release() {
 
 void condvar::wait() {
   spin.acquire();
-  queue.push_back(scheduler.active);
+  queue.push_back(active());
   spin.release();
 
   // sie bit 1: disables all interrupt.

@@ -9,7 +9,7 @@ namespace os {
 class mutex {
   spinlock lock;
   int pid = -1;            // The pid of current lock owner.
-  os::vector<pcb_t*> wait; // All pids that wait on this lock.
+  os::vector<tcb_t*> wait; // All pids that wait on this lock.
 public:
   void acquire();
   void release();
@@ -18,7 +18,7 @@ public:
 class condvar {
   mutex &lock;
   spinlock spin;
-  os::vector<pcb_t*> queue;
+  os::vector<tcb_t*> queue;
 public:
   condvar(mutex &lock): lock(lock) {}
   void wait();

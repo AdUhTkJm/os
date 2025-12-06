@@ -10,12 +10,14 @@
 
 namespace os {
 
+#define __user
+
 // Near the highest address in the lower-half space.
 constexpr va_t stack_top = 0xf'f000'0000ul;
 constexpr size_t user_stack_size = 8_mb;
 constexpr size_t kstack_size = 8_kb;
 
-enum process_state {
+enum thread_state {
   Init, Running, Sleeping, Ready, Zombie, Dead
 };
 
@@ -66,27 +68,43 @@ public:
   iterator end() { return open.end(); }
 };
 
+struct pcb_t;
+struct tcb_t : os::intrusive_list_node<tcb_t> {
+  int tid;                // Thread id.
+  thread_state status;    // Thread status (running, sleeping etc.)
+  va_t ksp;               // Kernel stack for this thread.
+  va_t __user usp;        // User stack top for this thread.
+  va_t pc;                // Initial program counter (entry point) of this thread.
+  bool ctx_valid = false; // Whether the syscall/trap context is valid.
+  bool kthread = false;   // Whether this is a kernel thread.
+  ctxframe ctx;           // Context frame for blocking syscalls / context switch.
+  int ret;                // Thread exit value / return code.
+  void __user *tls;       // Thread-local storage pointer.
+
+  pcb_t *pcb;             // Parent process.
+
+  // This is the final deletion. This cannot be done in clear(), because it
+  // is called when this ksp is in use.
+  ~tcb_t() {
+    auto ksp_bottom = ksp + sizeof(trapframe) - kstack_size;
+    vfree((void*) ksp_bottom);
+  }
+};
+
 struct pcb_t : os::intrusive_list_node<pcb_t> {
-  int pid;                // Process id.
-  process_state status;   // Process status (running, sleeping etc.)
   pa_t pt_root;           // Root page table entry.
-  va_t ksp;               // Kernel stack for this process.
-  va_t usp;               // User stack top for this process.
-  va_t pc;                // Program counter. Note this is the initial pc; other pc's are recorded in trap->sepc.
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
-  int ret;                // Return value.
-  bool ctx_valid = false; // Whether the syscall context is valid. See below.
-  bool kproc = false;     // Whether this is a kernel process.
   process_file_table ftbl;// Process file table.
-  ctxframe ctx;           // System call context, for resuming blocking syscalls.
-  os::intrusive_list<pcb_t> children;
   int uid, euid, suid;
   int gid, egid, sgid;
+  int pid;                // Process id.
+  bool kproc;             // Kernel process.
+  os::intrusive_list<tcb_t> threads;
+  os::intrusive_list<pcb_t> children;
   class vfs *vfs;
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
-  int tid;                // Thread id. (TODO: separation)
-  void *tls;              // Thread-local storage.
+  int tidn = 0;
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
@@ -97,12 +115,11 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
 
   // Sets heap end. Returns the new end on success, and old end on failure.
   va_t brk(va_t addr);
-
-  // This is the final deletion. This cannot be done in clear(), because it
-  // is called when this ksp is in use.
-  ~pcb_t() {
-    auto ksp_bottom = ksp + sizeof(trapframe) - kstack_size;
-    vfree((void*) ksp_bottom);
+  
+  int nexttid() {
+    static spinlock lock;
+    synchronized syn(lock);
+    return ++tidn;
   }
 };
 /*
@@ -114,16 +131,16 @@ Note for ksp:
                                 |----------- ksp
 */
 
-static_assert(offsetof(pcb_t, ksp) == 32);
+static_assert(offsetof(tcb_t, ksp) == 24);
 
 extern static_storage<hashmap<int, pcb_t*>> pidmap;
 
-void init(pcb_t *pcb);
-void init_user(pcb_t *pcb);
-void terminate(pcb_t *pcb, int ret);
+void init(tcb_t *pcb);
+void init_user(tcb_t *pcb);
+void terminate(tcb_t *pcb, int ret);
 
 // Set up the returning from the trap handler.
-void trap_return_setup(pcb_t *pcb);
+void trap_return_setup(tcb_t *pcb);
 
 // Suspend the current system call.
 void suspend();
@@ -141,24 +158,27 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 extern "C" void context_save(void *ctx, bool *ctx_valid);
 extern "C" [[noreturn]] void context_restore(void *ctx);
 
-#define suspend() context_save(&scheduler.active->ctx, &scheduler.active->ctx_valid)
+#define suspend() context_save(&active()->ctx, &active()->ctx_valid)
 
 // Creates a kernel process.
 template<class T> requires (is_function_v<remove_pointer_t<T>>)
-pcb_t *make_kprocess(T fptr) {
+tcb_t *make_kprocess(T fptr) {
   pcb_t *pcb = new pcb_t;
-  pcb->status = Init;
-  pcb->pc = (va_t) fptr;
+  tcb_t *tcb = new tcb_t;
   pcb->pid = nextpid();
   pcb->kproc = true;
   pcb->gid = pcb->uid = 0; // root
   // We aren't lazy-allocating here.
-  pcb->usp = (va_t) vmalloc<16>(16_kb);
   pcb->vfs = new vfs;
   pcb->vfs->root = initramfs->root;
   pcb->vfs->base = initramfs->root->belong;
-  init(pcb);
-  return pcb;
+
+  tcb->status = Init;
+  tcb->pc = (va_t) fptr;
+  tcb->usp = (va_t) vmalloc<16>(16_kb);
+  tcb->pcb = pcb;
+  init(tcb);
+  return tcb;
 }
 
 void copy_to_user(void *usr, const void *ker, size_t len);

@@ -46,7 +46,6 @@ void pcb_t::clear() {
   pt::free(pt_root);
   pt_root = __kernel_pt_root;
   ftbl.clear();
-  status = Zombie;
   vfs->drop();
   clear_vma();
 }
@@ -130,7 +129,7 @@ va_t pcb_t::brk(va_t addr) {
     if (!(vma.flags & VMA_IS_HEAP))
       continue;
 
-    if (va < vma.end || va >= lowest)
+    if (va < vma.begin || va >= lowest)
       return vma.end;
     return vma.end = va;
   }
@@ -144,8 +143,9 @@ int nextpid() {
   return pid++;
 }
 
-void init_user(pcb_t *pcb) {
+void init_user(tcb_t *tcb) {
   va_t max = 0;
+  auto pcb = tcb->pcb;
   for (const auto &vma : pcb->vma)
     max = os::max(vma.end, max);
   va_t heap_start = os::roundup<PAGE_SIZE>(max);
@@ -157,15 +157,16 @@ void init_user(pcb_t *pcb) {
   });
   // Allocate a stack. Note it grows downwards.
   pcb->vma.push_back({
-    .begin = stack_top - user_stack_size, .end = pcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
+    .begin = stack_top - user_stack_size, .end = tcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE | VMA_IS_STACK, .backup = nullptr, .offset = 0, .maxread = 0
   });
 }
 
-void init(pcb_t *pcb) {
+void init(tcb_t *tcb) {
+  auto pcb = tcb->pcb;
   // Gives one physical page for the root page table and the kernel stack.
   pcb->pt_root = pframe();
-  pcb->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
+  tcb->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
 
   // Copy the kernel's level 2 root table.
   // We only need to shallow copy.
@@ -181,29 +182,33 @@ void init(pcb_t *pcb) {
   pcb->ftbl.allocate(new file((*console)->node, O_WRONLY), 2); // stderr
 }
 
-void terminate(pcb_t *pcb, int ret) {
+void terminate(tcb_t *tcb, int ret) {
   // This will dispatch.
-  scheduler.erase(pcb);
+  scheduler.erase(tcb);
+  auto pcb = tcb->pcb;
   pcb->clear();
-  pcb->ret = ret;
+  tcb->ret = ret;
   // Change all child processes to children of init.
   // It is expected that init will recycle them later.
   auto init = (*pidmap)[1];
+  if (!init)
+    panic("terminate: cannot find init");
   for (auto child : pcb->children) {
     child.parent = init;
     init->children.push_back(&child);
   }
 }
 
-static void first_time_setup(pcb_t *pcb) {
-  pcb->status = Running;
+static void first_time_setup(tcb_t *tcb) {
+  auto pcb = tcb->pcb;
+  tcb->status = Running;
   // Construct a trap frame on the kernel stack.
   // Note that stack grows downwards, so we self-decrement
   // and leave the space for it.
-  auto trap = (trapframe *) pcb->ksp;
-  trap->sepc = pcb->pc;
+  auto trap = (trapframe *) tcb->ksp;
+  trap->sepc = tcb->pc;
   // Let sp point to the user stack.
-  trap->sscratch = pcb->usp;
+  trap->sscratch = tcb->usp;
 
   int sstatus; CSRR(sstatus, sstatus);
   // User process with interrupt enabled.
@@ -215,14 +220,14 @@ static void first_time_setup(pcb_t *pcb) {
   CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
 }
 
-void trap_return_setup(pcb_t *pcb) {
-  [[unlikely]] if (pcb->status == Init) {
-    first_time_setup(pcb);
+void trap_return_setup(tcb_t *tcb) {
+  [[unlikely]] if (tcb->status == Init) {
+    first_time_setup(tcb);
     return;
   }
 
-  pcb->status = Running;
-  CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
+  tcb->status = Running;
+  CSRW(satp, SATP_MODE_SV39 | (tcb->pcb->pt_root >> 12));
 }
 
 // Taken from <sched.h>
@@ -254,21 +259,26 @@ void trap_return_setup(pcb_t *pcb) {
 #define CLONE_NEWTIME	0x00000080  /* New time namespace */
 
 int fork() {
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
   auto child = new pcb_t;
+  auto tchild = new tcb_t;
+  tchild->pcb = child;
   child->parent = pcb;
   pcb->children.push_back(child);
 
   // Allocate a new kernel stack.
-  child->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
-  memcpy((char *) child->ksp, (char *) pcb->ksp, sizeof(trapframe));
+  tchild->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
+  memcpy((char *) tchild->ksp, (char *) tcb->ksp, sizeof(trapframe));
 
   // Set the return value (a0) of child to zero.
-  auto trap = (trapframe *) child->ksp;
+  auto trap = (trapframe *) tchild->ksp;
   trap->regs[8] = 0;
-  child->pc = trap->sepc;
+  tchild->pc = trap->sepc;
 
   child->pid = nextpid();
+  tchild->tid = child->nexttid();
   (*pidmap)[child->pid] = child;
   
   TLBRefreshGuard guard;
@@ -292,7 +302,7 @@ int fork() {
     f->ref();
 
   // Copy various information from parent.
-  child->status = Ready;
+  tchild->status = Ready;
   child->vma = pcb->vma;
   child->kproc = pcb->kproc;
   child->uid = pcb->euid;
@@ -301,7 +311,7 @@ int fork() {
   child->gid = pcb->gid;
   child->vfs = pcb->vfs;
   child->vfs->ref();
-  scheduler.add(child);
+  scheduler.add(tchild);
   return child->pid;
 }
 
@@ -334,7 +344,8 @@ int fork() {
     copy_to_user(usp -= sizeof(auxv_entry), &entry, sizeof(auxv_entry));
 
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
   pt::free(pcb->pt_root);
   pcb->pt_root = __kernel_pt_root;
   // Reset the page table root immediately.
@@ -345,7 +356,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   pcb->clear_vma();
   
   int fd = pcb->open_file(path, O_RDONLY);
-  auto auxv = load_elf(pcb->ftbl[fd], pcb);
+  auto auxv = load_elf(pcb->ftbl[fd], tcb);
   if (!auxv) {
     printk("error: %d\n", auxv.error());
     // This process is in a bad state now. We must terminate it.
@@ -353,10 +364,9 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     //
     // Moreover, note that fd isn't opened so shouldn't be closed.
     pcb->ftbl.clear();
-    pcb->status = Zombie;
     pcb->clear_vma();
     pcb->vfs->drop();
-    scheduler.erase(pcb);
+    scheduler.erase(tcb);
     return auxv;
   }
   pcb->close_file(fd);
@@ -371,7 +381,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   }
 
-  pcb->status = Init;
+  tcb->status = Init;
 
   // Close files according to flags.
   os::vector<int> toclose;
@@ -383,7 +393,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   for (auto fd : toclose)
     pcb->ftbl.deallocate(fd);
 
-  char *usp = (char *) pcb->usp;
+  char *usp = (char *) tcb->usp;
   os::vector<char*> argvp, envpp;
   // Copy the real contents of the strings.
   // Also copy the current path.
@@ -405,8 +415,10 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
   // If there is an even number of argv, envp and auxv combined together, then we'll
   // need an extra 8-byte padding here to counter for the argc.
-  constexpr int AUXV_SIZE = 14;
-  if ((argv.size() + envp.size() + AUXV_SIZE) % 2 == 0) {
+  constexpr int AUXV_SIZE_DYNAMIC = 14;
+  constexpr int AUXV_SIZE_STATIC = 8;
+  const auto auxv_size = auxv->used ? AUXV_SIZE_DYNAMIC : AUXV_SIZE_STATIC;
+  if ((argv.size() + envp.size() + auxv_size) % 2 == 0) {
     usp -= 8;
   }
 
@@ -419,27 +431,33 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   
   // Refer to https://elixir.bootlin.com/musl/v1.2.2/source/ldso/dlstart.c,
   // as well as https://elixir.bootlin.com/musl/v1.2.2/source/ldso/dynlink.c.
-  if (auxv->used) {
-    // TODO: get real random source
-    char *random;
-    memcpy(random = usp -= 16, "aduhtkjm_1234567", 16);
+  //
+  // Note that CRT might need auxv entries as well, so we must include them
+  // even if we don't use AUXV.
+  
+  // TODO: get real random source
+  char *random;
+  memcpy(random = usp -= 16, "aduhtkjm_1234567", 16);
 
-    static_assert(AUXV_SIZE % 2 == 0);
-    COPY_ENTRY(AT_NULL, 0);
+  // Don't forget to change this when adding/removing entries!
+  static_assert(AUXV_SIZE_DYNAMIC == 14);
+  static_assert(AUXV_SIZE_STATIC == 8);
+  COPY_ENTRY(AT_NULL, 0);
+  if (auxv->used) {
     COPY_ENTRY(AT_EXECFN, (va_t) pathptr);
     COPY_ENTRY(AT_ENTRY, auxv->entry);
     COPY_ENTRY(AT_PHENT, sizeof(program_header));
     COPY_ENTRY(AT_PHDR, auxv->phdr);
     COPY_ENTRY(AT_PHNUM, auxv->phnum);
     COPY_ENTRY(AT_BASE, interp_pos);
-    COPY_ENTRY(AT_PAGESZ, PAGE_SIZE);
-    COPY_ENTRY(AT_UID, pcb->uid);
-    COPY_ENTRY(AT_GID, pcb->gid);
-    COPY_ENTRY(AT_EUID, pcb->euid);
-    COPY_ENTRY(AT_EGID, pcb->egid);
-    COPY_ENTRY(AT_RANDOM, (va_t) random);
-    COPY_ENTRY(AT_SECURE, 0);
   }
+  COPY_ENTRY(AT_PAGESZ, PAGE_SIZE);
+  COPY_ENTRY(AT_UID, pcb->uid);
+  COPY_ENTRY(AT_GID, pcb->gid);
+  COPY_ENTRY(AT_EUID, pcb->euid);
+  COPY_ENTRY(AT_EGID, pcb->egid);
+  COPY_ENTRY(AT_RANDOM, (va_t) random);
+  COPY_ENTRY(AT_SECURE, 0);
 
   // Copy the pointers.
   // We copy envp pointers first, so that argv will be closer to stack top,
@@ -464,15 +482,14 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   size_t argc = argvp.size();
   copy_to_user(usp -= ptrsz, &argc, ptrsz);
   // We shouldn't maintain alignment; ld.so will do it for us.
-  pcb->usp = (va_t) usp;
-  assert(pcb->usp % 16 == 0);
+  tcb->usp = (va_t) usp;
+  assert(tcb->usp % 16 == 0);
 
   // Set up trapframe.
-  auto trap = (trapframe *) pcb->ksp;
-  trap->sepc = pcb->pc;
-  trap->sscratch = pcb->usp;
-  printk("exec done, pc = %p, usp = %p\n", pcb->pc, pcb->usp);
-  hexdump((void*) pcb->usp, stack_top - pcb->usp);
+  auto trap = (trapframe *) tcb->ksp;
+  trap->sepc = tcb->pc;
+  trap->sscratch = tcb->usp;
+  printk("exec done, pc = %p, usp = %p\n", tcb->pc, tcb->usp);
   trap->regs[2] = stack_top - user_stack_size; // TLS
   return 0;
 }

@@ -54,7 +54,7 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
   return expected(header.e_entry + loadbase);
 }
 
-expected<auxv> load_elf(file *content, pcb_t *pcb) {
+expected<auxv> load_elf(file *content, tcb_t *tcb) {
   if (!content)
     return -ENOENT;
   
@@ -66,9 +66,10 @@ expected<auxv> load_elf(file *content, pcb_t *pcb) {
   if (header.e_machine != EM_MACHINE)
     return -ENOEXEC;
 
-  // It is very likely that pcb_p == scheduler.active.
+  // It is very likely that tcb == active().
   // We must be aware: many other procedures implicitly touches it.
-  pcb->status = Init;
+  auto pcb = tcb->pcb;
+  tcb->status = Init;
 
   content->seek(header.e_phoff, file::begin);
   // The random offset.
@@ -132,8 +133,8 @@ expected<auxv> load_elf(file *content, pcb_t *pcb) {
     pcb->close_file(fd);
   }
 
-  init_user(pcb);
-  pcb->pc = pc;
+  init_user(tcb);
+  tcb->pc = pc;
   return auxv;
 }
 

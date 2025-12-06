@@ -18,7 +18,7 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
     while (!c) {
       if (!block)
         return i == 0 ? -EAGAIN : i;
-      wait.push_back(scheduler.active);
+      wait.push_back(active());
       suspend();
       c = console_input_buf->pop_front();
     }
@@ -175,7 +175,9 @@ devfs::devfs() {
 
 void mount_dev() {
   auto root = devfs->root;
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  
   // console is initialized in PLIC handler.
   cast<devroot>(root->node)->record("console", &*console);
   auto dentry = pcb->vfs->lookup("/dev");

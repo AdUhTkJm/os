@@ -14,7 +14,7 @@ namespace {
 using namespace os;
 
 int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags) {
-  auto vfs = scheduler.active->vfs;
+  auto vfs = active()->pcb->vfs;
   auto maybe_mntpoint = vfs->lookup(tgt);
   if (!maybe_mntpoint)
     return -maybe_mntpoint;
@@ -44,7 +44,9 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
 
 // For details, see https://linux.die.net/man/2/fcntl
 int fcntl(int fd, int ty, int arg) {
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
   if (!pcb->ftbl.count(fd))
     return -EBADF;
   switch (ty) {
@@ -66,9 +68,10 @@ long syshandle(trapframe *ksp) { \
   auto a3 = ksp->regs[11];    \
   auto a4 = ksp->regs[12];    \
   auto a7 = ksp->regs[15];    \
-  auto pcb = scheduler.active;\
+  auto tcb = active();        \
+  auto pcb = tcb->pcb;        \
   ksp->sepc += 4;             \
-  printk("syscall: %d\n", a7); \
+  printk("syscall: %d\n", a7);\
   switch (a7) { {
 
 #define SYSHANDLE_END \
@@ -195,7 +198,7 @@ HANDLE(getgid, _) {
 }
 
 HANDLE(set_tid_address, _) {
-  return 1; // TODO
+  return tcb->tid; // TODO
 }
 
 HANDLE(get_robust_list, pid, headptr, size) {
@@ -229,7 +232,7 @@ HANDLE(execve, apath, aargv, aenvp) {
 }
 
 HANDLE(exit, ret) {
-  os::terminate(pcb, ret);
+  os::terminate(tcb, ret);
   return 0;
 }
 
@@ -345,15 +348,15 @@ namespace os {
     switch (scause) {
     case 2: // Invalid instruction
       printk("exception (user): invalid instruction %p when executing %p\n", stval, sepc);
-      os::terminate(scheduler.active, -127);
+      os::terminate(active(), -127);
       break;
     case 5:
       printk("exception (user): load access fault at %p when executing %p\n", stval, sepc);
       printk("page table flags: %x, physical address: %p\n", pte_flags(stval), to_pa(stval));
-      os::terminate(scheduler.active, -127);
+      os::terminate(active(), -127);
       break;
     case 8: { // System call
-      auto pcb = scheduler.active;
+      auto pcb = active();
       auto trap = (trapframe *) pcb->ksp;
       trap->regs[8] = syshandle(trap); // a0
       break;
@@ -369,7 +372,7 @@ namespace os {
       break;
     default:
       printk("exception (user): scause = %ld, stval = %p, sepc = %p\n", scause & 0xff, stval, sepc);
-      os::terminate(scheduler.active, -127);
+      os::terminate(active(), -127);
     }
   }
 }

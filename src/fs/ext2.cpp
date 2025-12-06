@@ -299,7 +299,9 @@ int ext2_inode::create(const string &name, filetype ty, int mode) {
   auto fs = static_cast<ext2*>(this->fs);
   auto node = fs->get();
 
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
   // Update the metadata.
   node->meta.type = fromtype(ty) | mode;
   node->meta.uid = pcb->uid;
@@ -609,7 +611,9 @@ ext2_inode *ext2::read_from_inum(size_t inum) {
 }
 
 expected<fs*> ext2_creator(const char *src) {
-  auto pcb = scheduler.active;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  
   int fd = pcb->open_file(src, 0);
   if (fd < 0)
     return -EBADF;
