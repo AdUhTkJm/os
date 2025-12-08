@@ -165,12 +165,12 @@ void init_user(tcb_t *tcb) {
   va_t heap_start = os::roundup<PAGE_SIZE>(max);
 
   // Allocate a heap. It is initially quite small.
-  pcb->vma.push_back({
+  pcb->vma.push({
     .begin = heap_start, .end = heap_start + PAGE_SIZE, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE | VMA_IS_HEAP, .backup = nullptr, .offset = 0, .maxread = 0
   });
   // Allocate a stack. Note it grows downwards.
-  pcb->vma.push_back({
+  pcb->vma.push({
     .begin = stack_top - user_stack_size, .end = tcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
     .flags = MAP_PRIVATE | VMA_IS_STACK, .backup = nullptr, .offset = 0, .maxread = 0
   });
@@ -544,13 +544,13 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
 void copy_to_user(void *usr, const void *ker, size_t len) {
   EnableAccessToUserMemory enable;
-  vma_map_current(usr, (char*) usr + len, /*write=*/true);
+  vma::map_current(usr, (char*) usr + len, /*write=*/true);
   memcpy(usr, ker, len);
 }
 
 expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
   EnableAccessToUserMemory enable;
-  vma_map_current(usr, (char *) usr + len);
+  vma::map_current(usr, (char *) usr + len);
   char *buf = new char[len];
   memcpy(buf, usr, len);
   return expected<unique_ptr<char>>(buf);
@@ -561,7 +561,7 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
     return expected<unique_ptr<char>>(nullptr);
 
   EnableAccessToUserMemory enable;
-  vma_map_current(usr);
+  vma::map_current(usr);
   vector<char> vec;
   char *p = usr;
   for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
@@ -571,7 +571,7 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
     goto finish;
 
   for (int i = 0; i < 4096; i++) {
-    vma_map_current(p);
+    vma::map_current(p);
     for (char *finish = p + PAGE_SIZE; p < finish && *p; p++)
       vec.push_back(*p);
     
@@ -592,7 +592,7 @@ expected<vector<string>> copy_from_user(char **usr) {
     return vector<string>();
   
   EnableAccessToUserMemory enable;
-  vma_map_current(usr);
+  vma::map_current(usr);
   vector<string> vec;
   char **p = usr;
   for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
@@ -605,7 +605,7 @@ expected<vector<string>> copy_from_user(char **usr) {
     goto finish;
 
   for (int i = 0; i < 4096; i++) {
-    vma_map_current(p);
+    vma::map_current(p);
     for (char **finish = p + PAGE_SIZE; p < finish && *p; p++) {
       auto str = copy_from_user(*p);
       if (!str)

@@ -1,9 +1,9 @@
 #include "vma.h"
 #include "../proc/schedule.h"
 
-namespace os {
+namespace os::vma {
 
-void vma_map_single(void *va, pte_t *root) {
+void map_single(void *va, pte_t *root) {
   EnableAccessToUserMemory enabler;
   auto tcb = active();
   auto pcb = tcb->pcb;
@@ -12,13 +12,7 @@ void vma_map_single(void *va, pte_t *root) {
   auto va_page = rounddown<4_kb>(va);
   int origflags = pte_flags(va_page);
 
-  size_t i = 0;
-  for (; i < pcb->vma.size(); i++) {
-    const auto &vma = pcb->vma[i];
-    if (addr < vma.end && addr >= vma.begin)
-      break;
-  }
-  if (i == pcb->vma.size()) {
+  if (!pcb->vma.has(addr)) {
     // Examine scause to determine.
     int scause; CSRR(scause, scause);
     auto type = scause == 12 ? "execute" : scause == 13 ? "load" : scause == 15 ? "store" : nullptr;
@@ -31,7 +25,7 @@ void vma_map_single(void *va, pte_t *root) {
     return;
   }
   auto pa = os::pframe();
-  const auto &vma = pcb->vma[i];
+  const auto &vma = pcb->vma.at(addr);
   int flags = PTE_V | PTE_U;
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
@@ -98,31 +92,119 @@ void vma_map_single(void *va, pte_t *root) {
     memset((char*) va_page + read, 0, PAGE_SIZE - read);
 }
 
-void vma_map_current(void *va) {
+void map_current(void *va) {
   int flags = pte_flags(va);
   // Don't remap.
   if (flags != -1 && !(flags & PTE_COW))
     return;
 
-  return vma_map_single(va, pt_root());
+  return map_single(va, pt_root());
 }
 
-void vma_map_current(void *va, pte_t *root) {
+void map_current(void *va, pte_t *root) {
   int flags = pte_flags(va);
   // Don't remap.
   if (flags != -1 && !(flags & PTE_COW))
     return;
 
-  return vma_map_single(va, root);
+  return map_single(va, root);
 }
 
-void vma_map_current(void *from, void *to, bool write) {
+void map_current(void *from, void *to, bool write) {
   char *p = (char *) from, *q = (char *) to;
   for (; p < q; p += PAGE_SIZE) {
     int flags = pte_flags(p);
     if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write))
-      vma_map_single(p, pt_root());
+      map_single(p, pt_root());
   }
+}
+
+bool vma_t::mergeable(const vma_t &other) const {
+  if (end != other.begin)
+    return false;
+  if (prot != other.prot || flags != other.flags || backup != other.backup)
+    return false;
+  auto len = end - begin;
+  // Must not have .bss segment, and file must be read contiguously.
+  if (backup && (maxread != len || other.offset != offset + len))
+    return false;
+  return true;
+}
+
+void vmas::split_at(size_t i, uintptr_t addr) {
+  vma_t vma = vmas[i];
+  if (!(vma.begin < addr && addr < vma.end))
+    return;
+
+  vma_t left = vma;
+  left.end = addr;
+
+  vma_t right = vma;
+  right.begin = addr;
+  if (vma.backup) {
+    // Adjust offsets for the right piece.
+    size_t lsize = left.end - left.begin;
+    right.offset = vma.offset + lsize;
+    // Adjust bss sizes, if applicable.
+    left.maxread = min(left.maxread, lsize);
+    right.maxread = max(0ul, vma.maxread - lsize);
+  }
+
+  // Replace orig with `left` and insert `right` after it.
+  vmas[i] = left;
+  vmas.insert(vmas.begin() + i + 1, right);
+}
+
+result vmas::merge_at(size_t i) {
+  if (i + 1 >= vmas.size())
+    return result::failure;
+  if (!vmas[i].mergeable(vmas[i + 1]))
+    return result::failure;
+  
+  vmas[i].end = vmas[i + 1].end;
+  // If mergeable, then the first segment cannot have .bss.
+  if (vmas[i].backup)
+    vmas[i].maxread += vmas[i + 1].maxread;
+  vmas.erase(vmas.begin() + i + 1);
+  return result::success;
+}
+
+size_t vmas::find(va_t addr) const {
+  size_t low = 0, high = vmas.size();
+  while (low < high) {
+    size_t mid = (low + high) / 2;
+    if (vmas[mid].begin <= addr) {
+      if (vmas[mid].end > addr)
+        return mid;
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  return low;
+}
+
+// Keep `vmas` sorted.
+result vmas::push(const vma_t &vma) {
+  auto point = find(vma.begin);
+  // Check that this isn't contained.
+  if (point != vmas.size()) {
+    const auto &land = vmas[point];
+    if (land.begin <= vma.begin && vma.begin < land.end)
+      return result::failure;
+  }
+
+  vmas.insert(vmas.begin() + point, vma);
+  return result::success;
+}
+
+bool vmas::has(va_t addr) const {
+  auto point = find(addr);
+  if (point == vmas.size())
+    return false;
+
+  const auto &vma = vmas[point];
+  return vma.begin <= addr && addr < vma.end;
 }
 
 }

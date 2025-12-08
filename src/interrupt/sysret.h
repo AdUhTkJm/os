@@ -1,6 +1,8 @@
 #ifndef SYSRET_H
 #define SYSRET_H
 
+#include <stddef.h>
+
 // Note these are not in namespace os.
 // These are returned structures from system call, or macros for different arguments.
 //
@@ -169,6 +171,12 @@ struct sigaction {
   sigset_t   sa_mask;
   int        sa_flags;
   void     (*sa_restorer)(void);
+};
+
+/* Structure for scatter/gather I/O.  */
+struct iovec {
+  void *iov_base;	/* Pointer to data.  */
+  size_t iov_len;	/* Length of data.  */
 };
 
 #endif

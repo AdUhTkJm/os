@@ -98,7 +98,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
 
 struct pcb_t : os::intrusive_list_node<pcb_t> {
   pa_t pt_root;           // Root page table entry.
-  os::vector<vma_t> vma;  // VMAs.
+  vma::vmas vma;          // Virtual memory areas.
   pcb_t *parent;          // Parent.
   process_file_table*ftbl;// Process file table.
   int uid, euid, suid;

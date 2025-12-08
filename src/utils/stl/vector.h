@@ -81,6 +81,24 @@ public:
     sz = newsz;
   }
 
+  void insert(V *place, V element) {
+    long d = place - dat;
+    if (sz == cap)
+      reserve(max(16ul, cap * 2));
+    // It is possible that d is 0, so we go signed here.
+    for (long i = sz; i > d; i--)
+      dat[i] = dat[i - 1];
+    dat[d] = element;
+    sz++;
+  }
+
+  void erase(V *place) {
+    auto d = place - dat;
+    for (long i = d; i < long(sz); i++)
+      dat[i] = dat[i + 1];
+    sz--;
+  }
+
   void clear() {
     sz = 0;
   }

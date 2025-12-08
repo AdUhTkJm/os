@@ -1,5 +1,6 @@
 #include "sysret.h"
 #include "sysids.h"
+#include "impl.h"
 #include "../utils/libc.h"
 #include "../utils/helper.h"
 #include "../driver/plic/plic.h"
@@ -12,53 +13,6 @@
 namespace {
 
 using namespace os;
-
-int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags) {
-  auto vfs = active()->pcb->vfs;
-  auto maybe_mntpoint = vfs->lookup(tgt);
-  if (!maybe_mntpoint)
-    return -maybe_mntpoint;
-
-  dentry *mntpoint = *maybe_mntpoint;
-  if (mntpoint->node->type != inode::Dir)
-    return -ENOTDIR;
-  // This place is mounted.
-  if (mntpoint->mnt)
-    return -EBUSY;
-
-  if (flags & MS_MOVE) {
-    auto source = vfs->lookup(src);
-    if (!source)
-      return -ENOENT;
-    vfs::move_mount(*source, mntpoint);
-    return 0;
-  }
-
-  expected<class fs*> fs = vfs->get(fsty, src);
-  if (!fs)
-    return fs;
-
-  vfs::mount(mntpoint, (*fs)->root);
-  return 0;
-}
-
-// For details, see https://linux.die.net/man/2/fcntl
-int fcntl(int fd, int ty, int arg) {
-  auto tcb = active();
-  auto pcb = tcb->pcb;
-
-  if (!pcb->ftbl->count(fd))
-    return -EBADF;
-  switch (ty) {
-  case F_SETFD:
-    pcb->ftbl->set_desc(fd, arg);
-    return 0;
-  case F_GETFD:
-    return *pcb->ftbl->get_desc(fd);
-  default:
-    return -EINVAL;
-  }
-}
 
 #define SYSHANDLE_BEGIN \
 long syshandle(trapframe *ksp) { \
@@ -148,9 +102,41 @@ HANDLE(write, fd, _buf, len) {
   return ret;
 }
 
-HANDLE(writev, fd, io, size) {
-  // TODO: writev
-  return 0;
+HANDLE(writev, fd, iov, cnt) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -ENOENT;
+
+  if (cnt <= 0)
+    return -EINVAL;
+
+  auto iovecs = copy_from_user((void*) iov, cnt * sizeof(iovec));
+  if (!iovecs)
+    return -EFAULT;
+
+  auto iovk = (iovec *) iovecs->get();
+  long total = 0;
+  for (int i = 0; i < cnt; i++) {
+    auto &v = iovk[i];
+
+    if (v.iov_len == 0) continue;
+
+    // Copy a single buffer.
+    auto buf = copy_from_user(v.iov_base, v.iov_len);
+    if (!buf)
+      return total ? total : -EFAULT;
+
+    ssize_t n = file->write(buf->get(), v.iov_len);
+    if (n < 0)
+      return total ? total : n;
+
+    total += n;
+    // If we have a partial write, then we stop immediately.
+    if ((size_t) n < v.iov_len)
+      break;
+  }
+
+  return total;
 }
 
 HANDLE(openat, dirfd, _path, flags, mode) {
@@ -269,11 +255,17 @@ HANDLE(execve, apath, aargv, aenvp) {
 
 HANDLE(exit, ret) {
   os::terminate(tcb, ret);
-  return 0;
+  return 0; // Won't reach the thread.
+}
+
+HANDLE(exit_group, ret) {
+  for (auto x : pcb->threads)
+    os::terminate(x, ret);
+  return 0; // Won't reach the thread.
 }
 
 HANDLE(fcntl, fd, ty, args) {
-  return fcntl(fd, ty, args);
+  return detail::fcntl(fd, ty, args);
 }
 
 HANDLE(getdents64, fd, dirents, cnt) {
@@ -312,7 +304,7 @@ HANDLE(mount, asrc, atgt, afsty, flags, data) {
   if (!fsty)
     return fsty;
 
-  auto ret = mount(src->get(), tgt->get(), fsty->get(), flags);
+  auto ret = detail::mount(src->get(), tgt->get(), fsty->get(), flags);
   (void) data;
   return ret;
 }
@@ -393,15 +385,22 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
       return -EACCES;
   }
 
-  // Now allocate near this cap.
-  vma_t vma {
-    .begin = lowest - len, .end = lowest,
+  // Now allocate near this cap. Note that this has to be page-aligned.
+  auto end = rounddown<PAGE_SIZE>(lowest);
+  auto start = rounddown<PAGE_SIZE>(end - len);
+  vma::vma_t vma {
+    .begin = start, .end = end,
     .prot = (int) prot, .flags = (int) flags,
     .backup = backup, .offset = (size_t) offset,
     .maxread = (size_t) len
   };
-  pcb->vma.push_back(vma);
+  pcb->vma.push(vma);
   return vma.begin;
+}
+
+HANDLE(mprotect, start, len, prot) {
+  // Find the VMA that contains this mprotect.
+  return detail::mprotect(start, len, prot);
 }
 
 HANDLE(rt_sigprocmask, how, set, oldset, size) {
@@ -532,13 +531,13 @@ namespace os {
       break;
     }
     case 12: // Instruction page fault
-      vma_map_current((void*) stval);
+      vma::map_current((void*) stval);
       break;
     case 13: // Load page fault
-      vma_map_current((void*) stval);
+      vma::map_current((void*) stval);
       break;
     case 15: // Store page fault. This also work on COW pages; no special care needed.
-      vma_map_current((void*) stval);
+      vma::map_current((void*) stval);
       break;
     default:
       printk("exception (user): scause = %ld, stval = %p, sepc = %p\n", scause & 0xff, stval, sepc);

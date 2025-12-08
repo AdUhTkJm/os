@@ -18,23 +18,51 @@
 #define VMA_IS_STACK   0x80
 #define VMA_IS_PT_LOAD 0x100
 
-namespace os {
+namespace os::vma {
 
 struct vma_t {
   uintptr_t begin, end;
   int prot, flags;
   file *backup;
   size_t offset, maxread;
+
+  bool mergeable(const vma_t &other) const;
 };
 
 // Map according to the current process's VMA.
 // Terminates the process when the pointer is not in any VMA.
-void vma_map_current(void *va);
-void vma_map_current(void *va, pte_t *pte);
+void map_current(void *va);
+void map_current(void *va, pte_t *pte);
 
 // Map a range. Only maps the addresses that are currently unmapped.
 // If `write` is set to true, also maps COW pages in the range.
-void vma_map_current(void *from, void *to, bool write = false);
+void map_current(void *from, void *to, bool write = false);
+
+struct vmas {
+  vector<vma_t> vmas;
+
+  void split_at(size_t i, va_t addr);
+  result merge_at(size_t i);
+  
+  vma_t &operator[](size_t index) { return vmas[index]; }
+  const vma_t &operator[](size_t index) const { return vmas[index]; }
+
+  result push(const vma_t &vma);
+  bool has(va_t addr) const;
+
+  // Finds the insertion place of `addr`, i.e. the first vma that is
+  // greater than `addr`.
+  // If `addr` is already contained, return that index.
+  size_t find(va_t addr) const;
+  
+  vma_t &at(va_t addr) { return vmas[find(addr)]; }
+  const vma_t &at(va_t addr) const { return vmas[find(addr)]; }
+  void clear() { vmas.clear(); }
+
+  vma_t *begin() { return vmas.begin(); }
+  vma_t *end() { return vmas.end(); }
+  size_t size() const { return vmas.size(); }
+};
 
 }
 
