@@ -205,11 +205,11 @@ extern "C" void _start() {
   int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
   (void) ret;
 
-  int pid = syscall(clone);
+  // Expand heap.
+  unsigned long p = syscall(0, brk);
+  unsigned long usp = syscall(p + 16384, brk);
+  int pid = syscall(0, usp, clone);
   if (pid == 0) {
-    // Expand heap.
-    unsigned long p = syscall(0, brk);
-    syscall(p + 4096, brk);
 
     // Move mount.
     syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, 8192, mount);
@@ -219,8 +219,8 @@ extern "C" void _start() {
     syscall((reg_t) "/mnt", chroot);
     
     // Execute the shell.
-    const char *argv[] = { "/bin/x.elf", "Hello World!\n", nullptr };
-    syscall((reg_t) "/bin/x.elf", (reg_t) argv, 0, execve);
+    const char *argv[] = { "/bin/busybox", "echo", "Hello World!\n", nullptr };
+    syscall((reg_t) "/bin/busybox", (reg_t) argv, 0, execve);
 
     printf("unreachable\n");
   }

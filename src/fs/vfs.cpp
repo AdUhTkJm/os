@@ -1,4 +1,5 @@
 #include "vfs.h"
+#include "../proc/schedule.h"
 
 namespace os {
 
@@ -7,8 +8,12 @@ spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
 static_storage<os::hashmap<pair<inode*, string>, dentry*>> vfs::dcache;
 
+inode *file::node() {
+  return entry->node;
+}
+
 size_t file::read(void *buf, size_t len) {
-  auto ret = node->read(offset, buf, len, flags);
+  auto ret = node()->read(offset, buf, len, flags);
   if ((ssize_t) ret < 0)
     return ret;
 
@@ -18,9 +23,9 @@ size_t file::read(void *buf, size_t len) {
 
 size_t file::write(const void *buf, size_t len) {
   if (flags & O_APPEND)
-    offset = node->size();
+    offset = node()->size();
   
-  auto ret = node->write(offset, buf, len, flags);
+  auto ret = node()->write(offset, buf, len, flags);
   if ((ssize_t) ret < 0)
     return ret;
 
@@ -38,7 +43,7 @@ size_t file::seek(long pos, whence whence) {
     offset += pos;
     break;
   case end:
-    offset = node->size() + pos;
+    offset = node()->size() + pos;
     break;
   }
   return before;
@@ -49,7 +54,37 @@ string resolve_link(string path, const string &link) {
   return link[0] == '/' ? link : normalize(path + "/" + link);
 }
 
-expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) {
+bool readable(int uid, int gid, inode *node) {
+  int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
+  int flags = node->mode;
+  if (uid != 0) {
+    if (!(flags & (1 << bit + 2)))
+      return false;
+  }
+  return true;
+}
+
+bool writable(int uid, int gid, inode *node) {
+  int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
+  int flags = node->mode;
+  if (uid != 0) {
+    if (!(flags & (1 << bit + 1)))
+      return false;
+  }
+  return true;
+}
+
+bool executable(int uid, int gid, inode *node) {
+  int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
+  int flags = node->mode;
+  if (uid != 0) {
+    if (!(flags & (1 << bit + 0)))
+      return false;
+  }
+  return true;
+}
+
+expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsym, int depth) {
   if (depth < 0)
     return -ENOENT;
 
@@ -57,10 +92,12 @@ expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) 
   assert(base && "base shouldn't be empty on lookup");
 
   if (path == "/")
-    return base->root;
+    return from;
 
-  dentry *cur = base->root;
+  dentry *cur = from;
   vector<string> comps;
+  pcb_t *pcb = active()->pcb;
+  int uid = pcb->euid, gid = pcb->egid;
 
   for (auto name : split(path, "/")) {
     comps.push_back(name);
@@ -68,17 +105,25 @@ expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) 
       return -ENOTDIR;
 
     if (cur->node->type == inode::Link) {
+      // Check read access.
+      if (!readable(uid, gid, cur->node))
+        return -EPERM;
+
       auto link = cur->node->readlink();
       if (!link)
         return -ENOENT;
       comps.pop_back();
       string v = resolve_link(string("/").join(comps), *link);
       printk("link resolved to %s\n", v.c_str());
-      return lookup_impl(v, lastsym, depth - 1);
+      return lookup_impl(v, from, lastsym, depth - 1);
     }
     
     if (cur->node->type != inode::Dir)
       return -ENOTDIR;
+    
+    // Check lookup access.
+    if (!executable(uid, gid, cur->node))
+      return -EPERM;
 
     {
       synchronized syn(mountlock);
@@ -107,7 +152,8 @@ expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) 
       auto children = cur->belong->children;
 
       // Check whether this is a mount point.
-      for (auto *child = children.begin(); child != children.end(); child = child->next) {
+      //for (auto child : children) {
+      for (auto child : children) {
         if (child->host->node == cur->node) {
           cur->mnt = child;
           break;
@@ -131,14 +177,19 @@ expected<dentry*> vfs::lookup_impl(const string &path, bool lastsym, int depth) 
 
     string v = resolve_link(dirname(path), *link);
     printk("link resolved to %s\n", v.c_str());
-    return lookup_impl(v, lastsym, depth - 1);
+    return lookup_impl(v, from, lastsym, depth - 1);
   }
   return cur;
 }
 
 expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
   // Put a maximum on recursion depth to avoid infinite loops.
-  return lookup_impl(path, lastsym, 40);
+  return lookup_impl(path, base->root, lastsym, 40);
+}
+
+expected<dentry*> vfs::lookup_from(const string &path, dentry *dentry, bool lastsym) {
+  bool relative = path[0] != '/';
+  return lookup_impl(path, relative ? dentry : base->root, lastsym, 40);
 }
 
 // Moves the mount from `source` to `target`.
@@ -197,7 +248,7 @@ file *vfs::open(const string &path, int flags) {
   if (!dentry)
     return nullptr;
 
-  file *f = new file((*dentry)->node, flags);
+  file *f = new file(*dentry, flags);
   f->ref();
   return f;
 }
@@ -271,11 +322,11 @@ unsigned char inode::as_dt(filetype ty) {
 }
 
 file::~file() {
-  node->drop();
+  node()->drop();
 }
 
-file::file(inode *node, int flags): refcnt(0), node(node), offset(0), flags(flags) {
-  node->ref();
+file::file(dentry *entry, int flags): refcnt(0), entry(entry), offset(0), flags(flags) {
+  node()->ref();
 }
 
 void file::drop() {

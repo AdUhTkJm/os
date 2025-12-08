@@ -37,13 +37,14 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
       SeekGuard guard(ldso, phdr.p_offset);
 
       va_t va = phdr.p_vaddr + loadbase;
+      va_t end = roundup<PAGE_SIZE>(va + phdr.p_memsz);
 
       int prot = 0;
       if (phdr.p_flags & PF_R) prot |= PROT_READ;
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma_t vma = {
-        .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
+        .begin = va, .end = end, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
         .backup = ldso, .offset = phdr.p_offset, .maxread = phdr.p_filesz
       };
       ldso->ref();
@@ -90,13 +91,15 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
       // Read the content of the mapped section.
       SeekGuard guard(content, phdr.p_offset);
       va_t va = phdr.p_vaddr + loadbase;
+      // Note this is NOT OPTIONAL: an ELF must map entire pages.
+      va_t end = roundup<PAGE_SIZE>(va + phdr.p_memsz);
 
       int prot = 0;
       if (phdr.p_flags & PF_R) prot |= PROT_READ;
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma_t vma = {
-        .begin = va, .end = va + phdr.p_memsz, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
+        .begin = va, .end = end, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
         .backup = content, .offset = phdr.p_offset, .maxread = phdr.p_filesz
       };
       content->ref();
@@ -121,7 +124,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
     int fd = pcb->open_file(interp.get(), O_RDONLY);
     if (fd < 0)
       return fd;
-    file *ldso = pcb->ftbl[fd];
+    file *ldso = pcb->ftbl->at(fd);
     auto ret = load_interp(ldso, pcb);
     if (!ret)
       return ret.error();

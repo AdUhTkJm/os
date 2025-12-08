@@ -47,14 +47,14 @@ int fcntl(int fd, int ty, int arg) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  if (!pcb->ftbl.count(fd))
+  if (!pcb->ftbl->count(fd))
     return -EBADF;
   switch (ty) {
   case F_SETFD:
-    pcb->ftbl.set_desc(fd, arg);
+    pcb->ftbl->set_desc(fd, arg);
     return 0;
   case F_GETFD:
-    return *pcb->ftbl.get_desc(fd);
+    return *pcb->ftbl->get_desc(fd);
   default:
     return -EINVAL;
   }
@@ -67,6 +67,7 @@ long syshandle(trapframe *ksp) { \
   auto a2 = ksp->regs[10];    \
   auto a3 = ksp->regs[11];    \
   auto a4 = ksp->regs[12];    \
+  auto a5 = ksp->regs[13];    \
   auto a7 = ksp->regs[15];    \
   auto tcb = active();        \
   auto pcb = tcb->pcb;        \
@@ -77,7 +78,7 @@ long syshandle(trapframe *ksp) { \
 #define SYSHANDLE_END \
   } default: \
     printk("unknown syscall: %d\n", a7); \
-    return -1; \
+    return -ENOSYS; \
   } \
 }
 
@@ -87,6 +88,7 @@ long syshandle(trapframe *ksp) { \
 #define ARGS3(a, b, c) reg_t a = a0, b = a1, c = a2;
 #define ARGS4(a, b, c, d) reg_t a = a0, b = a1, c = a2, d = a3;
 #define ARGS5(a, b, c, d, e) reg_t a = a0, b = a1, c = a2, d = a3, e = a4;
+#define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
@@ -112,11 +114,11 @@ HANDLE(lseek, fd, offset, _whence) {
   if (int(whence) == -1)
     return -EINVAL;
 
-  file *f = pcb->ftbl[fd];
+  file *f = pcb->ftbl->at(fd);
   if (!f)
     return -EBADF;
 
-  if (f->node->type == inode::CharDevice)
+  if (f->node()->type == inode::CharDevice)
     return -EINVAL;
   
   f->seek(offset, whence);
@@ -124,7 +126,7 @@ HANDLE(lseek, fd, offset, _whence) {
 }
 
 HANDLE(read, fd, _buf, len) {
-  auto file = pcb->ftbl[fd];
+  auto file = pcb->ftbl->at(fd);
   if (!file)
     return -ENOENT;
 
@@ -135,7 +137,7 @@ HANDLE(read, fd, _buf, len) {
 }
 
 HANDLE(write, fd, _buf, len) {
-  auto file = pcb->ftbl[fd];
+  auto file = pcb->ftbl->at(fd);
   if (!file)
     return -ENOENT;
 
@@ -146,21 +148,47 @@ HANDLE(write, fd, _buf, len) {
   return ret;
 }
 
+HANDLE(writev, fd, io, size) {
+  // TODO: writev
+  return 0;
+}
+
 HANDLE(openat, dirfd, _path, flags, mode) {
   (void) dirfd;
-  // mode will be ignored when not creating file, as expected.
   auto path = copy_from_user((char *) _path);
   if (!path)
     return -EFAULT;
-  if ((*path)[0] != '/') { // Relative. Deal with it later.
-    return -EBADF;
-  }
-  auto ret = pcb->open_file(path->get(), flags, mode);
-  return ret;
+  bool relative = (*path)[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY)
+    : pcb->open_file(path->get(), O_RDONLY);
+  return fd;
 }
 
 HANDLE(close, fd) {
   return pcb->close_file(fd);
+}
+
+HANDLE(readlinkat, dirfd, _path, buf, size) {
+  (void) dirfd;
+  if (size < 0)
+    return -EINVAL;
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  bool relative = (*path)[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY)
+    : pcb->open_file(path->get(), O_RDONLY);
+  if (fd < 0)
+    return fd;
+  auto f = pcb->ftbl->at(fd);
+  auto link = f->node()->readlink();
+  pcb->close_file(fd);
+  if (!link)
+    return -EINVAL;
+  copy_to_user((void *) buf, link->c_str(), size);
+  return min(link->size(), (unsigned long) size);
 }
 
 HANDLE(brk, addr) {
@@ -168,9 +196,9 @@ HANDLE(brk, addr) {
 }
 
 HANDLE(dup, fd) {
-  if (!pcb->ftbl.count(fd))
+  if (!pcb->ftbl->count(fd))
     return -EBADF;
-  return pcb->ftbl.allocate(pcb->ftbl[fd]);
+  return pcb->ftbl->allocate(pcb->ftbl->at(fd));
 }
 
 HANDLE(getpid, _) {
@@ -197,8 +225,16 @@ HANDLE(getgid, _) {
   return pcb->parent->egid;
 }
 
+HANDLE(gettid, _) {
+  return tcb->tid;
+}
+
 HANDLE(set_tid_address, _) {
   return tcb->tid; // TODO
+}
+
+HANDLE(getrandom, _) {
+  return 0; // TODO
 }
 
 HANDLE(get_robust_list, pid, headptr, size) {
@@ -218,7 +254,7 @@ HANDLE(set_robust_list, headptr, size) {
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
-  return fork();
+  return os::clone(flags, (void *) stack, (void *) tls);
 }
 
 HANDLE(execve, apath, aargv, aenvp) {
@@ -241,10 +277,10 @@ HANDLE(fcntl, fd, ty, args) {
 }
 
 HANDLE(getdents64, fd, dirents, cnt) {
-  if (!pcb->ftbl.count(fd))
+  if (!pcb->ftbl->count(fd))
     return -EBADF;
-  auto file = pcb->ftbl[a0];
-  auto items = file->node->list();
+  auto file = pcb->ftbl->at(a0);
+  auto items = file->node()->list();
   
   char *pos = (char *) dirents;
   for (const auto &item : items) {
@@ -293,6 +329,140 @@ HANDLE(chroot, apath) {
   if (!mnt)
     return -EINVAL;
   return pcb->vfs->chroot(mnt);
+}
+
+HANDLE(prlimit64, pid, resource, new_rlim, old_rlim) {
+  printk("pid = %d, pcb->pid = %d\n", pid, pcb->pid);
+  if (pcb->pid != 0 && pid != pcb->pid)
+    return -EPERM; // TODO: better checks
+
+  printk("resource = %d\n", resource);
+  // TODO
+  return -1;
+}
+
+HANDLE(clock_gettime, id, tp) {
+  timespec spec;
+  if (id == CLOCK_MONOTONIC) {
+    long time = rv_rdtime();
+    spec.tv_sec = time / 1'000'000'000;
+    spec.tv_nsec = time % 1'000'000'000;
+    copy_to_user(&tp, &spec, sizeof(timespec));
+    return 0;
+  }
+  return -1;
+}
+
+HANDLE(mmap, addr, len, prot, flags, fd, offset) {
+  bool shared = flags & MAP_SHARED;
+  bool priv = flags & MAP_PRIVATE;
+  if ((!shared && !priv) || len == 0)
+    return -EINVAL;
+
+  bool fixed = flags & MAP_FIXED;
+  bool anon = flags & MAP_ANONYMOUS;
+  if (shared) {
+    printk("no shared mmap yet\n");
+    return -EINVAL;
+  }
+  if (fixed) {
+    printk("no fixed yet\n");
+    return -EINVAL;
+  }
+
+  // Ignore the hint `addr` for now.
+  (void) addr;
+
+  auto lowest = stack_top;
+  // Find the lowest VMA that we must not overlap with.
+  // In other words, this is the cap of the address.
+  for (auto &vma : pcb->vma) {
+    if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
+      continue;
+    lowest = min(lowest, vma.begin);
+  }
+  
+  file *backup = nullptr;
+  if (!anon && !pcb->ftbl->count(fd))
+    return -EBADF;
+  if (!anon) {
+    backup = pcb->ftbl->at(fd);
+    bool readable = backup->flags & 3 != O_WRONLY;
+    bool writable = backup->flags & 3 != O_RDONLY;
+    if (!readable || (shared && !writable))
+      return -EACCES;
+  }
+
+  // Now allocate near this cap.
+  vma_t vma {
+    .begin = lowest - len, .end = lowest,
+    .prot = (int) prot, .flags = (int) flags,
+    .backup = backup, .offset = (size_t) offset,
+    .maxread = (size_t) len
+  };
+  pcb->vma.push_back(vma);
+  return vma.begin;
+}
+
+HANDLE(rt_sigprocmask, how, set, oldset, size) {
+  if (oldset)
+    copy_to_user((void *) oldset, &tcb->mask.sig, size);
+  if (!set)
+    return 0;
+
+  auto sigset = copy_from_user((void *) set, size);
+  if (!sigset)
+    return sigset.error();
+
+  unsigned long mask;
+  switch (size) {
+  case 8:
+    mask = *(unsigned char *) sigset->get();
+    break;
+  case 16:
+    mask = *(unsigned short *) sigset->get();
+    break;
+  case 32:
+    mask = *(unsigned *) sigset->get();
+    break;
+  default:
+    return -EINVAL;
+  };
+
+  // Here `tcb->mask` means ignored signals, so the logic is reversed here.
+  switch (how) {
+  case SIG_BLOCK:
+    tcb->mask.sig |= mask;
+    break;
+  case SIG_UNBLOCK:
+    tcb->mask.sig &= ~mask;
+    break;
+  case SIG_SETMASK:
+    tcb->mask.sig = mask;
+    break;
+  default:
+    return -EINVAL;
+  }
+  return 0;
+}
+
+HANDLE(tgkill, pid, tid, sig) {
+  auto proc = (*pidmap)[pid];
+  if (!proc)
+    return -EINVAL;
+  tcb_t *thread = nullptr;
+  for (auto t : proc->threads) {
+    if (t->tid == tid) {
+      thread = t;
+      break;
+    }
+  }
+  if (!thread)
+    return -EINVAL;
+
+  // TODO: privilege check
+  proc->pending.add(sig);
+  return 0;
 }
 
 SYSHANDLE_END

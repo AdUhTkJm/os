@@ -46,22 +46,30 @@ void vma_map_single(void *va, pte_t *root) {
   }
 
   // Temporarily map with write permission, if we need to copy into it.
-  os::pmap(pa, va_page, MAP_4KB, vma.backup ? flags | PTE_W : flags, root);
-
-  // Copy the contents if it exists.
-  if (!vma.backup)
-    return;
+  // Note that it is possible that `prot == 0`. In this case, we need to
+  // grab both PTE_R and PTE_W; otherwise RISC-V complains about this.
+  bool mustwrite = vma.backup || (vma.flags & MAP_ANONYMOUS);
+  int tempflags = mustwrite ? flags | PTE_RW : flags;
+  os::pmap(pa, va_page, MAP_4KB, tempflags, root);
 
   // Take back the write permission on exit.
   const auto &finisher = [&]() {
-    if (!(flags & PTE_W))
-      os::pmap(pa, va_page, MAP_4KB, flags & ~PTE_W, root);
+    if (tempflags != flags)
+      os::pmap(pa, va_page, MAP_4KB, flags, root);
   };
   struct takeback {
     decltype(finisher) f;
     takeback(decltype(finisher) f): f(f) {}
     ~takeback() { f(); }
   } _takeback(finisher);
+
+  // Copy the contents if it exists.
+  if (!vma.backup) {
+    // It is required that we zero this if we're using an anonymous mmap.
+    if (vma.flags & MAP_ANONYMOUS)
+      memset(va_page, 0, PAGE_SIZE);
+    return;
+  }
   
   // `begin` and this address are in the same page.
   // We read from beginning.

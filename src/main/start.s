@@ -95,6 +95,8 @@ stvec_pos:
   call _ZN2os17interrupt_handlerEllPv
 
 __handler_end:
+  call _ZN2os9sighandleEv
+
   # Load the ksp of the current process.
   # (The process might have changed.)
   la t0, _ZN2os9schedulerE

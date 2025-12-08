@@ -26,6 +26,7 @@ enum error_code {
   EISDIR = 21,
   EINVAL = 22,
   EROFS = 30,
+  ENOSYS = 38,
   ELOOP = 40,
   EDQUOT = 122,
 };

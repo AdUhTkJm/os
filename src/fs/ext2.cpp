@@ -617,7 +617,7 @@ expected<fs*> ext2_creator(const char *src) {
   int fd = pcb->open_file(src, 0);
   if (fd < 0)
     return -EBADF;
-  inode *node = pcb->ftbl[fd]->node;
+  inode *node = pcb->ftbl->at(fd)->node();
   if (node->type != inode::BlockDevice)
     return -ENOTBLK;
   auto ext = new ext2(node);

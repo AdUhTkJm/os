@@ -1,6 +1,7 @@
 #include "elf.h"
 #include "pcb.h"
 #include "schedule.h"
+#include "../interrupt/sysret.h"
 #include "../mem/kalloc.h"
 #include "../utils/stl/unique_ptr.h"
 
@@ -45,7 +46,8 @@ void process_file_table::clear() {
 void pcb_t::clear() {
   pt::free(pt_root);
   pt_root = __kernel_pt_root;
-  ftbl.clear();
+  ftbl->clear();
+  ftbl->drop();
   vfs->drop();
   clear_vma();
 }
@@ -59,19 +61,38 @@ void pcb_t::clear_vma() {
 }
 
 int pcb_t::open_file(const string &path, int flags, int mode) {
+  return open_file_from(path, pwd, flags, mode);
+}
+
+int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode) {
+  if (dirfd == AT_FDCWD)
+    return open_file_from(path, pwd, flags, mode);
+  
+  if (!ftbl->count(dirfd))
+    return -EBADF;
+
+  auto entry = ftbl->at(dirfd)->entry;
+  if (entry->node->type != inode::Dir)
+    return -ENOTDIR;
+
+  return open_file_from(path, entry, flags, mode);
+}
+
+int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mode) {
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
   bool write = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_WRONLY;
   bool read = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_RDONLY;
 
   // TODO: check search permission
-  auto maybe_dentry = vfs->lookup(path);
+  auto maybe_dentry = vfs->lookup_from(path, relbase);
+  printk("opening: %s\n", path.c_str());
   if (!maybe_dentry) {
     if (!create)
       return maybe_dentry;
 
     auto parent = dirname(path);
-    auto maybe_parent = vfs->lookup(parent);
+    auto maybe_parent = vfs->lookup_from(parent, relbase);
     if (!maybe_parent)
       return maybe_parent;
 
@@ -90,28 +111,21 @@ int pcb_t::open_file(const string &path, int flags, int mode) {
   if (node->type == inode::Dir && write)
     return -EISDIR;
 
-  // Check the flags of node.
-  int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
-  if (uid != 0) {
-    // Skip check for root.
+  if (read && !readable(euid, egid, node))
+    return -EPERM;
+  if (write && !writable(euid, egid, node))
+    return -EPERM;
 
-    if (read && !(flags & (1 << bit + 2)))
-      return -EACCES;
-    
-    if (write && !(flags & (1 << bit + 1)))
-      return -EACCES; 
-  }
-
-  file *f = new file(node, flags);
-  int fd = ftbl.allocate(f);
+  file *f = new file(dentry, flags);
+  int fd = ftbl->allocate(f);
   return fd;
 }
 
 int pcb_t::close_file(int fd) {
-  if (!ftbl.count(fd))
+  if (!ftbl->count(fd))
     return -EINVAL;
   
-  ftbl.deallocate(fd);
+  ftbl->deallocate(fd);
   return 0;
 }
 
@@ -177,9 +191,9 @@ void init(tcb_t *tcb) {
   auto console = pcb->vfs->lookup("/dev/console");
   if (!console)
     panic("no console!");
-  pcb->ftbl.allocate(new file((*console)->node, O_RDONLY), 0); // stdin
-  pcb->ftbl.allocate(new file((*console)->node, O_WRONLY), 1); // stdout
-  pcb->ftbl.allocate(new file((*console)->node, O_WRONLY), 2); // stderr
+  pcb->ftbl->allocate(new file(*console, O_RDONLY), 0); // stdin
+  pcb->ftbl->allocate(new file(*console, O_WRONLY), 1); // stdout
+  pcb->ftbl->allocate(new file(*console, O_WRONLY), 2); // stderr
 }
 
 void terminate(tcb_t *tcb, int ret) {
@@ -194,8 +208,8 @@ void terminate(tcb_t *tcb, int ret) {
   if (!init)
     panic("terminate: cannot find init");
   for (auto child : pcb->children) {
-    child.parent = init;
-    init->children.push_back(&child);
+    child->parent = init;
+    init->children.push_back(child);
   }
 }
 
@@ -258,61 +272,92 @@ void trap_return_setup(tcb_t *tcb) {
 #define CLONE_IO	0x80000000	/* Clone I/O context.  */
 #define CLONE_NEWTIME	0x00000080  /* New time namespace */
 
-int fork() {
-  auto tcb = active();
-  auto pcb = tcb->pcb;
+int clone(unsigned flags, void *usp, void *tls) {
+  // Parent thread/process.
+  auto pt = active();
+  auto pp = pt->pcb;
 
-  auto child = new pcb_t;
-  auto tchild = new tcb_t;
-  tchild->pcb = child;
-  child->parent = pcb;
-  pcb->children.push_back(child);
+  // Child thread/process.
+  auto ct = new tcb_t;
+  pcb_t *cp;
+
+  bool share_vm    = flags & CLONE_VM;
+  bool share_files = flags & CLONE_FILES;
+  bool share_fs    = flags & CLONE_FS;
+
+  // When sharing virtual memory, we're essentially creating a thread.
+  // We can reference to the same PCB.
+  if (share_vm) {
+    cp = pp;
+  } else {
+    // When not sharing, we're copying the PCB as well.
+    cp = new pcb_t;
+    cp->parent = pp;
+    pp->children.push_back(cp);
+    cp->pid = nextpid();
+    (*pidmap)[cp->pid] = cp;
+
+    // Mark the parent's table as copy-on-write.
+    pt::walk((pte_t *) as_va(pp->pt_root), [](pte_t &pte) {
+      // Only do this on user pages that are writable.
+      if (!(pte & PTE_U) || !(pte & PTE_W))
+        return;
+      
+      pte &= ~PTE_W;
+      pte |= PTE_COW;
+    });
+
+    // Deep-copy the page table.
+    cp->pt_root = pt::copy(pt_root());
+    cp->vma = pp->vma;
+  }
+
+  ct->pcb = cp;
+  cp->threads.push_back(ct);
+  ct->tid = cp->nexttid();
 
   // Allocate a new kernel stack.
-  tchild->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
-  memcpy((char *) tchild->ksp, (char *) tcb->ksp, sizeof(trapframe));
+  ct->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
+  memcpy((char *) ct->ksp, (char *) pt->ksp, sizeof(trapframe));
+  // Point to the new user stack.
+  ct->usp = (va_t) usp;
 
   // Set the return value (a0) of child to zero.
-  auto trap = (trapframe *) tchild->ksp;
+  auto trap = (trapframe *) ct->ksp;
   trap->regs[8] = 0;
-  tchild->pc = trap->sepc;
-
-  child->pid = nextpid();
-  tchild->tid = child->nexttid();
-  (*pidmap)[child->pid] = child;
+  ct->pc = trap->sepc;
   
   TLBRefreshGuard guard;
 
-  // Mark the parent's table as copy-on-write.
-  pt::walk((pte_t *) as_va(pcb->pt_root), [](pte_t &pte) {
-    // Only do this on user pages that are writable.
-    if (!(pte & PTE_U) || !(pte & PTE_W))
-      return;
-    
-    pte &= ~PTE_W;
-    pte |= PTE_COW;
-  });
+  if (share_files) {
+    cp->ftbl = pp->ftbl;
+  } else {
+    // Copy the table, but not the files.
+    cp->ftbl = new process_file_table(*pp->ftbl);
+    for (auto [_, f] : *cp->ftbl)
+      f->ref();
+  }
+  cp->ftbl->ref();
 
-  // Deep-copy the page table.
-  child->pt_root = pt::copy(pt_root());
-
-  // Shallow-copy the file table.
-  child->ftbl = pcb->ftbl;
-  for (auto [_, f] : child->ftbl)
-    f->ref();
+  // Copy VFS context.
+  cp->vfs = share_fs ? pp->vfs : new vfs(*pp->vfs);
+  cp->vfs->ref();
 
   // Copy various information from parent.
-  tchild->status = Ready;
-  child->vma = pcb->vma;
-  child->kproc = pcb->kproc;
-  child->uid = pcb->euid;
-  child->euid = pcb->euid;
-  child->suid = pcb->euid;
-  child->gid = pcb->gid;
-  child->vfs = pcb->vfs;
-  child->vfs->ref();
-  scheduler.add(tchild);
-  return child->pid;
+  ct->status = Ready;
+  ct->tls = tls;
+
+  // No need to copy them again. We have copied the entire structure.
+  if (!share_vm) {
+    cp->kproc = pp->kproc;
+    cp->uid = pp->euid;
+    cp->euid = pp->euid;
+    cp->suid = pp->euid;
+    cp->gid = pp->gid;
+    cp->execpath = pp->execpath;
+  }
+  scheduler.add(ct);
+  return cp->pid;
 }
 
 /*
@@ -356,20 +401,22 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   pcb->clear_vma();
   
   int fd = pcb->open_file(path, O_RDONLY);
-  auto auxv = load_elf(pcb->ftbl[fd], tcb);
+  auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
   if (!auxv) {
     printk("error: %d\n", auxv.error());
     // This process is in a bad state now. We must terminate it.
     // We cannot call clear() because that would double-free the root.
     //
     // Moreover, note that fd isn't opened so shouldn't be closed.
-    pcb->ftbl.clear();
+    pcb->ftbl->clear();
+    pcb->ftbl->drop();
     pcb->clear_vma();
     pcb->vfs->drop();
     scheduler.erase(tcb);
     return auxv;
   }
   pcb->close_file(fd);
+  pcb->execpath = path;
 
   // Reallocate the page table and shallow-copy the higher half of kernel space.
   // We don't call init() because we don't change ksp, and don't reopen stdin/stdout/stderr.
@@ -385,13 +432,13 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
   // Close files according to flags.
   os::vector<int> toclose;
-  for (auto [fd, f] : pcb->ftbl) {
-    if (*pcb->ftbl.get_desc(fd) & FD_CLOEXEC
+  for (auto [fd, f] : *pcb->ftbl) {
+    if (*pcb->ftbl->get_desc(fd) & FD_CLOEXEC
      || f->flags & O_CLOEXEC)
       toclose.push_back(fd);
   }
   for (auto fd : toclose)
-    pcb->ftbl.deallocate(fd);
+    pcb->ftbl->deallocate(fd);
 
   char *usp = (char *) tcb->usp;
   os::vector<char*> argvp, envpp;

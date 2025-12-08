@@ -1,6 +1,7 @@
 #ifndef PCB_H
 #define PCB_H
 
+#include "sig.h"
 #include "../utils/helper.h"
 #include "../mem/ptable.h"
 #include "../mem/vma.h"
@@ -45,7 +46,7 @@ struct ctxframe {
 static_assert(sizeof(trapframe) == 272);
 #endif
 
-class process_file_table {
+class process_file_table : public shared {
 public:
   using fddesc = unsigned char;
 private:
@@ -59,7 +60,10 @@ public:
   void clear();
   int count(int fd) { return open.count(fd); }
   
+  // It is sometimes not easy to use `operator[]` on a pointer.
   file *operator[](int x) { return open.count(x) ? open[x] : nullptr; }
+  file *at(int x) { return open.count(x) ? open[x] : nullptr; }
+
   void set_desc(int fd, fddesc desc) { this->desc[fd] = desc; }
   optional<fddesc> get_desc(int fd) { return desc.count(fd) ? optional(desc[fd]) : nullopt; }
   
@@ -80,6 +84,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread exit value / return code.
   void __user *tls;       // Thread-local storage pointer.
+  sigset mask;            // Masked (ignored) signals.
 
   pcb_t *pcb;             // Parent process.
 
@@ -95,21 +100,28 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   pa_t pt_root;           // Root page table entry.
   os::vector<vma_t> vma;  // VMAs.
   pcb_t *parent;          // Parent.
-  process_file_table ftbl;// Process file table.
+  process_file_table*ftbl;// Process file table.
   int uid, euid, suid;
   int gid, egid, sgid;
-  int pid;                // Process id.
+  int pid;                // Process id. <4 byte pad here!>
   bool kproc;             // Kernel process.
   os::intrusive_list<tcb_t> threads;
   os::intrusive_list<pcb_t> children;
   class vfs *vfs;
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
-  int tidn = 0;
+  int tidn = 0;           // Next tid.
+  sigset sig;             // Signal handler.
+  dentry *pwd;            // Process working directory.
+  string execpath;        // The path to the executable.
+  sigset pending;         // Pending signals.
+  sigaction sigact[32];   // Signal actions.
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
   void clear();
   void clear_vma();
+  int open_file_from(const string &name, dentry *relbase, int flags, int mode = 0);
+  int open_file_from(const string &name, int dirfd, int flags, int mode = 0);
   int open_file(const string &name, int flags, int mode = 0);
   int close_file(int fd);
 
@@ -149,7 +161,7 @@ void suspend();
 int nextpid();
 
 // Forks a process.
-int fork();
+int clone(unsigned flags, void *usp, void *tls);
 
 // Replaces a process image.
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp);
@@ -168,15 +180,21 @@ tcb_t *make_kprocess(T fptr) {
   pcb->pid = nextpid();
   pcb->kproc = true;
   pcb->gid = pcb->uid = 0; // root
+  
   // We aren't lazy-allocating here.
   pcb->vfs = new vfs;
   pcb->vfs->root = initramfs->root;
   pcb->vfs->base = initramfs->root->belong;
+  pcb->vfs->ref();
+
+  pcb->ftbl = new process_file_table;
+  pcb->ftbl->ref();
 
   tcb->status = Init;
   tcb->pc = (va_t) fptr;
   tcb->usp = (va_t) vmalloc<16>(16_kb);
   tcb->pcb = pcb;
+  pcb->threads.push_back(tcb);
   init(tcb);
   return tcb;
 }

@@ -308,13 +308,6 @@ def build():
   # Step 3: Link all .a's into final binary
   link_libraries(lib_files, FINAL_BINARY)
 
-  # Recreate the symbol table, and recompile the file.
-  proc.check_call(["scripts/symtbl.sh"])
-  proc.check_call([COMPILER, *CXXFLAGS, "src/instr/leak.cpp", "-o", "build/instr/leak.o"])
-  proc.check_call([AR, "rcs", "build/instr/instr.o", *[f"build/instr/{x}" for x in os.listdir("build/instr")]])
-  print(f"Linking {FINAL_BINARY}")
-  link_libraries(lib_files, FINAL_BINARY)
-
   save_include_cache({
     "cache": include_cache,
     "hashes": include_hashes
@@ -335,7 +328,7 @@ if __name__ == "__main__":
 
   build()
   if args.objdump:
-    proc.run(f"riscv64-unknown-elf-objdump -D build/kernel > temp/kernel.s", shell=True)
+    proc.run(f"riscv64-unknown-elf-objdump -d build/kernel > temp/kernel.s", shell=True)
     exit(0)
 
   if args.run:

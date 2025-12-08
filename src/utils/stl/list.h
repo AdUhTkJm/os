@@ -21,17 +21,49 @@ class intrusive_list {
   T *head = nullptr, *tail = nullptr;
   size_t sz = 0;
 
-  intrusive_list_node<T> *into(T *node) {
+  intrusive_list_node<T> *into(T *node) const {
     return static_cast<intrusive_list_node<T> *>(node);
   }
+  friend class iterator;
 public:
-  using iterator = intrusive_list_node<T>*;
+  class iterator {
+  public:
+    T *node;
+    intrusive_list<T> &parent;
+    iterator(intrusive_list<T> &parent, T *p): node(p), parent(parent) {}
+
+    iterator &operator++() {
+      if (!node)
+        return *this;
+
+      if (node == parent.tail)
+        node = nullptr;
+      else
+        node = node->next;
+      return *this;
+    }
+
+    iterator &operator--() {
+      if (!node)
+        node = parent.tail;
+      else
+        node = node->prev;
+      return *this;
+    }
+
+    T *operator*() {
+      return node;
+    }
+
+    bool operator==(const iterator &other) const { return node == other.node; }
+    bool operator!=(const iterator &other) const { return node != other.node; }
+  };
 
   bool empty() const { return !head; }
 
   // Note: this won't work if `node` is inside the list.
   void push_back(T* node) {
-    iterator link = into(node);
+    intrusive_list_node<T> *link = into(node);
     link->prev = tail;
     link->next = nullptr;
 
@@ -47,8 +79,8 @@ public:
     if (!head)
       return;
 
-    T* front = head;
-    iterator link = into(front);
+    T *front = head;
+    intrusive_list_node<T> *link = into(front);
 
     head = link->next;
     if (head)
@@ -62,7 +94,7 @@ public:
 
   // This won't work if node is not inside the list.
   void erase(T* node) {
-    iterator link = into(node);
+    intrusive_list_node<T> *link = into(node);
 
     if (link->prev)
       into(link->prev)->next = link->next;
@@ -78,13 +110,13 @@ public:
     sz--;
   }
 
-  T &back() { return *tail; }
-  T &front() { return *head; }
-  const T &back() const { return *tail; }
-  const T &front() const { return *head; }
+  T *&back() { return tail; }
+  T *&front() { return head; }
+  T *back() const { return tail; }
+  T *front() const { return head; }
 
-  T *begin() { return head; }
-  T *end() { return nullptr; }
+  iterator begin() { return iterator(*this, head); }
+  iterator end() { return iterator(*this, nullptr); }
   size_t size() const { return sz; }
 };
 

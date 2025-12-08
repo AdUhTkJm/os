@@ -75,6 +75,7 @@ void main_high() {
   boot_pcb->pid = -1; // This is not a valid process.
   boot_pcb->pt_root = 0x80201000;
   boot_tcb->pcb = boot_pcb;
+  boot_pcb->threads.push_back(boot_tcb);
   scheduler.active = &boot_tcb;
 
   onboot = false;
@@ -110,16 +111,25 @@ void main_high() {
   pcb_t *pcb = new (os::permanent) pcb_t;
   tcb_t *tcb = new (os::permanent) tcb_t;
   tcb->pcb = pcb;
+  pcb->threads.push_back(tcb);
 
   pcb->vfs = boot_pcb->vfs;
   pcb->vfs->ref();
   file *init = pcb->vfs->open("/init", O_RDONLY);
   if (!init)
     panic("initramfs: cannot find /init");
+  
+  // Initialize the basic PCB structure.
   pcb->pid = nextpid();
   tcb->tid = pcb->nexttid();
   (*pidmap)[pcb->pid] = pcb;
-  pcb->uid = pcb->gid = pcb->euid = pcb->suid = 0;
+  pcb->uid = pcb->euid = pcb->suid = 0;
+  pcb->gid = pcb->egid = pcb->sgid = 0;
+  pcb->pwd = *pcb->vfs->lookup("/");
+  pcb->ftbl = new process_file_table;
+  pcb->ftbl->ref();
+  pcb->execpath = "/init";
+
   if (!load_elf(init, tcb).valid())
     panic("load_elf: cannot load /init");
   os::init(tcb);

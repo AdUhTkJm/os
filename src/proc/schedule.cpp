@@ -20,17 +20,17 @@ void scheduler_t::dispatch_impl() {
   assert(ready.size() != 0);
   // We first choose the next process.
   // Implement better scheduling later. This is round-robin.
-  auto next = ready.begin();
+  auto next = ready.front();
   // This is the boot-time PCB. When scheduler is activated,
   // it's now useless.
   [[unlikely]] if (next->pcb->pid == -1) {
     ready.pop_front();
-    next = ready.begin();
+    next = ready.front();
   }
   // This is the idle PCB. Don't dispatch it if we have something else.
   if (next->pcb->pid == 0 && ready.size() > 1) {
     ready.pop_front();
-    auto n = ready.begin();
+    auto n = ready.front();
     // We can't push `next` back when it's in list.
     ready.push_back(next);
     next = n;

@@ -9,6 +9,7 @@
 #include "stl/string.h"
 #include "stl/bitmap.h"
 #include "stl/list.h"
+#include "stl/atomic.h"
 
 #include "../lock/lock.h"
 
@@ -71,6 +72,18 @@ T *dyn_cast(U *t) {
     return nullptr;
   return cast<T>(t);
 }
+
+class shared {
+protected:
+  atomic<int> refcnt;
+public:
+  void drop() {
+    if (--refcnt)
+      delete this;
+  }
+
+  void ref() { refcnt++; }
+};
 
 }
 

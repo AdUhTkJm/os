@@ -90,10 +90,11 @@ public:
   virtual bool has_backup() = 0;
 };
 
+// This will increase the inode's refcnt, even though dentry doesn't.
 class file {
   atomic<unsigned> refcnt;
 public:
-  inode *node;
+  dentry *entry;
   size_t offset;
   int flags;
   enum whence {
@@ -103,7 +104,9 @@ public:
   void drop();
   void ref() { refcnt++; }
 
-  file(inode *node, int flags);
+  inode *node();
+
+  file(dentry *node, int flags);
   ~file();
 
   size_t read(void *buf, size_t len);
@@ -178,10 +181,8 @@ public:
 };
 
 class dentry;
-class vfs {
+class vfs : public shared {
 private:
-  atomic<unsigned> refcnt;
-
   // The way to create a new `fs` structure from the opaque `source`.
   // This is limited by the way of system call; we can't use templates.
   static static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> creators;
@@ -189,7 +190,7 @@ private:
   // TODO: make it an LRU cache.
   static static_storage<os::hashmap<pair<inode*, string>, dentry*>> dcache;
 
-  expected<dentry *> lookup_impl(const string &path, bool lastsym, int depth);
+  expected<dentry *> lookup_impl(const string &path, dentry *dentry, bool lastsym, int depth);
 public:
   struct mount_t : intrusive_list_node<mount_t> {
     // The path in the host filesystem.
@@ -212,6 +213,7 @@ public:
   // Returns the (optional) entry and an error code.
   // If `lastsym` is set to false, the last component will not be resolved when it is a symlink.
   expected<dentry *> lookup(const string &path, bool lastsym = true);
+  expected<dentry *> lookup_from(const string &path, dentry *dentry, bool lastsym = true);
   // When there is a process, use `pcb->open_file` instead. This is for boot.
   file *open(const string &path, int flags);
   void close(file *f);
@@ -222,9 +224,6 @@ public:
   int chroot(mount_t *mnt);
 
   static void invalidate(inode *node, const string &name);
-
-  void ref() { refcnt++; }
-  void drop() { if (--refcnt) delete this; }
 
   // Constructs a new in-memory `fs` structure according to the given fs.
   expected<fs*> get(const string &fsname, const char *src);
@@ -262,6 +261,10 @@ public:
 string dirname(const string &path);
 string basename(const string &path);
 string normalize(const string &path);
+
+bool readable(int uid, int gid, inode *node);
+bool writable(int uid, int gid, inode *node);
+bool executable(int uid, int gid, inode *node);
 
 }
 

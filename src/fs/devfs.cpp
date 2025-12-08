@@ -164,6 +164,19 @@ void block_inode::flush() {
   }
 }
 
+// urandom_inode::urandom_inode(): inode_impl(devfs, /*uid=*/0, /*gid=*/0) {
+//   type = File;
+//   mode = 0666; // rw-rw-rw-
+
+//   // Initialize with a weak entropy.
+//   uint64_t t = rv_rdtime();
+//   memcpy(key, &t, sizeof(t));
+//   for (int i = sizeof(t); i < 32; ++i)
+//       key[i] = i * 31;
+
+//   memset(nonce, 0, 12);
+// }
+
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {
   lnkcnt = 2;
 }

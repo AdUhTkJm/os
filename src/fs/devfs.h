@@ -22,25 +22,27 @@ public:
 
 extern static_storage<class devfs> devfs;
 
+#define DEV_INODE_DEFAULT_IMPL \
+  int create(const string &, filetype, int) override { return -ENOTDIR; } \
+  int unlink(const string &) override { return -ENOTDIR; } \
+  inode *lookup(const string &) override { return nullptr; } \
+  vector<item> list() override { return {}; } \
+  optional<string> readlink() override { return nullopt; } \
+  size_t size() override { return 0; } \
+  long inum() override { return (long) this; } \
+
 class console_inode : public inode_impl<console_inode> {
   os::list<tcb_t *> wait;
   spinlock lock;
 public:
-  using inode_impl::inode_impl;
+  DEV_INODE_DEFAULT_IMPL;
+
   console_inode(): inode_impl(devfs, /*uid=*/0, /*gid=*/0) {
     type = CharDevice;
     mode = 0666; // rw-rw-rw-
   }
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
-  int create(const string &, filetype, int) override { return -ENOTDIR; }
-  int unlink(const string &) override { return -ENOTDIR; }
-  inode *lookup(const string &) override { return nullptr; }
-  vector<item> list() override { return {}; }
-  optional<string> readlink() override { return nullopt; }
-
-  size_t size() override { return 0; }
-  long inum() override { return (long) this; }
 
   void wake();
 };
@@ -89,28 +91,34 @@ class block_inode : public inode_impl<block_inode> {
   cached_sector &load_sector(unsigned sector, bool force_reload = false);
   void flush_sector(unsigned sector);
 public:
-  using inode_impl::inode_impl;
+  DEV_INODE_DEFAULT_IMPL;
+
   block_inode(block_device *dev): inode_impl(devfs, /*uid=*/0, /*gid=*/0), dev(dev) {
     type = BlockDevice;
     mode = 0666; // rw-rw-rw-
   }
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
-  int create(const string &, filetype, int) override { return -ENOTDIR; }
-  int unlink(const string &) override { return -ENOTDIR; }
-  inode *lookup(const string &) override { return nullptr; }
-  vector<item> list() override { return {}; }
-  optional<string> readlink() override { return nullopt; }
 
-  size_t size() override { return 0; }
-  long inum() override { return (long) this; }
-
-  // Special functionality
+  // Special functionality.
   void flush();
 };
 
+class urandom_inode : public inode_impl<urandom_inode> {
+  unsigned char key[32], nonce[12];
+  unsigned long counter;
+public:
+  DEV_INODE_DEFAULT_IMPL;
+
+  urandom_inode();
+  size_t read(size_t offset, void *buf, size_t len, int flags) override;
+  size_t write(size_t, const void*, size_t, int flags) override;
+
+  void add_entropy(unsigned long entropy);
+};
 
 extern static_storage<console_inode> console;
+extern static_storage<urandom_inode> urandom;
 
 void mount_dev();
 
