@@ -222,6 +222,7 @@ int vfs::move_mount(dentry *src, dentry *dst) {
     dst->belong->children.push_back(src->mnt);
 
   src->mnt = nullptr;
+  src->parent = dst;
   dcache->clear();
   return 0;
 }
@@ -233,6 +234,7 @@ int vfs::chroot(mount_t *mnt) {
 
   base = mnt;
   root = mnt->root;
+  root->parent = root;
   base->parent = nullptr;
   base->host = base->root;
   dcache->clear();
@@ -332,6 +334,13 @@ file::file(dentry *entry, int flags): refcnt(0), entry(entry), offset(0), flags(
 void file::drop() {
   if (!--refcnt)
     delete this;
+}
+
+string dentry::path() const {
+  string result = name;
+  for (const dentry *p = parent; p && p->parent != p; p = p->parent)
+    result = p->name + "/" + result, printk("name = %s\n", result.c_str());
+  return "/" + result;
 }
 
 string basename(const string &path) {

@@ -5,16 +5,18 @@
 
 namespace {
   
-void console_input_handler(int irq) {
+[[gnu::no_instrument_function]] void console_input_handler(int irq) {
   // Read the register.
   char c = os::mmrd<char>(UART_BASE + UART_RBR);
-  os::console_input_buf->push_back(c);
-  os::console->wake();
-  os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
+  printk("received: %c\n", c);
   
-  // Ctrl+C
+  // Ctrl+C, for debugging (early exit)
   if (c == 0x03)
     sbi_system_reset();
+
+  os::console_input_buf->push_back(c);
+  os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
+  os::console->wake(); // Note that this function might not return.
 }
 
 }

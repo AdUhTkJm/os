@@ -26,7 +26,6 @@ long syshandle(trapframe *ksp) { \
   auto tcb = active();        \
   auto pcb = tcb->pcb;        \
   ksp->sepc += 4;             \
-  printk("syscall: %d\n", a7);\
   switch (a7) { {
 
 #define SYSHANDLE_END \
@@ -36,7 +35,6 @@ long syshandle(trapframe *ksp) { \
   } \
 }
 
-#define ARGS0() 
 #define ARGS1(a) reg_t a = a0;
 #define ARGS2(a, b) reg_t a = a0, b = a1;
 #define ARGS3(a, b, c) reg_t a = a0, b = a1, c = a2;
@@ -44,14 +42,25 @@ long syshandle(trapframe *ksp) { \
 #define ARGS5(a, b, c, d, e) reg_t a = a0, b = a1, c = a2, d = a3, e = a4;
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
+#define PRINT_FORMAT(x) "syscall " #x " (%d): "
+#define PRINT1(x, a) printk(PRINT_FORMAT(x) #a " = %p" "\n", syscall::x, a0);
+#define PRINT2(x, a, b) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p" "\n", syscall::x, a0, a1);
+#define PRINT3(x, a, b, c) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p" "\n", syscall::x, a0, a1, a2);
+#define PRINT4(x, a, b, c, d) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p" "\n", syscall::x, a0, a1, a2, a3);
+#define PRINT5(x, a, b, c, d, e) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p" "\n", syscall::x, a0, a1, a2, a3, a4);
+#define PRINT6(x, a, b, c, d, e, f) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p" "\n", syscall::x, a0, a1, a2, a3, a4, a5);
+
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
-#define PP_ARG_N(_1,_2,_3,_4,_5,_6,_7,_8,_9,N,...) N
-#define PP_RSEQ_N() 9,8,7,6,5,4,3,2,1,0
+#define PP_ARG_N(_1, _2, _3, _4, _5, _6, _7, _8, _9, N, ...) N
+#define PP_RSEQ_N() 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
 #define DISPATCHER_IMPL(N) ARGS##N
 #define DISPATCHER(N) DISPATCHER_IMPL(N)
+#define DISPATCHER_PRINT_IMPL(N) PRINT##N
+#define DISPATCHER_PRINT(N) DISPATCHER_PRINT_IMPL(N)
 #define ARGS(...) DISPATCHER(PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define HANDLE(x, ...) } case syscall::x: { ARGS(__VA_ARGS__)
+#define PRINT(x, ...) DISPATCHER_PRINT(PP_NARG(__VA_ARGS__))(x, __VA_ARGS__)
+#define HANDLE(x, ...) } case syscall::x: { ARGS(__VA_ARGS__) PRINT(x, __VA_ARGS__)
 
 /*
 See table:
@@ -82,7 +91,7 @@ HANDLE(lseek, fd, offset, _whence) {
 HANDLE(read, fd, _buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
-    return -ENOENT;
+    return -EBADF;
 
   char *buf = new char[len];
   auto ret = file->read(buf, len);
@@ -177,14 +186,34 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
   return min(link->size(), (unsigned long) size);
 }
 
+HANDLE(chdir, _path) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  auto fd = pcb->open_file(path->get(), O_RDONLY);
+  if (fd < 0)
+    return fd;
+  pcb->pwd = pcb->ftbl->at(fd)->entry;
+  return 0;
+}
+
+HANDLE(fchdir, fd) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  pcb->pwd = file->entry;
+  return 0;
+}
+
 HANDLE(brk, addr) {
   return pcb->brk(addr);
 }
 
 HANDLE(dup, fd) {
-  if (!pcb->ftbl->count(fd))
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
     return -EBADF;
-  return pcb->ftbl->allocate(pcb->ftbl->at(fd));
+  return pcb->ftbl->allocate(file);
 }
 
 HANDLE(getpid, _) {
@@ -221,6 +250,15 @@ HANDLE(set_tid_address, _) {
 
 HANDLE(getrandom, _) {
   return 0; // TODO
+}
+
+HANDLE(getcwd, buf, size) {
+  auto path = pcb->pwd->path();
+  if (path.size() + 1 >= (unsigned long) size)
+    return -ERANGE;
+  copy_to_user((void*) buf, path.c_str(), path.size() + 1);
+  printk("cwd = %s\n", path.c_str());
+  return 0;
 }
 
 HANDLE(get_robust_list, pid, headptr, size) {
@@ -269,9 +307,9 @@ HANDLE(fcntl, fd, ty, args) {
 }
 
 HANDLE(getdents64, fd, dirents, cnt) {
-  if (!pcb->ftbl->count(fd))
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
     return -EBADF;
-  auto file = pcb->ftbl->at(a0);
   auto items = file->node()->list();
   
   char *pos = (char *) dirents;

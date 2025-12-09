@@ -37,11 +37,15 @@ size_t console_inode::write(size_t offset, const void *buf, size_t len, int) {
 }
 
 void console_inode::wake() {
-  synchronized syn(lock);
-  if (!wait.size())
-    return;
-  auto front = wait.front();
-  wait.pop_front();
+  os::tcb_t *front;
+  // Note that since wakeup() might not return, we must not lock the entire function.
+  {
+    synchronized syn(lock);
+    if (!wait.size())
+      return;
+    front = wait.front();
+    wait.pop_front();
+  }
   scheduler.wakeup(front);
 }
 
@@ -183,7 +187,7 @@ devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {
 
 devfs::devfs() {
   auto node = new devroot(this);
-  root = new dentry("/dev", node, nullptr);
+  root = new dentry("dev", node, nullptr);
 }
 
 void mount_dev() {

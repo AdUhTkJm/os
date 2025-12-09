@@ -256,6 +256,8 @@ public:
   
   dentry(const string &name, inode *node, vfs::mount_t *belong, dentry *parent = nullptr):
     parent(parent), name(name), node(node), belong(belong) {}
+
+  string path() const;
 };
 
 string dirname(const string &path);

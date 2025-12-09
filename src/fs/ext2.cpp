@@ -466,7 +466,7 @@ ext2::ext2(inode *device): device(device) {
   delete[] buf;
 
   // Root is always at inode 2.
-  root = new dentry("/", read_from_inum(2), nullptr);
+  root = new dentry("", read_from_inum(2), nullptr);
   printk("ext2 version = %d.%d\n", superblock.ver_major, superblock.ver_minor);
 }
 

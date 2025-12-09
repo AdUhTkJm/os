@@ -355,6 +355,7 @@ int clone(unsigned flags, void *usp, void *tls) {
     cp->suid = pp->euid;
     cp->gid = pp->gid;
     cp->execpath = pp->execpath;
+    cp->pwd = pp->pwd;
   }
   scheduler.add(ct);
   return cp->pid;

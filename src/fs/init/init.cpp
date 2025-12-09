@@ -217,10 +217,13 @@ extern "C" void _start() {
 
     // Switch root to ext2.
     syscall((reg_t) "/mnt", chroot);
+
+    // Change current directory.
+    syscall((reg_t) "/", chdir);
     
     // Execute the shell.
-    const char *argv[] = { "/bin/busybox", "echo", "Hello World!\n", nullptr };
-    syscall((reg_t) "/bin/busybox", (reg_t) argv, 0, execve);
+    const char *argv[] = { "/bin/sh", nullptr };
+    syscall((reg_t) "/bin/sh", (reg_t) argv, 0, execve);
 
     printf("unreachable\n");
   }
