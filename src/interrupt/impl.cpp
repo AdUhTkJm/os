@@ -1,5 +1,8 @@
+#include "sysret.h"
 #include "../fs/vfs.h"
+#include "../fs/devfs.h"
 #include "../proc/schedule.h"
+#include "../driver/tty/tty.h"
 
 namespace os::detail {
 
@@ -19,7 +22,7 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
     return -EBUSY;
 
   if (flags & MS_MOVE) {
-    auto source = vfs->lookup(src);
+    auto source = vfs->lookup(src, /*lastsym=*/false);
     if (!source)
       return -ENOENT;
     vfs::move_mount(*source, mntpoint);
@@ -39,7 +42,8 @@ int fcntl(int fd, int ty, int arg) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  if (!pcb->ftbl->count(fd))
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
     return -EBADF;
   switch (ty) {
   case F_SETFD:
@@ -47,6 +51,13 @@ int fcntl(int fd, int ty, int arg) {
     return 0;
   case F_GETFD:
     return *pcb->ftbl->get_desc(fd);
+  case F_DUPFD:
+    return pcb->ftbl->allocate_from(file, arg);
+  case F_DUPFD_CLOEXEC: {
+    int newfd = pcb->ftbl->allocate_from(file, arg);
+    pcb->ftbl->set_desc(newfd, FD_CLOEXEC);
+    return newfd;
+  }
   default:
     return -EINVAL;
   }
@@ -102,6 +113,68 @@ int mprotect(unsigned long start, unsigned long len, int prot) {
     os::pmap(pa, (va_t) p, MAP_4KB, flags);
   }
   return 0;
+}
+
+int ioctl(int fd, int op, void *argp) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  auto tty = dyn_cast<tty_inode>(file->node());
+  auto &dev = tty->tty;
+  if (!tty)
+    return -ENOTTY;
+
+  switch (op) {
+  case TCGETS: {
+    termio io {
+      .c_iflag = 0,
+      .c_oflag = 0,
+      .c_cflag = 0,
+      .c_lflag = dev.flags,
+      .c_line = 0,
+      .c_cc = {}
+    };
+    copy_to_user(argp, &io, sizeof(io));
+    return 0;
+  }
+  case TCSETS: {
+    auto p = copy_from_user(argp, sizeof(termio));
+    if (!p)
+      return p;
+    termio io = *(termio *) p->get();
+    printk("flags: %x %x %x %x, char: %c\n", io.c_iflag, io.c_oflag, io.c_cflag, io.c_lflag, io.c_cc[0]);
+    dev.flags = io.c_lflag;
+    return 0;
+  }
+  case TIOCGPGRP: {
+    copy_to_user(argp, &dev.pgid, sizeof(int));
+    return 0;
+  }
+  case TIOCSPGRP: {
+    auto p = copy_from_user(argp, sizeof(int));
+    if (!p)
+      return p;
+    int pgid = *(int*) p->get();
+    dev.pgid = pgid;
+    return 0;
+  }
+  case TIOCGWINSZ: {
+    winsize sz {
+      .ws_row = dev.height,
+      .ws_col = dev.width,
+      .ws_xpixel = 800,
+      .ws_ypixel = 600,
+    };
+    copy_to_user(argp, &sz, sizeof(sz));
+    return 0;
+  }
+  default:
+    return -EINVAL;
+  }
 }
 
 }

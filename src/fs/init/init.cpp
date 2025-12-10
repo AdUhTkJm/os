@@ -210,16 +210,22 @@ extern "C" void _start() {
   unsigned long usp = syscall(p + 16384, brk);
   int pid = syscall(0, usp, clone);
   if (pid == 0) {
-
     // Move mount.
-    syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, 8192, mount);
-    syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, 8192, mount);
+    syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, /*MS_MOVE=*/8192, mount);
+    syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, /*MS_MOVE=*/8192, mount);
 
     // Switch root to ext2.
     syscall((reg_t) "/mnt", chroot);
 
     // Change current directory.
     syscall((reg_t) "/", chdir);
+
+    // Redirect stdin/stdout/stderr to tty.
+    int in = syscall(-1, (reg_t) "/dev/tty", /*O_RDONLY=*/0, 0, openat);
+    int out = syscall(-1, (reg_t) "/dev/tty", /*O_WRONLY=*/1, 0, openat);
+    syscall(in, /*stdin=*/0, 0, dup3);
+    syscall(out, /*stdout*/1, 0, dup3);
+    syscall(out, /*stderr*/2, 0, dup3);
     
     // Execute the shell.
     const char *argv[] = { "/bin/sh", nullptr };

@@ -23,9 +23,9 @@ public:
   os::vector<item> list() override;
   optional<string> readlink() override { return nullopt; }
 
-  size_t size() override { return data.size(); }
+  size_t size() const override { return data.size(); }
   // Note that `data.data()` will change, so we can't use it.
-  long inum() override { return (long) this; }
+  long inum() const override { return (long) this; }
 
   void load(void *data, size_t sz);
 };

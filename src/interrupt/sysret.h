@@ -179,4 +179,29 @@ struct iovec {
   size_t iov_len;	/* Length of data.  */
 };
 
+// From <sys/ioctl.h>
+struct winsize {
+  unsigned short int ws_row;
+  unsigned short int ws_col;
+  unsigned short int ws_xpixel;
+  unsigned short int ws_ypixel;
+};
+
+struct termio {
+  unsigned short int c_iflag;		/* input mode flags */
+  unsigned short int c_oflag;		/* output mode flags */
+  unsigned short int c_cflag;		/* control mode flags */
+  unsigned short int c_lflag;		/* local mode flags */
+  unsigned char c_line;		      /* line discipline */
+  unsigned char c_cc[8];		    /* control characters */
+};
+
+struct utsname {
+  char sysname[65]; 
+  char nodename[65];
+  char release[65];
+  char version[65];
+  char machine[65];
+};
+
 #endif

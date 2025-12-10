@@ -102,12 +102,12 @@ void main_high() {
   vfs::record("tmp", tmp_creator);
   
   // Create an idle kernel process.
+  pidmap.construct();
   scheduler.init();
   auto k_idle = make_kprocess(idle);
   scheduler.add(k_idle);
 
   // Start the init user process.
-  pidmap.construct();
   pcb_t *pcb = new (os::permanent) pcb_t;
   tcb_t *tcb = new (os::permanent) tcb_t;
   tcb->pcb = pcb;
@@ -120,7 +120,7 @@ void main_high() {
     panic("initramfs: cannot find /init");
   
   // Initialize the basic PCB structure.
-  pcb->pid = nextpid();
+  pcb->pid = pcb->pgid = pcb->sid = nextpid();
   tcb->tid = pcb->nexttid();
   (*pidmap)[pcb->pid] = pcb;
   pcb->uid = pcb->euid = pcb->suid = 0;

@@ -27,8 +27,10 @@
 
 #define FD_CLOEXEC  0x1
 
+#define F_DUPFD 0
 #define F_GETFD 1
 #define F_SETFD 2
+#define F_DUPFD_CLOEXEC 1030 /* Duplicate file descriptor with close-on-exit set.  */
 
 #define DT_UNKNOWN	0
 #define DT_FIFO	1
@@ -91,8 +93,7 @@ public:
 };
 
 // This will increase the inode's refcnt, even though dentry doesn't.
-class file {
-  atomic<unsigned> refcnt;
+class file : public shared {
 public:
   dentry *entry;
   size_t offset;
@@ -100,9 +101,6 @@ public:
   enum whence {
     begin, current, end
   };
-
-  void drop();
-  void ref() { refcnt++; }
 
   inode *node();
 
@@ -148,8 +146,8 @@ public:
   // List all children.
   virtual os::vector<item> list() = 0;
   
-  virtual size_t size() = 0;
-  virtual long inum() = 0;
+  virtual size_t size() const = 0;
+  virtual long inum() const = 0;
 
   // Mark this inode as unused.
   // Possibly deletes itself when refcount drops to zero.
@@ -158,6 +156,8 @@ public:
   void unlinked();
   void linked() { lnkcnt++; }
   unsigned nlink() { return lnkcnt; }
+
+  bool same(const inode *other) const { return inum() == other->inum(); }
 
   filetype type;
   class fs *fs;
@@ -188,7 +188,7 @@ private:
   static static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> creators;
   static spinlock mountlock;
   // TODO: make it an LRU cache.
-  static static_storage<os::hashmap<pair<inode*, string>, dentry*>> dcache;
+  static static_storage<os::hashmap<pair<dentry*, string>, dentry*>> dcache;
 
   expected<dentry *> lookup_impl(const string &path, dentry *dentry, bool lastsym, int depth);
 public:
@@ -203,12 +203,11 @@ public:
     intrusive_list<mount_t> children;
     int flags;
   } *base;
-  dentry *root = nullptr;
 
   // Don't copy refcnt.
   vfs() {}
-  vfs(const vfs &other): base(other.base), root(other.root) {}
-  vfs &operator=(const vfs &other) { base = other.base; root = other.root; return *this; }
+  vfs(const vfs &other): base(other.base) {}
+  vfs &operator=(const vfs &other) { base = other.base; return *this; }
 
   // Returns the (optional) entry and an error code.
   // If `lastsym` is set to false, the last component will not be resolved when it is a symlink.
@@ -258,6 +257,7 @@ public:
     parent(parent), name(name), node(node), belong(belong) {}
 
   string path() const;
+  bool same(dentry *other) const;
 };
 
 string dirname(const string &path);

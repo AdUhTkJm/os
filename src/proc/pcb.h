@@ -9,6 +9,12 @@
 #include "../utils/stl/optional.h"
 #include "../fs/initramfs.h"
 
+namespace os::tty {
+
+struct tty;
+
+}
+
 namespace os {
 
 #define __user
@@ -56,6 +62,8 @@ private:
   os::hashmap<int, fddesc> desc;
 public:
   int allocate(file *f, int fd = -1);
+  // The semantics is like F_DUPFD, where `fd` isn't exact as in dup3, but a start-to-search point.
+  int allocate_from(file *f, int fd);
   void deallocate(int fd);
   void clear();
   int count(int fd) { return open.count(fd); }
@@ -103,8 +111,9 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   process_file_table*ftbl;// Process file table.
   int uid, euid, suid;
   int gid, egid, sgid;
-  int pid;                // Process id. <4 byte pad here!>
+  int pid, pgid, sid;
   bool kproc;             // Kernel process.
+  bool execd = false;     // Has performed `exec`.
   os::intrusive_list<tcb_t> threads;
   os::intrusive_list<pcb_t> children;
   class vfs *vfs;
@@ -115,6 +124,7 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   string execpath;        // The path to the executable.
   sigset pending;         // Pending signals.
   sigaction sigact[32];   // Signal actions.
+  os::tty::tty *tty;      // Terminal typewriter.
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
@@ -177,13 +187,12 @@ template<class T> requires (is_function_v<remove_pointer_t<T>>)
 tcb_t *make_kprocess(T fptr) {
   pcb_t *pcb = new pcb_t;
   tcb_t *tcb = new tcb_t;
-  pcb->pid = nextpid();
+  pcb->pid = pcb->pgid = pcb->sid = nextpid();
   pcb->kproc = true;
   pcb->gid = pcb->uid = 0; // root
   
   // We aren't lazy-allocating here.
   pcb->vfs = new vfs;
-  pcb->vfs->root = initramfs->root;
   pcb->vfs->base = initramfs->root->belong;
   pcb->vfs->ref();
 
@@ -195,6 +204,7 @@ tcb_t *make_kprocess(T fptr) {
   tcb->usp = (va_t) vmalloc<16>(16_kb);
   tcb->pcb = pcb;
   pcb->threads.push_back(tcb);
+  pidmap->insert(pcb->pid, pcb);
   init(tcb);
   return tcb;
 }

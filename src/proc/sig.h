@@ -3,6 +3,8 @@
 
 namespace os {
 
+// See man signal(7). It can also be found online here:
+// https://man7.org/linux/man-pages/man7/signal.7.html
 enum signals : unsigned char {
   SIGNONE  = 0,
   SIGHUP   = 1, 
@@ -16,9 +18,10 @@ enum signals : unsigned char {
   SIGSEGV  = 11,
   SIGALRM  = 14,
   SIGTERM  = 15,
-  SIGSTOP  = 19,
-  SIGCONT  = 20,
   SIGCHLD  = 17,
+  SIGCONT  = 18,
+  SIGSTOP  = 19,
+  SIGTSTP  = 20,
 };
 
 struct sigset {

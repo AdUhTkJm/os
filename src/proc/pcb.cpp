@@ -29,6 +29,19 @@ int process_file_table::allocate(file *f, int fd) {
   }
 }
 
+int process_file_table::allocate_from(file *f, int fd) {
+  f->ref();
+
+  // Find a usable descriptor from `fd`.
+  for (int i = fd; ; i++) {
+    if (!open.count(i)) {
+      open[i] = f;
+      desc[fd] = 0;
+      return i;
+    }
+  }
+}
+
 void process_file_table::deallocate(int fd) {
   if (!open.count(fd))
     return;
@@ -57,7 +70,7 @@ void pcb_t::clear_vma() {
     if (vma.backup)
       vma.backup->drop();
   }
-  this->vma.clear();
+  vma.clear();
 }
 
 int pcb_t::open_file(const string &path, int flags, int mode) {
@@ -329,15 +342,11 @@ int clone(unsigned flags, void *usp, void *tls) {
   
   TLBRefreshGuard guard;
 
-  if (share_files) {
-    cp->ftbl = pp->ftbl;
-  } else {
-    // Copy the table, but not the files.
-    cp->ftbl = new process_file_table(*pp->ftbl);
-    for (auto [_, f] : *cp->ftbl)
-      f->ref();
-  }
+  // Copy the table, but not the files.
+  cp->ftbl = share_files ? pp->ftbl : new process_file_table(*pp->ftbl);
   cp->ftbl->ref();
+  for (auto [_, f] : *cp->ftbl)
+    f->ref();
 
   // Copy VFS context.
   cp->vfs = share_fs ? pp->vfs : new vfs(*pp->vfs);
@@ -356,6 +365,8 @@ int clone(unsigned flags, void *usp, void *tls) {
     cp->gid = pp->gid;
     cp->execpath = pp->execpath;
     cp->pwd = pp->pwd;
+    cp->pgid = pp->pgid;
+    cp->sid = pp->sid;
   }
   scheduler.add(ct);
   return cp->pid;
@@ -399,7 +410,9 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     TLBRefreshGuard guard;
     CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   }
+  printk("clearing vma\n");
   pcb->clear_vma();
+  printk("finished\n");
   
   int fd = pcb->open_file(path, O_RDONLY);
   auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
@@ -418,6 +431,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   }
   pcb->close_file(fd);
   pcb->execpath = path;
+  pcb->execd = true;
 
   // Reallocate the page table and shallow-copy the higher half of kernel space.
   // We don't call init() because we don't change ksp, and don't reopen stdin/stdout/stderr.

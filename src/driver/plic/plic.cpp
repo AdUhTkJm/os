@@ -8,7 +8,6 @@ namespace {
 [[gnu::no_instrument_function]] void console_input_handler(int irq) {
   // Read the register.
   char c = os::mmrd<char>(UART_BASE + UART_RBR);
-  printk("received: %c\n", c);
   
   // Ctrl+C, for debugging (early exit)
   if (c == 0x03)

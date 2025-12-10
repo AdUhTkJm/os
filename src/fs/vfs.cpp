@@ -6,7 +6,7 @@ namespace os {
 static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> vfs::creators;
 spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
-static_storage<os::hashmap<pair<inode*, string>, dentry*>> vfs::dcache;
+static_storage<os::hashmap<pair<dentry*, string>, dentry*>> vfs::dcache;
 
 inode *file::node() {
   return entry->node;
@@ -84,46 +84,32 @@ bool executable(int uid, int gid, inode *node) {
   return true;
 }
 
+bool dentry::same(dentry *other) const {
+  if (this == other)
+    return true;
+  if (!node->same(other->node))
+    return false;
+  return path() == other->path();
+}
+
 expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsym, int depth) {
   if (depth < 0)
-    return -ENOENT;
+    return -ELOOP;
 
-  // We assume the first mounted FS is the root of the entire VFS.
-  assert(base && "base shouldn't be empty on lookup");
+  // Normalize absolute paths
+  dentry *cur = (path.size() > 0 && path[0] == '/') ? base->root : from;
 
-  if (path == "/")
-    return from;
-
-  dentry *cur = from;
   vector<string> comps;
+  for (auto comp : split(path, "/"))
+    comps.push_back(comp);
+
   pcb_t *pcb = active()->pcb;
   int uid = pcb->euid, gid = pcb->egid;
 
-  for (auto name : split(path, "/")) {
-    comps.push_back(name);
+  for (size_t i = 0; i < comps.size(); i++) {
+    const string &name = comps[i];
     if (!cur)
       return -ENOTDIR;
-
-    if (cur->node->type == inode::Link) {
-      // Check read access.
-      if (!readable(uid, gid, cur->node))
-        return -EPERM;
-
-      auto link = cur->node->readlink();
-      if (!link)
-        return -ENOENT;
-      comps.pop_back();
-      string v = resolve_link(string("/").join(comps), *link);
-      printk("link resolved to %s\n", v.c_str());
-      return lookup_impl(v, from, lastsym, depth - 1);
-    }
-    
-    if (cur->node->type != inode::Dir)
-      return -ENOTDIR;
-    
-    // Check lookup access.
-    if (!executable(uid, gid, cur->node))
-      return -EPERM;
 
     {
       synchronized syn(mountlock);
@@ -135,50 +121,76 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
       continue;
 
     if (name == "..") {
-      if (cur == cur->belong->root)
-        cur = cur->belong->host;
-      else if (cur->parent) // Note that `/` won't have a parent.
+      if (cur->same(cur->belong->root)) {
+        if (cur->belong->parent)
+          cur = cur->belong->host->parent;
+      } else if (cur->parent)
         cur = cur->parent;
-    }
-
-    auto pair = os::pair { cur->node, name };
-    if (dcache->count(pair)) {
-      cur = (*dcache)[pair];
       continue;
     }
 
-    if (auto inode = cur->node->lookup(name)) {
-      cur = new dentry(name, inode, cur->belong, cur);
-      auto children = cur->belong->children;
+    if (cur->node->type != inode::Dir)
+        return -ENOTDIR;
 
-      // Check whether this is a mount point.
-      //for (auto child : children) {
-      for (auto child : children) {
-        if (child->host->node == cur->node) {
-          cur->mnt = child;
-          break;
+    if (!executable(uid, gid, cur->node))
+        return -EPERM;
+
+    auto key = pair { cur, name };
+    if (dcache->count(key))
+      cur = (*dcache)[key];
+    else {
+      auto inode = cur->node->lookup(name);
+      if (!inode)
+        return -ENOENT;
+
+      dentry *child = new dentry(name, inode, cur->belong, cur);
+      (*dcache)[key] = child;
+      cur = child;
+
+      {
+        synchronized syn(mountlock);
+        for (auto m : cur->belong->children) {
+          if (m->host->same(cur)) {
+            cur->mnt = m;
+            break;
+          }
         }
       }
-
-      (*dcache)[pair] = cur;
-      continue;
     }
-  
-    return -ENOENT;
+
+    // Handle symlink in the middle of the path.
+    if (cur->node->type == inode::Link && i + 1 < comps.size()) {
+      if (!readable(uid, gid, cur->node))
+        return -EPERM;
+
+      auto link = cur->node->readlink();
+      if (!link)
+        return -ENOENT;
+
+      string resolved = resolve_link(cur->parent->path(), *link);
+
+      // Append the rest of the path.
+      for (size_t j = i + 1; j < comps.size(); ++j)
+        resolved += "/" + comps[j];
+
+      return lookup_impl(resolved, from, lastsym, depth - 1);
+    }
   }
 
-  if (lastsym && cur->mnt)
-    cur = cur->mnt->root;
-  
+  // Final component symlink resolution.
   if (lastsym && cur->node->type == inode::Link) {
     auto link = cur->node->readlink();
     if (!link)
       return -ENOENT;
 
-    string v = resolve_link(dirname(path), *link);
-    printk("link resolved to %s\n", v.c_str());
-    return lookup_impl(v, from, lastsym, depth - 1);
+    string resolved = resolve_link(cur->parent->path(), *link);
+    return lookup_impl(resolved, from, lastsym, depth - 1);
   }
+
+  // Final mount traversal.
+  if (lastsym && cur->mnt)
+      cur = cur->mnt->root;
+
   return cur;
 }
 
@@ -195,34 +207,35 @@ expected<dentry*> vfs::lookup_from(const string &path, dentry *dentry, bool last
 // Moves the mount from `source` to `target`.
 int vfs::move_mount(dentry *src, dentry *dst) {
   synchronized syn(mountlock);
-
-  if (!src->mnt)
+  mount_t *mount = src->mnt;
+  if (!mount)
     return -EINVAL;
 
   if (dst->mnt)
     return -EBUSY;
 
-  assert(src->mnt->host == src);
-  if (dst->belong == src->mnt)
+  assert(mount->host->same(src));
+  if (dst->belong == mount)
     return -ELOOP;
 
   // Detach from old parent.
-  if (mount_t *parent = src->mnt->parent)
-    parent->children.erase(src->mnt);
+  if (mount_t *parent = mount->parent)
+    parent->children.erase(mount);
   
   // The mount now becomes a chilren to the mount point of dst.
-  src->mnt->host = dst;
-  src->mnt->parent = dst->belong;
+  mount->host = dst;
+  mount->parent = dst->belong;
+  mount->root->parent = dst->parent;
+  mount->root->name = dst->name;
   
   // The new host dentry now points to the moved mount.
-  dst->mnt = src->mnt;
+  dst->mnt = mount;
   
   // Add the mount to its new parent's children list.
   if (dst->belong)
-    dst->belong->children.push_back(src->mnt);
+    dst->belong->children.push_back(mount);
 
   src->mnt = nullptr;
-  src->parent = dst;
   dcache->clear();
   return 0;
 }
@@ -233,8 +246,6 @@ int vfs::chroot(mount_t *mnt) {
     return -EINVAL;
 
   base = mnt;
-  root = mnt->root;
-  root->parent = root;
   base->parent = nullptr;
   base->host = base->root;
   dcache->clear();
@@ -242,7 +253,7 @@ int vfs::chroot(mount_t *mnt) {
 }
 
 void vfs::invalidate(inode *node, const string &name) {
-  dcache->erase({ node, name });
+  (void) node; (void) name;
 }
 
 file *vfs::open(const string &path, int flags) {
@@ -267,7 +278,8 @@ void vfs::mount(dentry *host, dentry *root, int flags) {
     .children = intrusive_list<mount_t>(), .flags = flags
   };
   root->belong = mount;
-  root->parent = host;
+  root->parent = host->parent;
+  root->name = host->name;
   host->belong->children.push_back(mount);
   host->mnt = mount;
 }
@@ -327,20 +339,19 @@ file::~file() {
   node()->drop();
 }
 
-file::file(dentry *entry, int flags): refcnt(0), entry(entry), offset(0), flags(flags) {
+file::file(dentry *entry, int flags): entry(entry), offset(0), flags(flags) {
+  refcnt = 0;
   node()->ref();
-}
-
-void file::drop() {
-  if (!--refcnt)
-    delete this;
 }
 
 string dentry::path() const {
   string result = name;
   for (const dentry *p = parent; p && p->parent != p; p = p->parent)
-    result = p->name + "/" + result, printk("name = %s\n", result.c_str());
-  return "/" + result;
+    result = p->name + "/" + result;
+  
+  if (result == "")
+    return "/";
+  return result;
 }
 
 string basename(const string &path) {

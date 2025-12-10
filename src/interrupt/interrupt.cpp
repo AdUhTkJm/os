@@ -216,6 +216,23 @@ HANDLE(dup, fd) {
   return pcb->ftbl->allocate(file);
 }
 
+HANDLE(dup3, oldfd, newfd, flags) {
+  if (oldfd == newfd)
+    return -EINVAL;
+
+  auto file = pcb->ftbl->at(oldfd);
+  if (!file)
+    return -EBADF;
+
+  // Currently `flags` can only be these two values.
+  if (flags && flags != O_CLOEXEC)
+    return -EINVAL;
+
+  pcb->ftbl->allocate(file, newfd);
+  pcb->ftbl->set_desc(newfd, flags);
+  return newfd;
+}
+
 HANDLE(getpid, _) {
   return pcb->pid;
 }
@@ -252,12 +269,72 @@ HANDLE(getrandom, _) {
   return 0; // TODO
 }
 
+HANDLE(setpgid, pid, pgid) {
+  if (pid != pcb->pid)
+    return -EPERM;
+  auto ftgt = pidmap->find(pid);
+  if (ftgt == pidmap->end())
+    return -ESRCH;
+  auto [_, tgt] = *ftgt;
+
+  // Must be in the same session.
+  if (pcb->sid != tgt->sid)
+    return -EPERM;
+
+  // Target must not be a session leader.
+  if (tgt->sid == tgt->pid)
+    return -EPERM;
+
+  // Target cannot have executed `execve`.
+  if (pcb->execd)
+    return -EACCES;
+
+  // Target must be owned by the process.
+  if (pcb->uid != tgt->uid && pcb->euid != tgt->uid && pcb->uid != 0)
+    return -EPERM;
+
+  // Check the current session of pgid.
+  for (const auto &[_, p] : *pidmap) {
+    if (p->pgid == pgid) {
+      if (p->sid != tgt->sid)
+        return -EPERM;
+      break;
+    }
+  }
+
+  tgt->pgid = pgid;
+  return 0;
+}
+
+HANDLE(getpgid, pid) {
+  auto ftgt = pidmap->find(pid);
+  if (ftgt == pidmap->end())
+    return -ESRCH;
+  auto [_, tgt] = *ftgt;
+
+  if (pcb->uid != tgt->uid && pcb->euid != tgt->uid && pcb->uid != 0)
+    return -EPERM;
+
+  return tgt->pgid;
+}
+
 HANDLE(getcwd, buf, size) {
   auto path = pcb->pwd->path();
   if (path.size() + 1 >= (unsigned long) size)
     return -ERANGE;
   copy_to_user((void*) buf, path.c_str(), path.size() + 1);
-  printk("cwd = %s\n", path.c_str());
+  return 0;
+}
+
+HANDLE(uname, buf) {
+  utsname name {
+    .sysname = "Linux",
+    .nodename = "",
+    .release = "0.1",
+    .version = "0.1",
+    .machine = "RISC-V64",
+  };
+  
   return 0;
 }
 
@@ -281,11 +358,11 @@ HANDLE(clone, flags, stack, parenttid, tls, childtid) {
   return os::clone(flags, (void *) stack, (void *) tls);
 }
 
-HANDLE(execve, apath, aargv, aenvp) {
+HANDLE(execve, _path, _argv, _envp) {
   EnableAccessToUserMemory guard;
-  auto path = copy_from_user((char *) apath);
-  auto argv = copy_from_user((char **) aargv);
-  auto envp = copy_from_user((char **) aenvp);
+  auto path = copy_from_user((char *) _path);
+  auto argv = copy_from_user((char **) _argv);
+  auto envp = copy_from_user((char **) _envp);
   if (!path || !argv || !envp)
     return -EFAULT;
   return exec(path->get(), *argv, *envp);
@@ -328,17 +405,17 @@ HANDLE(getdents64, fd, dirents, cnt) {
   return va_t(pos) - dirents;
 }
 
-HANDLE(mount, asrc, atgt, afsty, flags, data) {
+HANDLE(mount, _src, _tgt, _fsty, flags, data) {
   // Ignore the data for now.
-  auto src = copy_from_user((char*) asrc);
+  auto src = copy_from_user((char*) _src);
   if (!src)
     return src;
 
-  auto tgt = copy_from_user((char*) atgt);
+  auto tgt = copy_from_user((char*) _tgt);
   if (!tgt)
     return tgt;
 
-  auto fsty = copy_from_user((char*) afsty);
+  auto fsty = copy_from_user((char*) _fsty);
   if (!fsty)
     return fsty;
 
@@ -371,6 +448,10 @@ HANDLE(prlimit64, pid, resource, new_rlim, old_rlim) {
   return -1;
 }
 
+HANDLE(ioctl, fd, op, argp) {
+  return detail::ioctl(fd, op, (void *) argp);
+}
+
 HANDLE(clock_gettime, id, tp) {
   timespec spec;
   if (id == CLOCK_MONOTONIC) {
@@ -395,21 +476,22 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
     printk("no shared mmap yet\n");
     return -EINVAL;
   }
-  if (fixed) {
-    printk("no fixed yet\n");
-    return -EINVAL;
-  }
 
-  // Ignore the hint `addr` for now.
-  (void) addr;
-
-  auto lowest = stack_top;
-  // Find the lowest VMA that we must not overlap with.
-  // In other words, this is the cap of the address.
-  for (auto &vma : pcb->vma) {
-    if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
-      continue;
-    lowest = min(lowest, vma.begin);
+  va_t start, end;
+  if (!fixed) {
+    end = stack_top;
+    // Find the lowest VMA that we must not overlap with.
+    // In other words, this is the cap of the address.
+    for (auto &vma : pcb->vma) {
+      if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
+        continue;
+      end = min(end, vma.begin);
+    }
+    end = rounddown<PAGE_SIZE>(end);
+    start = rounddown<PAGE_SIZE>(end - len);
+  } else {
+    start = rounddown<PAGE_SIZE>(addr);
+    end = roundup<PAGE_SIZE>(addr + len);
   }
   
   file *backup = nullptr;
@@ -424,15 +506,14 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
   }
 
   // Now allocate near this cap. Note that this has to be page-aligned.
-  auto end = rounddown<PAGE_SIZE>(lowest);
-  auto start = rounddown<PAGE_SIZE>(end - len);
   vma::vma_t vma {
     .begin = start, .end = end,
     .prot = (int) prot, .flags = (int) flags,
     .backup = backup, .offset = (size_t) offset,
     .maxread = (size_t) len
   };
-  pcb->vma.push(vma);
+  if (pcb->vma.push(vma) != result::success)
+    return -EINVAL;
   return vma.begin;
 }
 
@@ -483,10 +564,25 @@ HANDLE(rt_sigprocmask, how, set, oldset, size) {
   return 0;
 }
 
+HANDLE(kill, pid, sig) {
+  auto fproc = pidmap->find(pid);
+  if (fproc == pidmap->end())
+    return -ESRCH;
+  auto [_, proc] = *fproc;
+  
+  if (proc->uid != pcb->uid && proc->uid != pcb->euid && pcb->uid != 0)
+    return -EPERM;
+
+  proc->pending.add(sig);
+  return 0;
+}
+
 HANDLE(tgkill, pid, tid, sig) {
-  auto proc = (*pidmap)[pid];
-  if (!proc)
-    return -EINVAL;
+  auto fproc = pidmap->find(pid);
+  if (fproc == pidmap->end())
+    return -ESRCH;
+  auto [_, proc] = *fproc;
+
   tcb_t *thread = nullptr;
   for (auto t : proc->threads) {
     if (t->tid == tid) {

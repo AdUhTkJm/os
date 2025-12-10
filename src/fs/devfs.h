@@ -4,6 +4,7 @@
 #include "vfs.h"
 #include "../proc/pcb.h"
 #include "../utils/stl/ring_buffer.h"
+#include "../driver/tty/tty.h"
 
 namespace os {
 
@@ -28,8 +29,18 @@ extern static_storage<class devfs> devfs;
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
   optional<string> readlink() override { return nullopt; } \
-  size_t size() override { return 0; } \
-  long inum() override { return (long) this; } \
+  size_t size() const override { return 0; } \
+  long inum() const override { return (long) this; } \
+
+#define DEV_INODE_SYMLINK_IMPL \
+  size_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(s.size() - offset, len); memcpy(buf, s.c_str() + offset, l); return l; } \
+  size_t write(size_t, const void*, size_t, int) override { return 0; } \
+  int create(const string &, filetype, int) override { return -ENOTDIR; } \
+  int unlink(const string &) override { return -ENOTDIR; } \
+  inode *lookup(const string &) override { return nullptr; } \
+  vector<item> list() override { return {}; } \
+  size_t size() const override { return readlink()->size(); } \
+  long inum() const override { return (long) this; } \
 
 class console_inode : public inode_impl<console_inode> {
   os::list<tcb_t *> wait;
@@ -67,8 +78,8 @@ public:
   }
   optional<string> readlink() override { return nullopt; }
 
-  size_t size() override { return 0; }
-  long inum() override { return (long) this; }
+  size_t size() const override { return 0; }
+  long inum() const override { return (long) this; }
 
   // Special registration function.
   void record(const string &name, inode *node) {
@@ -115,6 +126,18 @@ public:
   size_t write(size_t, const void*, size_t, int flags) override;
 
   void add_entropy(unsigned long entropy);
+};
+
+class tty_inode : public inode_impl<tty_inode> {
+  string line;
+public:
+  tty::tty tty;
+
+  DEV_INODE_DEFAULT_IMPL;
+
+  tty_inode(console_inode *console);
+  size_t read(size_t offset, void *buf, size_t len, int flags) override;
+  size_t write(size_t, const void*, size_t, int flags) override;
 };
 
 extern static_storage<console_inode> console;

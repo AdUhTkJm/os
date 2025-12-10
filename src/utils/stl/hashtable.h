@@ -82,6 +82,7 @@ public:
 
   iterator insert(const K &key, const V &value);
   V &at(const K &key);
+  iterator find(const K& key);
   bool erase(const K &key);
   void reserve(size_t len);
   bool contains(const K& key);
@@ -129,7 +130,7 @@ typename hashmap<K, V, Hash, Eq>::iterator hashmap<K, V, Hash, Eq>::insert(const
   auto start = hash(key), i = start;
 
   do {
-    entry& cur = table[i];
+    entry &cur = table[i];
     if (cur.state == Occupied && eq(cur.key, key)) {
       cur.value = value;
       return iterator(this, i);
@@ -142,7 +143,7 @@ typename hashmap<K, V, Hash, Eq>::iterator hashmap<K, V, Hash, Eq>::insert(const
 
     i = (i + 1) % cap;
   } while (i != start);
-  panic("unreachable");
+  panic("hashtable: unreachable");
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
@@ -166,11 +167,12 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
   for (size_t i = 0; i < cap; ++i)
     new_table[i].state = Empty;
 
-  entry* old_table = table;
+  entry *old_table = table;
   table = new_table;
   
+  sz = 0;
   for (size_t i = 0; i < oldcap; ++i) {
-    const auto& [key, value, state] = old_table[i];
+    const auto &[key, value, state] = old_table[i];
     if (state == Occupied)
       insert(key, value);
   }
@@ -217,6 +219,14 @@ bool hashmap<K, V, Hash, Eq>::contains(const K &key) {
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
+hashmap<K, V, Hash, Eq>::iterator hashmap<K, V, Hash, Eq>::find(const K &key) {
+  auto slot = find_slot(key);
+  if (!slot)
+    return end();
+  return iterator(this, slot - table);
+}
+
+template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 V &hashmap<K, V, Hash, Eq>::operator[](const K &key) {
   if (!contains(key))
     return (*insert(key, V())).second;
@@ -228,6 +238,8 @@ template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 void hashmap<K, V, Hash, Eq>::clear() {
   delete[] table;
   table = new (safe) entry[cap = 16];
+  for (size_t i = 0; i < cap; i++)
+    table[i].state = Empty;
   sz = 0;
 }
 

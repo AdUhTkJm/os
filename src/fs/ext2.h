@@ -74,8 +74,8 @@ public:
   vector<item> list() override;
   optional<string> readlink() override;
 
-  size_t size() override { return meta.sz; }
-  long inum() override { return _inum; }
+  size_t size() const override { return meta.sz; }
+  long inum() const override { return _inum; }
 };
 
 class ext2 : public fs {

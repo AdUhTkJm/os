@@ -168,20 +168,31 @@ void block_inode::flush() {
   }
 }
 
-// urandom_inode::urandom_inode(): inode_impl(devfs, /*uid=*/0, /*gid=*/0) {
-//   type = File;
-//   mode = 0666; // rw-rw-rw-
+tty_inode::tty_inode(console_inode *console): inode_impl(devfs, /*uid=*/0, /*gid=*/0), tty(console) {
 
-//   // Initialize with a weak entropy.
-//   uint64_t t = rv_rdtime();
-//   memcpy(key, &t, sizeof(t));
-//   for (int i = sizeof(t); i < 32; ++i)
-//       key[i] = i * 31;
+}
 
-//   memset(nonce, 0, 12);
-// }
+// Note we don't need to read the entire amount of `len`.
+// We only need to guarantee we don't read more than `len`;
+// for terminals, we should return whenever a newline occurs.
+size_t tty_inode::read(size_t, void *buf, size_t len, int) {
+  // TODO: noblock?
+  if (line.size() == 0)
+    line = tty.readline();
+
+  auto l = min(len, line.size());
+  memcpy(buf, line.c_str(), l);
+  line = line.substr(l);
+  return l;
+}
+
+size_t tty_inode::write(size_t, const void *buf, size_t len, int) {
+  tty.write((const char*) buf, len);
+  return len;
+}
 
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {
+  type = Dir;
   lnkcnt = 2;
 }
 
@@ -191,17 +202,23 @@ devfs::devfs() {
 }
 
 void mount_dev() {
-  auto root = devfs->root;
+  auto droot = devfs->root;
+  auto root = cast<devroot>(droot->node);
   auto tcb = active();
   auto pcb = tcb->pcb;
   
   // console is initialized in PLIC handler.
-  cast<devroot>(root->node)->record("console", &*console);
+  auto console = &*os::console;
+  root->record("console", console);
   auto dentry = pcb->vfs->lookup("/dev");
   if (!dentry)
     panic("devfs: cannot find /dev");
+
+  // Create a tty.
+  auto tty = new (permanent) tty_inode(console);
+  root->record("tty", tty);
   
-  vfs::mount(*dentry, root);
+  vfs::mount(*dentry, droot);
 }
 
 }

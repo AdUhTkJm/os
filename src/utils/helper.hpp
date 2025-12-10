@@ -78,7 +78,7 @@ protected:
   atomic<int> refcnt;
 public:
   void drop() {
-    if (--refcnt)
+    if (!--refcnt)
       delete this;
   }
 

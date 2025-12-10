@@ -50,8 +50,8 @@ public:
   // We don't support symlinks for now.
   optional<string> readlink() override { return nullopt; }
 
-  size_t size() override { return sz; }
-  long inum() override { return (long) data; }
+  size_t size() const override { return sz; }
+  long inum() const override { return (long) data; }
 };
 
 class initramfs : public fs {

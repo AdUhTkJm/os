@@ -2,6 +2,7 @@
 #define ERRORCODE_H
 
 // Note this is not in namespace os.
+// See <errno.h>
 enum error_code {
   EPERM = 1,
   ENOENT = 2,
@@ -25,6 +26,7 @@ enum error_code {
   ENOTDIR = 20,
   EISDIR = 21,
   EINVAL = 22,
+  ENOTTY = 25,
   EROFS = 30,
   ERANGE = 34,
   ENOSYS = 38,
