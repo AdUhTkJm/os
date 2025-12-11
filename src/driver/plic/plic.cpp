@@ -15,7 +15,7 @@ namespace {
 
   os::console_input_buf->push_back(c);
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
-  os::console->wake(); // Note that this function might not return.
+  os::console->wake_read(); // Note that this function might not return.
 }
 
 }

@@ -19,7 +19,8 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
       if (!block)
         return i == 0 ? -EAGAIN : i;
       wait.push_back(active());
-      suspend();
+      if (suspend() != 0)
+        return i == 0 ? -EINTR : len;
       c = console_input_buf->pop_front();
     }
     p[i] = *c;
@@ -36,17 +37,22 @@ size_t console_inode::write(size_t offset, const void *buf, size_t len, int) {
   return len;
 }
 
-void console_inode::wake() {
-  os::tcb_t *front;
-  // Note that since wakeup() might not return, we must not lock the entire function.
-  {
-    synchronized syn(lock);
-    if (!wait.size())
-      return;
-    front = wait.front();
-    wait.pop_front();
-  }
-  scheduler.wakeup(front);
+short console_inode::poll(unsigned short event) {
+  bool out = event & POLLOUT, in = event & POLLIN;
+  auto result = 0;
+  if (in && !console_input_buf->empty())
+    result |= POLLIN;
+  if (out)
+    result |= POLLOUT;
+  return result;
+}
+
+void console_inode::wake_read() {
+  scheduler.wakeup_all(lock, wait);
+}
+
+void console_inode::wait_on_read() {
+  wait.push_back(active());
 }
 
 block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force_reload) {
@@ -168,7 +174,7 @@ void block_inode::flush() {
   }
 }
 
-tty_inode::tty_inode(console_inode *console): inode_impl(devfs, /*uid=*/0, /*gid=*/0), tty(console) {
+tty_inode::tty_inode(console_inode *console): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0), tty(console) {
 
 }
 
@@ -189,6 +195,18 @@ size_t tty_inode::read(size_t, void *buf, size_t len, int) {
 size_t tty_inode::write(size_t, const void *buf, size_t len, int) {
   tty.write((const char*) buf, len);
   return len;
+}
+
+short tty_inode::poll(unsigned short event) {
+  return tty.console->poll(event);
+}
+
+void tty_inode::wake_read() {
+  tty.console->wake_read();
+}
+
+void tty_inode::wait_on_read() {
+  tty.console->wait_on_read();
 }
 
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {

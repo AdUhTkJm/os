@@ -93,8 +93,12 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   int ret;                // Thread exit value / return code.
   void __user *tls;       // Thread-local storage pointer.
   sigset mask;            // Masked (ignored) signals.
+  sigset pending;         // Pending signals, for this thread.
+  long timeout = 0;       // Timeout to last sleep.
 
   pcb_t *pcb;             // Parent process.
+
+  void send_signal(int sig);
 
   // This is the final deletion. This cannot be done in clear(), because it
   // is called when this ksp is in use.
@@ -102,6 +106,9 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
     auto ksp_bottom = ksp + sizeof(trapframe) - kstack_size;
     vfree((void*) ksp_bottom);
   }
+
+  // Returns remaining timeout.
+  size_t sleep(size_t nano);
 };
 
 struct pcb_t : os::intrusive_list_node<pcb_t> {
@@ -119,7 +126,6 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   class vfs *vfs;
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
   int tidn = 0;           // Next tid.
-  sigset sig;             // Signal handler.
   dentry *pwd;            // Process working directory.
   string execpath;        // The path to the executable.
   sigset pending;         // Pending signals.
@@ -130,10 +136,13 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   // before destruction, and then put itself to a zombie state.
   void clear();
   void clear_vma();
+
   int open_file_from(const string &name, dentry *relbase, int flags, int mode = 0);
   int open_file_from(const string &name, int dirfd, int flags, int mode = 0);
   int open_file(const string &name, int flags, int mode = 0);
   int close_file(int fd);
+
+  void send_signal(int sig);
 
   // Sets heap end. Returns the new end on success, and old end on failure.
   va_t brk(va_t addr);
@@ -177,8 +186,9 @@ int clone(unsigned flags, void *usp, void *tls);
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp);
 
 // Even though it does not return for now, it will eventually look as if it "returned".
-extern "C" void context_save(void *ctx, bool *ctx_valid);
-extern "C" [[noreturn]] void context_restore(void *ctx);
+// Return value marks whether this is interrupted by a signal (-EINTR) or a normal return (0).
+extern "C" int context_save(void *ctx, bool *ctx_valid);
+extern "C" [[noreturn]] void context_restore(void *ctx, bool from_signal);
 
 #define suspend() context_save(&active()->ctx, &active()->ctx_valid)
 

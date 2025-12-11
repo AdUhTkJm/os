@@ -5,14 +5,15 @@ namespace os {
 scheduler_t scheduler;
 static_storage<tcb_t> boot_tcb;
 static_storage<pcb_t> boot_pcb;
+static_storage<os::list<tcb_t*>> napping;
 
 void scheduler_t::add(tcb_t *tcb) {
-  synchronized syn(*lock);
+  synchronized syn(lock);
   ready.push_back(tcb);
 }
 
 void scheduler_t::dispatch() {
-  synchronized syn(*lock);
+  synchronized syn(lock);
   dispatch_impl();
 }
 
@@ -44,18 +45,20 @@ void scheduler_t::dispatch_impl() {
   // The destructor is never run, so we manually unlock it.
   if (next->ctx_valid) {
     next->ctx_valid = false;
-    lock->release();
-    context_restore(&next->ctx); // noreturn
+    lock.release();
+    // `next` resumes because of a signal, if it has any pending signals.
+    // (Masked signals won't even reach pending point.)
+    context_restore(&next->ctx, /*from_signal=*/ next->pending.sig == 0); // noreturn
   }
 
   // If there's no ongoing syscall, then just directly jump to end.
-  lock->release();
+  lock.release();
   __asm__ volatile("j __handler_end");
   __builtin_unreachable();
 }
 
 void scheduler_t::erase(tcb_t *pcb) {
-  synchronized syn(*lock);
+  synchronized syn(lock);
   if (active == pcb) {
     // Now pcb is neither in ready nor in sleep.
     pcb->status = Zombie;
@@ -70,23 +73,50 @@ void scheduler_t::erase(tcb_t *pcb) {
 }
 
 void scheduler_t::yield(bool sleepy) {
-  synchronized syn(*lock);
+  synchronized syn(lock);
   (sleepy ? sleep : ready).push_back(active);
   active->status = sleepy ? Sleeping : Ready;
   dispatch_impl();
 }
 
-void scheduler_t::wakeup(tcb_t *tcb) {
-  synchronized syn(*lock);
-  tcb->status = Ready;
-  sleep.erase(tcb);
-  ready.push_back(tcb);
+void scheduler_t::maybe_preempt() {
   // Preempt the idle pcb immediately. Don't wait till timer fire.
   if (active->pcb->pid == 0) {
     ready.push_back(active);
     active->status = Ready;
     dispatch_impl();
   }
+}
+
+void scheduler_t::wakeup(tcb_t *tcb, bool can_preempt) {
+  synchronized syn(lock);
+  tcb->status = Ready;
+  sleep.erase(tcb);
+  ready.push_back(tcb);
+  if (can_preempt)
+    maybe_preempt();
+}
+
+void scheduler_t::unnap(tcb_t *tcb, bool wake) {
+  for (auto it = napping->begin(); it != napping->end(); ++it) {
+    if (*it == tcb) {
+      napping->erase(it);
+      if (wake)
+        wakeup(tcb, /*can_preempt=*/ false);
+      break;
+    }
+  }
+}
+
+// TODO: unnecessary O(n^2).
+void scheduler_t::tick() {
+  os::vector<tcb_t*> tounnap;
+  for (auto tcb : *napping) {
+    if (--tcb->timeout <= 0)
+      tounnap.push_back(tcb);
+  }
+  for (auto tcb : tounnap)
+    unnap(tcb);
 }
 
 }

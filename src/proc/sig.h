@@ -1,6 +1,8 @@
 #ifndef SIG_H
 #define SIG_H
 
+struct siginfo_t;
+
 namespace os {
 
 // See man signal(7). It can also be found online here:
@@ -39,9 +41,9 @@ struct sigset {
 };
 
 struct sigaction {
-  void (*handler)(int) = nullptr;
+  void (*handler)(int, siginfo_t*, void*) = nullptr;
   sigset mask;
-  int flags;
+  unsigned long flags;
 };
 
 }

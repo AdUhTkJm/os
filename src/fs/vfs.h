@@ -70,6 +70,13 @@
 #define MS_ACTIVE	(1 << 30)
 #define MS_NOUSER	(1 << 31)
 
+#define POLLIN		0x001		/* There is data to read.  */
+#define POLLPRI		0x002		/* There is urgent data to read.  */
+#define POLLOUT		0x004		/* Writing now will not block.  */
+#define POLLERR		0x008		/* Error condition.  */
+#define POLLHUP		0x010		/* Hung up.  */
+#define POLLNVAL	0x020		/* Invalid polling request.  */
+
 namespace os {
 
 class inode;
@@ -137,6 +144,13 @@ public:
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
   virtual optional<string> readlink() = 0;
+
+  virtual short poll(unsigned short event) { (void) event; return POLLIN | POLLOUT; }
+  virtual void wait_on_read() {}
+  virtual void wait_on_write() {}
+  // Note that these functions might not return, as they would potentially preempt.
+  virtual void wake_read() {}
+  virtual void wake_write() {}
 
   struct item {
     long inum;

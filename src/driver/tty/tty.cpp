@@ -4,7 +4,14 @@
 
 namespace os::tty {
 
-tty::tty(console_inode *console): flags(TTY_ECHO | TTY_ICANON), width(80), height(25), console(console) {
+tty::tty(console_inode *console): flags({
+  .c_iflag = ICRNL,
+  .c_oflag = ONLCR | OPOST,
+  .c_cflag = CREAD | CS8,
+  .c_lflag = TTY_ICANON | TTY_ECHO,
+  .c_line = 0,
+  .c_cc = {}
+}), width(80), height(25), console(console) {
   
 }
 
@@ -19,7 +26,7 @@ void tty::echo(const char *s) {
 void tty::send(int sig) {
   for (auto [_, pcb] : *pidmap) {
     if (pcb->pgid == pgid)
-      pcb->pending.add(sig);
+      pcb->send_signal(sig);
   }
 }
 
@@ -40,12 +47,15 @@ string tty::readline() {
       break;
     }
 
-    if (!(flags & TTY_ICANON))
+    if (!(flags.c_lflag & TTY_ICANON))
       continue;
 
-    bool do_echo = flags & TTY_ECHO;
+    bool do_echo = flags.c_lflag & TTY_ECHO;
     switch (c) {
     case '\r':
+      if (!(flags.c_iflag & ICRNL))
+        break;
+      [[fallthrough]];
     case '\n':
       // Line end. Return.
       echo("\r\n");
@@ -70,7 +80,10 @@ void tty::write(const char *s, size_t len) {
     char c = s[i];
     switch (c) {
     case '\n':
-      echo("\r\n");
+      if (flags.c_oflag & ONLCR)
+        echo("\r\n");
+      else
+        echo("\n");
       break;
     
     default:

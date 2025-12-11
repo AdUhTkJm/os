@@ -12,6 +12,7 @@ void sighandle() {
 
   pcb->pending.remove(sig);
   auto action = pcb->sigact[sig];
+  printk("handling: %d\n", sig);
   if (!action.handler) {
     // Do the default handling.
     printk("default handle: %d\n", sig);

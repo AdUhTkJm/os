@@ -2,6 +2,7 @@
 #define TTY_H
 
 #include "../../utils/stl/ring_buffer.h"
+#include "../../interrupt/sysret.h"
 
 #define TTY_ECHO     0x0001
 #define TTY_ICANON   0x0002
@@ -109,6 +110,48 @@
 
 #define TIOCSER_TEMT	0x01	/* Transmitter physically empty */
 
+// Taken from <termios.h>
+
+/* c_oflag bits */
+#define OPOST	0000001  /* Post-process output.  */
+#define OLCUC	0000002  /* Map lowercase characters to uppercase on output.  */
+#define ONLCR	0000004  /* Map NL to CR-NL on output.  */
+#define OCRNL	0000010  /* Map CR to NL on output.  */
+#define ONOCR	0000020  /* No CR output at column 0.  */
+#define ONLRET	0000040  /* NL performs CR function.  */
+#define OFILL	0000100  /* Use fill characters for delay.  */
+#define OFDEL	0000200  /* Fill is DEL.  *//* c_iflag bits */
+
+/* c_iflags bits */
+#define IGNBRK	0000001  /* Ignore break condition.  */
+#define BRKINT	0000002  /* Signal interrupt on break.  */
+#define IGNPAR	0000004  /* Ignore characters with parity errors.  */
+#define PARMRK	0000010  /* Mark parity and framing errors.  */
+#define INPCK	0000020  /* Enable input parity check.  */
+#define ISTRIP	0000040  /* Strip 8th bit off characters.  */
+#define INLCR	0000100  /* Map NL to CR on input.  */
+#define IGNCR	0000200  /* Ignore CR.  */
+#define ICRNL	0000400  /* Map CR to NL on input.  */
+#define IUCLC	0001000  /* Map uppercase characters to lowercase on input. */
+#define IXON	0002000  /* Enable start/stop output control.  */
+#define IXANY	0004000  /* Enable any character to restart output.  */
+#define IXOFF	0010000  /* Enable start/stop input control.  */
+#define IMAXBEL	0020000  /* Ring bell when input queue is full.  */
+#define IUTF8	0040000  /* Input is UTF8 (not in POSIX).  */
+
+/* c_cflag bits.  */
+#define CSIZE	0000060
+#define   CS5	0000000
+#define   CS6	0000020
+#define   CS7	0000040
+#define   CS8	0000060
+#define CSTOPB	0000100
+#define CREAD	0000200
+#define PARENB	0000400
+#define PARODD	0001000
+#define HUPCL	0002000
+#define CLOCAL	0004000
+
 namespace os {
 
 class console_inode;
@@ -128,7 +171,7 @@ struct {
 struct tty {
   int pgid = 0, sid = 0;
   
-  unsigned short flags;
+  termio flags;
   unsigned short width, height;
   
   // This is buffer of current line.

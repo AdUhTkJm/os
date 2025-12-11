@@ -70,7 +70,7 @@ union sigval_t {
   void *sival_ptr;
 };
 
-typedef struct {
+struct siginfo_t {
   int si_signo;		/* Signal number.  */
   int si_errno;		/* If non-zero, an errno value associated with
           this signal, as defined in <errno.h>.  */
@@ -137,7 +137,7 @@ typedef struct {
       unsigned int _arch; /* AUDIT_ARCH_* of syscall.  */
     } _sigsys;
   } _sifields;
-} siginfo_t;
+};
 
 
 /* X/Open requires some more fields with fixed names.  */
@@ -163,14 +163,13 @@ typedef struct {
 #define si_arch	_sifields._sigsys._arch
 
 struct sigset_t {
-  unsigned long val[16];
+  unsigned long val;
 };
 
 struct sigaction {
-  void     (*sa_handler)(int);
-  sigset_t   sa_mask;
-  int        sa_flags;
-  void     (*sa_restorer)(void);
+  void (*sa_handler)(int, siginfo_t*, void*);
+  unsigned long sa_flags;
+  sigset_t sa_mask;
 };
 
 /* Structure for scatter/gather I/O.  */
@@ -202,6 +201,13 @@ struct utsname {
   char release[65];
   char version[65];
   char machine[65];
+};
+
+// From <poll.h>
+struct pollfd {
+  int   fd;         /* file descriptor */
+  short events;     /* requested events */
+  short revents;    /* returned events */
 };
 
 #endif

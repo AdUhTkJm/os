@@ -17,6 +17,7 @@ namespace os {
 // This means they must not carry state.
 template<typename K, typename V, hasher<K> Hash = detail::fnv_1a<K>, comparator<K> Eq = detail::equal<K>>
 class hashmap {
+public:
   enum node_state {
     Empty, Occupied, Tombstone
   };
@@ -26,7 +27,7 @@ class hashmap {
     V value;
     node_state state;
   };
-
+private:
   // We're using a hash table with linear probing.
   entry* table = nullptr;
   size_t cap = 0;
@@ -79,6 +80,8 @@ public:
   hashmap(const hashmap &other);
   ~hashmap();
   hashmap &operator=(const hashmap &other);
+
+  const entry *inspect_table() const { return table; }
 
   iterator insert(const K &key, const V &value);
   V &at(const K &key);

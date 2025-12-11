@@ -31,7 +31,7 @@ context_save:
   la a0, _ZN2os9schedulerE
   call _ZN2os11scheduler_t5yieldEb # noreturn
 
-# extern "C" [[noreturn]] void context_save(void *ctx)
+# extern "C" [[noreturn]] void context_save(void *ctx, bool from_signal)
 context_restore:
   # Read the registers from ctx.
   # The ctx_valid is handled outside this function.
@@ -49,10 +49,14 @@ context_restore:
   ld s11,88(a0)
   ld ra, 96(a0)
   ld sp, 104(a0)
-  ld a1, 112(a0)
-  csrw sepc, a1
-  ld a1, 120(a0)
-  csrw sstatus, a1
-
-  # Jump to ra.
+  ld a2, 112(a0)
+  csrw sepc, a2
+  ld a2, 120(a0)
+  csrw sstatus, a2
+  # a0 = a1 ? -EINTR : 0
+  bnez a1, 1f
+  li a0, 0
+  jr ra
+1:
+  li a0, -4
   jr ra

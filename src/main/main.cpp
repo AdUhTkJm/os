@@ -56,6 +56,13 @@ void idle() {
 }
 
 bool os::onboot = true;
+// Used in interrupt.h. Tick length in nanoseconds.
+int timer_tick;
+
+void get_tick() {
+  void *p = fdt::query("/cpus", "timebase-frequency");
+  timer_tick = 1'000'000'000 / to_big_endian(*(unsigned *) p);
+}
 
 void main_high() {
   // Set up page table.
@@ -74,9 +81,9 @@ void main_high() {
   RD(sp, boot_tcb->ksp);
   boot_pcb->pid = -1; // This is not a valid process.
   boot_pcb->pt_root = 0x80201000;
-  boot_tcb->pcb = boot_pcb;
-  boot_pcb->threads.push_back(boot_tcb);
-  scheduler.active = &boot_tcb;
+  boot_tcb->pcb = boot_pcb.get();
+  boot_pcb->threads.push_back(boot_tcb.get());
+  scheduler.active = boot_tcb.get();
 
   onboot = false;
 
@@ -137,7 +144,8 @@ void main_high() {
   pcb->vfs->close(init);
 
   // Enable timer.
-  sbi_set_timer(rv_rdtime() + 3000000);
+  get_tick();
+  sbi_set_timer(rv_rdtime() + 10_ms / timer_tick);
   printk("Boot finished.\n");
   for (;;) ;
 }

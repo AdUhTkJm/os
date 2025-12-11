@@ -56,6 +56,20 @@ inline constexpr uint64_t operator""_gb(unsigned long long literal) {
   return literal << 30;
 }
 
+// Time periods.
+// Gives the number of nanoseconds.
+inline constexpr uint64_t operator""_us(unsigned long long literal) {
+  return literal * 1000;
+}
+
+inline constexpr uint64_t operator""_ms(unsigned long long literal) {
+  return literal * 1'000'000;
+}
+
+inline constexpr uint64_t operator""_s(unsigned long long literal) {
+  return literal * 1'000'000'000;
+}
+
 template<uint64_t V, class T> requires ((V & (V - 1)) == 0)
 constexpr T roundup(T x) {
   return (T) ((((uintptr_t) x) + (V - 1)) & -V);

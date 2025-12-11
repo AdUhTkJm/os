@@ -7,6 +7,9 @@
 #include "../mem/kalloc.h"
 #include "../proc/schedule.h"
 
+// In nanosecond.
+extern int timer_tick;
+
 // For a system call list:
 // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
 
@@ -522,6 +525,10 @@ HANDLE(mprotect, start, len, prot) {
   return detail::mprotect(start, len, prot);
 }
 
+HANDLE(munmap, addr, len) {
+  return detail::munmap(addr, len);
+}
+
 HANDLE(rt_sigprocmask, how, set, oldset, size) {
   if (oldset)
     copy_to_user((void *) oldset, &tcb->mask.sig, size);
@@ -573,7 +580,7 @@ HANDLE(kill, pid, sig) {
   if (proc->uid != pcb->uid && proc->uid != pcb->euid && pcb->uid != 0)
     return -EPERM;
 
-  proc->pending.add(sig);
+  proc->send_signal(sig);
   return 0;
 }
 
@@ -594,7 +601,107 @@ HANDLE(tgkill, pid, tid, sig) {
     return -EINVAL;
 
   // TODO: privilege check
-  proc->pending.add(sig);
+  thread->send_signal(sig);
+  return 0;
+}
+
+HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
+  // Ignore sigmask for now.
+  if (cnt <= 0)
+    return -EINVAL;
+  auto pollfds = copy_from_user((void *) _fds, cnt * sizeof(pollfd));
+  if (!pollfds)
+    return pollfds;
+retry:
+  auto fds = (pollfd*) pollfds->get();
+  int available = 0;
+  for (long i = 0; i < cnt; i++) {
+    pollfd fd = fds[i];
+    if (fd.fd < 0) {
+      fd.revents = POLLNVAL;
+      continue;
+    }
+
+    auto file = pcb->ftbl->at(fd.fd);
+    if (!file)
+      return -EBADF;
+    if (fd.events == 0)
+      continue;
+
+    fd.revents = file->node()->poll(fd.events);
+    printk("given revents %d\n", fd.revents);
+    if (fd.revents != 0)
+      available++;
+  }
+  if (available) {
+    copy_to_user((void *) _fds, fds, cnt * sizeof(pollfd));
+    return available;
+  }
+  // Put to sleep with timeout. (How?)
+  // TODO: must disable preempt here.
+  for (long i = 0; i < cnt; i++) {
+    pollfd fd = fds[i];
+    auto file = pcb->ftbl->at(fd.fd);
+    if (fd.events & POLLIN)
+      file->node()->wait_on_read();
+    if (fd.events & POLLOUT)
+      file->node()->wait_on_write();
+  }
+  // What to do on interrupt?
+  if (suspend() != 0)
+    return 0;
+  goto retry;
+}
+
+HANDLE(nanosleep, rqtp, rmtp) {
+  auto m_rq = copy_from_user((void *) rqtp, sizeof(timespec));
+  if (!m_rq)
+    return m_rq;
+
+  auto rq = *(timespec *) m_rq->get();
+  if (rq.tv_nsec >= (long) 1_s || rq.tv_sec < 0)
+    return -EINVAL;
+
+  size_t nano = rq.tv_sec * 1'000'000'000 + rq.tv_nsec;
+  printk("sleep: %ld ns\n", nano);
+  size_t rem = tcb->sleep(nano);
+  if (rmtp) {
+    timespec tm {
+      .tv_sec = (long) (rem / 1_s),
+      .tv_nsec = (long) (rem % 1_s),
+    };
+    copy_to_user((void *) rmtp, &tm, sizeof(timespec));
+    return -1;
+  }
+  return 0;
+}
+
+HANDLE(rt_sigaction, sig, act, oldact) {
+  if (sig <= 0 || sig >= 32)
+    return -EINVAL;
+
+  if (oldact) {
+    os::sigaction a = pcb->sigact[sig];
+    ::sigaction v {
+      .sa_handler = a.handler,
+      .sa_flags = a.flags,
+      .sa_mask = { a.mask.sig },
+    };
+    printk("old: handler = %p, mask = %p, flags = %p\n", a.handler, a.mask, a.flags);
+    copy_to_user((void *) oldact, &v, sizeof(::sigaction));
+  }
+  if (act) {
+    auto sigactp = copy_from_user((void *) act, sizeof(::sigaction));
+    if (!sigactp)
+      return sigactp;
+    auto sigact = *(::sigaction *) sigactp->get();
+    os::sigaction a {
+      .handler = sigact.sa_handler,
+      .mask = sigact.sa_mask.val,
+      .flags = sigact.sa_flags
+    };
+    printk("new: handler = %p, mask = %p, flags = %p\n", a.handler, a.mask, a.flags);
+  }
   return 0;
 }
 
@@ -612,7 +719,9 @@ namespace os {
     int kind = scause & 0xff;
     switch (kind) {
     case 5: { // Timer interrupt
-      sbi_set_timer(rv_rdtime() + 3000000);
+      // Tick every 100ms.
+      sbi_set_timer(rv_rdtime() + tick_length / timer_tick);
+      scheduler.tick();
       scheduler.yield(/*sleepy=*/false); // TODO: check time slice
     }
     case 9: // PLIC interrupt

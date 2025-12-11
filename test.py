@@ -22,8 +22,6 @@ parser.add_argument("-m", "--mount", action="store_true")
 parser.add_argument("--docs", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
-parser.add_argument("--no-bound-check", action="store_true")
-parser.add_argument("--no-protect-pt", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
 parser.add_argument("--gdb", action="store_true")
 
@@ -67,16 +65,6 @@ if not args.no_instrument:
 # debug_memory relies on instrumentation.
 if not args.no_debug_memory and not args.no_instrument:
   flags = ["-DDEBUG_MEMORY"]
-  CFLAGS.extend(flags)
-  CXXFLAGS.extend(flags)
-
-if not args.no_bound_check:
-  flags = ["-DBOUND_CHECK"]
-  CFLAGS.extend(flags)
-  CXXFLAGS.extend(flags)
-
-if not args.no_protect_pt:
-  flags = ["-DPROTECT_PT"]
   CFLAGS.extend(flags)
   CXXFLAGS.extend(flags)
 
@@ -315,8 +303,10 @@ def build():
 
 if __name__ == "__main__":
   if args.rebuild:
-    os.remove(BUILD_DIR / ".build_cache.pkl")
-    os.remove(BUILD_DIR / ".include_cache.pkl")
+    try: os.remove(BUILD_DIR / ".build_cache.pkl")
+    except: pass
+    try: os.remove(BUILD_DIR / ".include_cache.pkl")
+    except: pass
 
   if args.docs:
     proc.check_call("cd docs && xelatex design.tex", shell=True)

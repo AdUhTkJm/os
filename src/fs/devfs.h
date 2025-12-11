@@ -43,19 +43,21 @@ extern static_storage<class devfs> devfs;
   long inum() const override { return (long) this; } \
 
 class console_inode : public inode_impl<console_inode> {
-  os::list<tcb_t *> wait;
+  os::vector<tcb_t *> wait;
   spinlock lock;
 public:
   DEV_INODE_DEFAULT_IMPL;
 
-  console_inode(): inode_impl(devfs, /*uid=*/0, /*gid=*/0) {
+  console_inode(): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0) {
     type = CharDevice;
     mode = 0666; // rw-rw-rw-
   }
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
+  short poll(unsigned short) override;
 
-  void wake();
+  void wake_read() override;
+  void wait_on_read() override;
 };
 
 class devroot : public inode_impl<devroot> {
@@ -80,6 +82,7 @@ public:
 
   size_t size() const override { return 0; }
   long inum() const override { return (long) this; }
+  short poll(unsigned short) override { return POLLIN | POLLOUT; }
 
   // Special registration function.
   void record(const string &name, inode *node) {
@@ -104,7 +107,7 @@ class block_inode : public inode_impl<block_inode> {
 public:
   DEV_INODE_DEFAULT_IMPL;
 
-  block_inode(block_device *dev): inode_impl(devfs, /*uid=*/0, /*gid=*/0), dev(dev) {
+  block_inode(block_device *dev): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0), dev(dev) {
     type = BlockDevice;
     mode = 0666; // rw-rw-rw-
   }
@@ -138,6 +141,10 @@ public:
   tty_inode(console_inode *console);
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
+  short poll(unsigned short) override;
+  
+  void wake_read() override;
+  void wait_on_read() override;
 };
 
 extern static_storage<console_inode> console;

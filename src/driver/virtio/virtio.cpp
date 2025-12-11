@@ -34,10 +34,8 @@ static_storage<os::hashmap<int, block_device*>> intr;
   if (!(status & 1))
     return;
   mmwr(dev->base + INTERRUPT_ACK, status);
-  auto tcb = dev->wait.front();
-  dev->wait.pop_front();
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
-  scheduler.wakeup(tcb);
+  scheduler.wakeup_all(dev->lock, dev->wait);
 }
 
 // Configures the underlying device.

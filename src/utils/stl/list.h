@@ -130,6 +130,31 @@ class list {
   node *head = nullptr, *tail = nullptr;
   size_t sz = 0;
 public:
+  class iterator {
+    node *n;
+    friend list;
+  public:
+    iterator(node *n): n(n) {}
+
+    iterator &operator++() {
+      if (n)
+        n = n->next;
+      return *this;
+    }
+
+    T *operator->() const {
+      return n->data;
+    }
+
+    T &operator*() const {
+      return n->data;
+    }
+
+    bool operator==(const iterator &other) const {
+      return n == other.n;
+    }
+  };
+
   ~list() {
     for (node *p = head; p != tail;) {
       auto next = p->next;
@@ -161,8 +186,23 @@ public:
     delete n;
   }
 
+  void erase(iterator it) {
+    node *t = it.n;
+    if (t == head)
+      head = t->next;
+    else
+      t->prev->next = t->next;
+    if (t == tail)
+      tail = t->prev;
+    else
+      t->next->prev = t->prev;
+  }
+
   T front() { return head->data; }
   T back() { return tail->data; }
+
+  iterator begin() { return head; }
+  iterator end() { return nullptr; }
 
   bool empty() const { return sz == 0; }
   size_t size() const { return sz; }

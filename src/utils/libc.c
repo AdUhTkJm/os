@@ -9,16 +9,19 @@ unsigned strlen(const char *s) {
   return result;
 }
 
+// Must be C standard-compliant to work! g++ will assume this.
 void *memset(void *p, int v, size_t size) {
+  char *b = p;
   while (size--)
     *(char*) p++ = v;
-  return p;
+  return b;
 }
 
 void *memcpy(void *dst, const void *src, size_t size) {
+  char *b = dst;
   while (size--)
     *(char*) dst++ = *(char*) src++;
-  return dst;
+  return b;
 }
 
 char *itoa(int value, char *str, int base) {

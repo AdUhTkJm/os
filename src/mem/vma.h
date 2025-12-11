@@ -62,6 +62,8 @@ struct vmas {
   vma_t *begin() { return vmas.begin(); }
   vma_t *end() { return vmas.end(); }
   size_t size() const { return vmas.size(); }
+
+  void resize(size_t sz) { vmas.resize(sz); }
 };
 
 }

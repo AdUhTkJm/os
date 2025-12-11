@@ -6,13 +6,16 @@
 
 namespace os {
 
+// These are processes that are sleeping for a timeout.
+extern static_storage<os::list<tcb_t*>> napping;
+
 struct scheduler_t {
   os::intrusive_list<tcb_t> sleep, ready;
   tcb_t *active = nullptr;
-  spinlock *lock = nullptr;
+  spinlock lock;
 
   // No global constructor is allowed. Hence this explicit init.
-  void init() { lock = new spinlock; }
+  void init() { napping.construct(); }
   
   void add(tcb_t *tcb);
   // Chooses the next process to schedule, and switches to it.
@@ -23,7 +26,33 @@ struct scheduler_t {
   // When sleepy = false, puts it to ready state instead.
   [[noreturn]] void yield(bool sleepy = true);
 
-  void wakeup(tcb_t *tcb);
+  // Note that even if `can_preempt` is true, it doesn't mean preemption will always happen.
+  void wakeup(tcb_t *tcb, bool can_preempt = true);
+
+  // Wakes up everything in this container, and clears it.
+  // We need the lock to protect the write to tcb.
+  template<locklike Lock>
+  void wakeup_all(Lock &lock, os::vector<tcb_t*> &tcbs) {
+    synchronized syn(this->lock);
+    {
+      synchronized s2(lock);
+      for (auto tcb : tcbs) {
+        tcb->status = Ready;
+        sleep.erase(tcb);
+        ready.push_back(tcb);
+      }
+      tcbs.clear();
+    }
+    maybe_preempt();
+  }
+  
+  void maybe_preempt();
+
+  // Remove tcb from the napping list.
+  void unnap(tcb_t *tcb, bool wake = true);
+  // Tell all napping processes that they have already napped a timer tick.
+  // Wakes up processes, but doesn't preempt.
+  void tick();
 private:
   [[noreturn]] void dispatch_impl();
 };
@@ -37,6 +66,8 @@ extern static_storage<pcb_t> boot_pcb;
 inline tcb_t *active() {
   return scheduler.active;
 }
+
+constexpr int tick_length = 100_ms;
 
 }
 

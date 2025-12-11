@@ -31,12 +31,7 @@ public:
   T *operator->() {
     return (T*) storage;
   }
-  T *operator&() {
-    return (T*) storage;
-  }
-  /* implicit */ operator T*() {
-    return (T*) storage;
-  }
+  T *get() { return (T*) storage; }
 
   template<typename ...Args> requires requires(Args ...args) { T(args...); }
   void construct(Args ...args) {

@@ -115,6 +115,36 @@ int mprotect(unsigned long start, unsigned long len, int prot) {
   return 0;
 }
 
+int munmap(unsigned long addr, unsigned long len) {
+  // The initial check-and-split process is similar to mprotect.
+  // Note we don't need memory contiguity here;
+  // Also note the system call requires that `addr` is page-aligned.
+  auto tcb = active();
+  if (len == 0 || addr % PAGE_SIZE != 0)
+    return -EINVAL;
+
+  auto finish = roundup<PAGE_SIZE>(addr + len);
+  auto pcb = tcb->pcb;
+  if (!pcb->vma.has(addr) || !pcb->vma.has(finish))
+    return -ENOMEM;
+
+  auto &vmas = pcb->vma;
+  size_t begin = vmas.find(addr);
+  if (vmas[begin].begin < addr)
+    vmas.split_at(begin++, addr);
+
+  size_t end = vmas.find(finish - 1);
+  if (vmas[end].begin <= finish && finish < vmas[end].end)
+    vmas.split_at(end, finish);
+
+  // Now we do the real unmapping. In fact, we only need to remove everything in [begin, end].
+  // Note both ends are inclusive.
+  for (unsigned i = end; i < vmas.size(); i++)
+    vmas[i - (end - begin)] = vmas[i];
+  vmas.resize(vmas.size() - (end - begin));
+  return 0;
+}
+
 int ioctl(int fd, int op, void *argp) {
   auto tcb = active();
   auto pcb = tcb->pcb;
@@ -130,24 +160,14 @@ int ioctl(int fd, int op, void *argp) {
 
   switch (op) {
   case TCGETS: {
-    termio io {
-      .c_iflag = 0,
-      .c_oflag = 0,
-      .c_cflag = 0,
-      .c_lflag = dev.flags,
-      .c_line = 0,
-      .c_cc = {}
-    };
-    copy_to_user(argp, &io, sizeof(io));
+    copy_to_user(argp, &dev.flags, sizeof(termio));
     return 0;
   }
   case TCSETS: {
     auto p = copy_from_user(argp, sizeof(termio));
     if (!p)
       return p;
-    termio io = *(termio *) p->get();
-    printk("flags: %x %x %x %x, char: %c\n", io.c_iflag, io.c_oflag, io.c_cflag, io.c_lflag, io.c_cc[0]);
-    dev.flags = io.c_lflag;
+    dev.flags = *(termio *) p->get();
     return 0;
   }
   case TIOCGPGRP: {

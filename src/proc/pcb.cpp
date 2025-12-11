@@ -5,6 +5,8 @@
 #include "../mem/kalloc.h"
 #include "../utils/stl/unique_ptr.h"
 
+extern int timer_tick;
+
 namespace os {
 
 static_storage<hashmap<int, pcb_t*>> pidmap;
@@ -161,6 +163,40 @@ va_t pcb_t::brk(va_t addr) {
     return vma.end = va;
   }
   panic("process has no heap!");
+}
+
+void tcb_t::send_signal(int sig) {
+  if (mask[sig])
+    return;
+  pending.add(sig);
+  if (status == Sleeping)
+    scheduler.wakeup(this);
+}
+
+void pcb_t::send_signal(int sig) {
+  // We find one eligible thread.
+  for (auto x : threads) {
+    if (x->mask[sig])
+      continue;
+    if (x->status == Sleeping) {
+      x->pending.add(sig);
+      scheduler.wakeup(x, /*can_preempt=*/ false);
+      return;
+    }
+  }
+  pending.add(sig);
+  // TODO: When to retry delivery?
+}
+
+size_t tcb_t::sleep(size_t nano) {
+  timeout = (nano + tick_length - 1) / tick_length;
+  napping->push_back(this);
+  if (suspend() != 0) {
+    auto rem = timeout;
+    timeout = 0;
+    return rem;
+  }
+  return 0;
 }
 
 int nextpid() {
@@ -410,9 +446,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     TLBRefreshGuard guard;
     CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
   }
-  printk("clearing vma\n");
   pcb->clear_vma();
-  printk("finished\n");
   
   int fd = pcb->open_file(path, O_RDONLY);
   auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
