@@ -188,14 +188,14 @@ void pcb_t::send_signal(int sig) {
   // TODO: When to retry delivery?
 }
 
-size_t tcb_t::sleep(size_t nano) {
+int tcb_t::sleep(size_t nano) {
   timeout = (nano + tick_length - 1) / tick_length;
   napping->push_back(this);
-  if (suspend() != 0) {
-    auto rem = timeout;
-    timeout = 0;
-    return rem;
-  }
+  auto ret = suspend();
+  if (ret == -EINTR)
+    return -EINTR;
+  if (timeout != 0)
+    return 1;
   return 0;
 }
 

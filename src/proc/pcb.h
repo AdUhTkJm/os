@@ -107,8 +107,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
     vfree((void*) ksp_bottom);
   }
 
-  // Returns remaining timeout.
-  size_t sleep(size_t nano);
+  int sleep(size_t nano);
 };
 
 struct pcb_t : os::intrusive_list_node<pcb_t> {

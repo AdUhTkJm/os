@@ -103,6 +103,9 @@ public:
 class file : public shared {
 public:
   dentry *entry;
+  // For ordinary file, this is the byte offset;
+  // For directory, this is the entry offset;
+  // For other things, this is meaningless.
   size_t offset;
   int flags;
   enum whence {

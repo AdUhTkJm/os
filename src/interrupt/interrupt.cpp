@@ -245,19 +245,19 @@ HANDLE(getppid, _) {
 }
 
 HANDLE(getuid, _) {
-  return pcb->parent->uid;
+  return pcb->uid;
 }
 
 HANDLE(geteuid, _) {
-  return pcb->parent->euid;
+  return pcb->euid;
 }
 
 HANDLE(getegid, _) {
-  return pcb->parent->gid;
+  return pcb->gid;
 }
 
 HANDLE(getgid, _) {
-  return pcb->parent->egid;
+  return pcb->egid;
 }
 
 HANDLE(gettid, _) {
@@ -265,7 +265,7 @@ HANDLE(gettid, _) {
 }
 
 HANDLE(set_tid_address, _) {
-  return tcb->tid; // TODO
+  return -ENOSYS; // TODO
 }
 
 HANDLE(getrandom, _) {
@@ -393,17 +393,20 @@ HANDLE(getdents64, fd, dirents, cnt) {
   auto items = file->node()->list();
   
   char *pos = (char *) dirents;
-  for (const auto &item : items) {
-    constexpr unsigned nameoff = offsetof(linux_dirent64, name);
-    unsigned short len = nameoff + item.name.size() + 2;
+  constexpr unsigned nameoff = offsetof(linux_dirent64, name);
+  for (unsigned i = file->offset; i < items.size(); i++) {
+    const auto &item = items[i];
+    // Maintain alignment.
+    unsigned short len = roundup<8>(nameoff + item.name.size() + 1);
     if (va_t(pos) - dirents + len >= va_t(cnt))
-      return -EINVAL;
+      break;
 
     unsigned char type = inode::as_dt(item.ty);
     linux_dirent64 entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len, .type = type };
     copy_to_user(pos, &entry, nameoff);
     copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1);
     pos += len;
+    file->offset++;
   }
   return va_t(pos) - dirents;
 }
@@ -612,11 +615,21 @@ HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
   auto pollfds = copy_from_user((void *) _fds, cnt * sizeof(pollfd));
   if (!pollfds)
     return pollfds;
+  
+  size_t timeout = -1ul;
+  if (tmo) {
+    auto tp = copy_from_user((void *) tmo, sizeof(timespec));
+    if (!tp)
+      return tp;
+    timespec t = *(timespec *) tp->get();
+    timeout = t.tv_nsec + t.tv_sec * 1_s;
+    printk("timeout = %ld\n", timeout);
+  }
 retry:
   auto fds = (pollfd*) pollfds->get();
   int available = 0;
   for (long i = 0; i < cnt; i++) {
-    pollfd fd = fds[i];
+    pollfd &fd = fds[i];
     if (fd.fd < 0) {
       fd.revents = POLLNVAL;
       continue;
@@ -629,7 +642,6 @@ retry:
       continue;
 
     fd.revents = file->node()->poll(fd.events);
-    printk("given revents %d\n", fd.revents);
     if (fd.revents != 0)
       available++;
   }
@@ -637,7 +649,10 @@ retry:
     copy_to_user((void *) _fds, fds, cnt * sizeof(pollfd));
     return available;
   }
-  // Put to sleep with timeout. (How?)
+  // Don't add to wait queue if we don't want to wait.
+  if (!timeout)
+    return 0;
+
   // TODO: must disable preempt here.
   for (long i = 0; i < cnt; i++) {
     pollfd fd = fds[i];
@@ -647,10 +662,15 @@ retry:
     if (fd.events & POLLOUT)
       file->node()->wait_on_write();
   }
-  // What to do on interrupt?
-  if (suspend() != 0)
+  auto ret = tcb->sleep(timeout);
+  // Recovered from sleeping by timeout.
+  if (ret == 0)
     return 0;
-  goto retry;
+  // Recovered from sleeping by something other than interrupt.
+  if (ret == 1)
+    goto retry;
+  // Recovered from sleeping by interrupt.
+  return -EINTR;
 }
 
 HANDLE(nanosleep, rqtp, rmtp) {
@@ -663,7 +683,6 @@ HANDLE(nanosleep, rqtp, rmtp) {
     return -EINVAL;
 
   size_t nano = rq.tv_sec * 1'000'000'000 + rq.tv_nsec;
-  printk("sleep: %ld ns\n", nano);
   size_t rem = tcb->sleep(nano);
   if (rmtp) {
     timespec tm {
@@ -687,7 +706,6 @@ HANDLE(rt_sigaction, sig, act, oldact) {
       .sa_flags = a.flags,
       .sa_mask = { a.mask.sig },
     };
-    printk("old: handler = %p, mask = %p, flags = %p\n", a.handler, a.mask, a.flags);
     copy_to_user((void *) oldact, &v, sizeof(::sigaction));
   }
   if (act) {
@@ -700,7 +718,6 @@ HANDLE(rt_sigaction, sig, act, oldact) {
       .mask = sigact.sa_mask.val,
       .flags = sigact.sa_flags
     };
-    printk("new: handler = %p, mask = %p, flags = %p\n", a.handler, a.mask, a.flags);
   }
   return 0;
 }
@@ -771,6 +788,7 @@ namespace os {
       auto pcb = active();
       auto trap = (trapframe *) pcb->ksp;
       trap->regs[8] = syshandle(trap); // a0
+      printk("return: %p\n", trap->regs[8]);
       break;
     }
     case 12: // Instruction page fault
