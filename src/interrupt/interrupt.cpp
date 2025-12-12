@@ -6,6 +6,7 @@
 #include "../driver/plic/plic.h"
 #include "../mem/kalloc.h"
 #include "../proc/schedule.h"
+#include "../fs/ext2.h"
 
 // In nanosecond.
 extern int timer_tick;
@@ -62,7 +63,11 @@ long syshandle(trapframe *ksp) { \
 #define DISPATCHER_PRINT_IMPL(N) PRINT##N
 #define DISPATCHER_PRINT(N) DISPATCHER_PRINT_IMPL(N)
 #define ARGS(...) DISPATCHER(PP_NARG(__VA_ARGS__))(__VA_ARGS__)
-#define PRINT(x, ...) DISPATCHER_PRINT(PP_NARG(__VA_ARGS__))(x, __VA_ARGS__)
+#ifndef NO_SYSCALL_LOG
+# define PRINT(x, ...) DISPATCHER_PRINT(PP_NARG(__VA_ARGS__))(x, __VA_ARGS__)
+#else
+# define PRINT(...)
+#endif
 #define HANDLE(x, ...) } case syscall::x: { ARGS(__VA_ARGS__) PRINT(x, __VA_ARGS__)
 
 /*
@@ -168,7 +173,6 @@ HANDLE(close, fd) {
 }
 
 HANDLE(readlinkat, dirfd, _path, buf, size) {
-  (void) dirfd;
   if (size < 0)
     return -EINVAL;
   auto path = copy_from_user((char *) _path);
@@ -205,6 +209,30 @@ HANDLE(fchdir, fd) {
   if (!file)
     return -EBADF;
   pcb->pwd = file->entry;
+  return 0;
+}
+
+HANDLE(fstatat, dirfd, _path, buf, flags) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  bool relative = (*path)[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY)
+    : pcb->open_file(path->get(), O_RDONLY);
+  if (fd < 0)
+    return fd;
+  auto node = pcb->ftbl->at(fd)->node();
+  stat stat {
+    .st_ino = (unsigned long) node->inum(),
+    .st_mode = (unsigned) (node->mode | ext2_inode::fromtype(node->type)),
+    .st_nlink = node->nlink(),
+    .st_uid = (unsigned) node->uid,
+    .st_gid = (unsigned) node->gid,
+    .st_size = (long) node->size(),
+    .st_blksize = 1024,
+  };
+  copy_to_user((void *) buf, &stat, sizeof(stat));
   return 0;
 }
 
@@ -273,8 +301,11 @@ HANDLE(getrandom, _) {
 }
 
 HANDLE(setpgid, pid, pgid) {
-  if (pid != pcb->pid)
-    return -EPERM;
+  if (pid == 0)
+    pid = pcb->pid;
+  if (pgid == 0)
+    pgid = pcb->pid;
+  
   auto ftgt = pidmap->find(pid);
   if (ftgt == pidmap->end())
     return -ESRCH;
@@ -310,6 +341,9 @@ HANDLE(setpgid, pid, pgid) {
 }
 
 HANDLE(getpgid, pid) {
+  if (pid == 0)
+    pid = pcb->pid;
+
   auto ftgt = pidmap->find(pid);
   if (ftgt == pidmap->end())
     return -ESRCH;
@@ -512,12 +546,7 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
   }
 
   // Now allocate near this cap. Note that this has to be page-aligned.
-  vma::vma_t vma {
-    .begin = start, .end = end,
-    .prot = (int) prot, .flags = (int) flags,
-    .backup = backup, .offset = (size_t) offset,
-    .maxread = (size_t) len
-  };
+  vma::vma_t vma(start, end, prot, flags, backup, offset, len);
   if (pcb->vma.push(vma) != result::success)
     return -EINVAL;
   return vma.begin;
@@ -575,6 +604,9 @@ HANDLE(rt_sigprocmask, how, set, oldset, size) {
 }
 
 HANDLE(kill, pid, sig) {
+  if (pid == 0)
+    pid = pcb->pid;
+  
   auto fproc = pidmap->find(pid);
   if (fproc == pidmap->end())
     return -ESRCH;
@@ -588,6 +620,9 @@ HANDLE(kill, pid, sig) {
 }
 
 HANDLE(tgkill, pid, tid, sig) {
+  if (pid == 0)
+    pid = pcb->pid;
+
   auto fproc = pidmap->find(pid);
   if (fproc == pidmap->end())
     return -ESRCH;
@@ -623,7 +658,6 @@ HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
       return tp;
     timespec t = *(timespec *) tp->get();
     timeout = t.tv_nsec + t.tv_sec * 1_s;
-    printk("timeout = %ld\n", timeout);
   }
 retry:
   auto fds = (pollfd*) pollfds->get();
@@ -653,14 +687,16 @@ retry:
   if (!timeout)
     return 0;
 
-  // TODO: must disable preempt here.
-  for (long i = 0; i < cnt; i++) {
-    pollfd fd = fds[i];
-    auto file = pcb->ftbl->at(fd.fd);
-    if (fd.events & POLLIN)
-      file->node()->wait_on_read();
-    if (fd.events & POLLOUT)
-      file->node()->wait_on_write();
+  {
+    nopreempt _;
+    for (long i = 0; i < cnt; i++) {
+      pollfd fd = fds[i];
+      auto file = pcb->ftbl->at(fd.fd);
+      if (fd.events & POLLIN)
+        file->node()->wait_on_read();
+      if (fd.events & POLLOUT)
+        file->node()->wait_on_write();
+    }
   }
   auto ret = tcb->sleep(timeout);
   // Recovered from sleeping by timeout.
@@ -750,6 +786,9 @@ namespace os {
     }
   } else if (from_kernel) {
     switch (scause) {
+    case 4: // Load address misaligned
+      printk("exception: load address misaligned at %p when executing %p\n", stval, sepc);
+      break;
     case 5: // Load access fault
       printk("exception: load access fault at %p when executing %p\n", stval, sepc);
       break;
@@ -757,7 +796,7 @@ namespace os {
       printk("exception: store access fault at %p when executing %p\n", stval, sepc);
       break;
     case 12: // Instruction page fault
-      printk("exception: instruction page fault at %p when executing %p\n", stval, sepc);
+      printk("exception: instruction page fault at %p when executing %p (flags: %x)\n", stval, sepc, pte_flags(stval));
       break;
     case 13: // Load page fault
       printk("exception: load page fault at %p when executing %p\n", stval, sepc);
@@ -766,7 +805,7 @@ namespace os {
       printk("exception: store page fault at %p when executing %p\n", stval, sepc);
       break;
     default:
-      printk("exception: scause = %ld, stval = %ld, sepc = %p\n", scause, stval, sepc);
+      printk("exception: scause = %ld, stval = %p, sepc = %p\n", scause, stval, sepc);
       break;
     }
 #ifdef FUNC_INSTRUMENT
@@ -788,7 +827,9 @@ namespace os {
       auto pcb = active();
       auto trap = (trapframe *) pcb->ksp;
       trap->regs[8] = syshandle(trap); // a0
+#ifndef NO_SYSCALL_LOG
       printk("return: %p\n", trap->regs[8]);
+#endif
       break;
     }
     case 12: // Instruction page fault

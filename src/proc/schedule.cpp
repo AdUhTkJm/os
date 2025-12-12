@@ -48,7 +48,7 @@ void scheduler_t::dispatch_impl() {
     lock.release();
     // `next` resumes because of a signal, if it has any pending signals.
     // (Masked signals won't even reach pending point.)
-    context_restore(&next->ctx, /*from_signal=*/ next->pending.sig == 0); // noreturn
+    context_restore(&next->ctx, /*from_signal=*/ next->pending.sig != 0); // noreturn
   }
 
   // If there's no ongoing syscall, then just directly jump to end.

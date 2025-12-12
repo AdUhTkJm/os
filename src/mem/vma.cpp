@@ -207,5 +207,36 @@ bool vmas::has(va_t addr) const {
   return vma.begin <= addr && addr < vma.end;
 }
 
+vma_t::~vma_t() {
+  if (backup)
+    backup->drop();
+}
+
+vma_t::vma_t(uintptr_t begin, uintptr_t end, int prot, int flags): begin(begin), end(end), prot(prot), flags(flags), backup(nullptr), offset(0), maxread(0) { }
+
+vma_t::vma_t(uintptr_t begin, uintptr_t end, int prot, int flags, file *backup, size_t offset, size_t maxread)
+  : begin(begin), end(end), prot(prot), flags(flags), backup(backup), offset(offset), maxread(maxread) {
+  if (backup)
+    backup->ref();
+}
+
+vma_t::vma_t(const vma_t &other): begin(other.begin), end(other.end), prot(other.prot), flags(other.flags), backup(other.backup), offset(other.offset), maxread(other.maxread) {
+  if (backup)
+    backup->ref();
+}
+
+vma_t &vma_t::operator=(const vma_t &other) {
+  begin = other.begin;
+  end = other.end;
+  prot = other.prot;
+  flags = other.flags;
+  backup = other.backup;
+  offset = other.offset;
+  maxread = other.maxread;
+  if (backup)
+    backup->ref();
+  return *this;
+}
+
 }
 

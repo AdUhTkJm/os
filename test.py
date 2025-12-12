@@ -23,6 +23,7 @@ parser.add_argument("--docs", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
+parser.add_argument("--no-syscall-log", action="store_true")
 parser.add_argument("--gdb", action="store_true")
 
 args = parser.parse_args()
@@ -57,22 +58,22 @@ SPECIAL_FLAGS = {
   "src/interrupt/interrupt.cpp": ["-Wno-unused-variable"]
 }
 
+flags = []
 if not args.no_instrument:
-  flags = ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
-  CFLAGS.extend(flags)
-  CXXFLAGS.extend(flags)
+  flags += ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
 
 # debug_memory relies on instrumentation.
 if not args.no_debug_memory and not args.no_instrument:
-  flags = ["-DDEBUG_MEMORY"]
-  CFLAGS.extend(flags)
-  CXXFLAGS.extend(flags)
+  flags += ["-DDEBUG_MEMORY"]
 
+if args.no_syscall_log:
+  flags += ["-DNO_SYSCALL_LOG"]
+  
 if not args.no_debug:
-  flags = ["-g"]
-  CFLAGS.extend(flags)
-  CXXFLAGS.extend(flags)
+  flags += ["-g"]
 
+CFLAGS.extend(flags)
+CXXFLAGS.extend(flags)
 def hash_file(path):
   h = hashlib.sha256()
   with open(path, 'rb') as f:

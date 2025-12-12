@@ -100,7 +100,9 @@ public:
   }
 
   void clear() {
-    sz = 0;
+    delete[] dat;
+    dat = nullptr;
+    cap = sz = 0;
   }
 
   V *data() { return dat; }

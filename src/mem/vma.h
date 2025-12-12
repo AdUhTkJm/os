@@ -26,6 +26,14 @@ struct vma_t {
   file *backup;
   size_t offset, maxread;
 
+  vma_t() = default;
+  vma_t(uintptr_t begin, uintptr_t end, int prot, int flags);
+  vma_t(uintptr_t begin, uintptr_t end, int prot, int flags, file *backup, size_t offset, size_t maxread);
+  vma_t(const vma_t &other);
+  ~vma_t();
+
+  vma_t &operator=(const vma_t &other);
+
   bool mergeable(const vma_t &other) const;
 };
 

@@ -7,13 +7,15 @@ namespace {
   
 [[gnu::no_instrument_function]] void console_input_handler(int irq) {
   // Read the register.
-  char c = os::mmrd<char>(UART_BASE + UART_RBR);
-  
-  // Ctrl+C, for debugging (early exit)
-  if (c == 0x03)
-    sbi_system_reset();
+  while (/*data ready bit*/os::mmrd<uint8_t>(UART_BASE + UART_LSR) & 0x01) {
+    char c = os::mmrd<char>(UART_BASE + UART_RBR);
+    
+    // Ctrl+C, for debugging (early exit)
+    if (c == 0x03)
+      sbi_system_reset();
 
-  os::console_input_buf->push_back(c);
+    os::console_input_buf->push_back(c);
+  }
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
   os::console->wake_read(); // Note that this function might not return.
 }

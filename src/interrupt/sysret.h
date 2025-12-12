@@ -210,4 +210,22 @@ struct pollfd {
   short revents;    /* returned events */
 };
 
+// From <sys/stat.h>
+struct stat {
+  unsigned long st_dev;      /* ID of device containing file */
+  unsigned long st_ino;      /* Inode number */
+  unsigned      st_mode;     /* File type and mode */
+  unsigned long st_nlink;    /* Number of hard links */
+  unsigned      st_uid;      /* User ID of owner */
+  unsigned      st_gid;      /* Group ID of owner */
+  unsigned long st_rdev;     /* Device ID (if special file) */
+           long st_size;     /* Total size, in bytes */
+           long st_blksize;  /* Block size for filesystem I/O */
+           long st_blocks;   /* Number of 512 B blocks allocated */
+
+  struct timespec st_atim;  /* Time of last access */
+  struct timespec st_mtim;  /* Time of last modification */
+  struct timespec st_ctim;  /* Time of last status change */
+};
+
 #endif

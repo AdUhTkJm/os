@@ -63,8 +63,8 @@ public:
     BlockDevice = 0x6000, File = 0x8000, SymLink = 0xA000,
     Socket = 0xC000
   };
-  ftypeflags fromtype(inode::filetype ty);
-  inode::filetype totype(ftypeflags ty);
+  static ftypeflags fromtype(inode::filetype ty);
+  static inode::filetype totype(ftypeflags ty);
 
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;

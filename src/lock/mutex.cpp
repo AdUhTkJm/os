@@ -30,11 +30,12 @@ void condvar::wait() {
   spin.release();
 
   // sie bit 1: disables all interrupt.
-  CSRC(sie, 2);
-  lock.release();
-  scheduler.yield();
-  CSRS(sie, 2);
-  
+  {
+    nopreempt _;
+    lock.release();
+    scheduler.yield();
+  }
+
   lock.acquire();
 }
 

@@ -201,6 +201,8 @@ int printf(const char *fmt, ...) {
 }
 
 extern "C" void _start() {
+  constexpr int stdin = 0, stdout = 1, stderr = 2;
+
   // Mount ext2.
   int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
   (void) ret;
@@ -223,13 +225,21 @@ extern "C" void _start() {
     // Redirect stdin/stdout/stderr to tty.
     int in = syscall(-1, (reg_t) "/dev/tty", /*O_RDONLY=*/0, 0, openat);
     int out = syscall(-1, (reg_t) "/dev/tty", /*O_WRONLY=*/1, 0, openat);
-    syscall(in, /*stdin=*/0, 0, dup3);
-    syscall(out, /*stdout*/1, 0, dup3);
-    syscall(out, /*stderr*/2, 0, dup3);
+    syscall(in, stdin, 0, dup3);
+    syscall(out, stdout, 0, dup3);
+    syscall(out, stderr, 0, dup3);
+
+    // This process should be in its own group.
+    syscall(0, 0, setpgid);
+
+    // Set tty leader to this process.
+    int pgid = syscall(0, getpgid);
+    syscall(stdin, /*TIOCSPGRP=*/ 0x5410, (reg_t) &pgid, ioctl);
     
     // Execute the shell.
     const char *argv[] = { "/bin/sh", nullptr };
-    syscall((reg_t) "/bin/sh", (reg_t) argv, 0, execve);
+    const char *envp[] = { "PATH=/bin:/usr/bin", nullptr }; 
+    syscall((reg_t) "/bin/sh", (reg_t) argv, (reg_t) envp, execve);
 
     printf("unreachable\n");
   }

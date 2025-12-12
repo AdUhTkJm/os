@@ -42,7 +42,7 @@ public:
     }
   }
 
-  string(const string &other) : len(other.len) {
+  string(const string &other): len(other.len) {
     if (small()) {
       memcpy(u.sso, other.u.sso, len + 1);
     } else {
@@ -51,7 +51,7 @@ public:
     }
   }
 
-  string(string &&other) : len(other.len) {
+  string(string &&other): len(other.len) {
     u = other.u;
     other.len = 0;
     other.u.heap = nullptr;
@@ -99,7 +99,7 @@ public:
   }
 
   string substr(size_t from, size_t l = npos) const {
-    size_t end = min(from + l, len);
+    size_t end = l == npos ? len : min(from + min(l, len), len);
     return string(c_str() + from, end - from);
   }
 

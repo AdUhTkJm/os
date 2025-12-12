@@ -35,8 +35,9 @@ string tty::readline() {
   auto pcb = tcb->pcb;
 
   pos = 0;
-  for (char c; pos < sizeof(buf); ) {
-    console->read(0, &c, 1, 0);
+  for (char c; pos < sizeof(buf);) {
+    for (int len = 0; len != 1;)
+      len = console->read(0, &c, 1, 0);
     if (c == ctrl + 'C') {
       send(SIGINT);
       break;
@@ -59,19 +60,22 @@ string tty::readline() {
     case '\n':
       // Line end. Return.
       echo("\r\n");
-      goto ret;
+      return string(buf, pos);
     
     case '\b':
     case 0x7f: // Delete
-      echo("\b \b");
-      do_echo = false;
+      if (pos > 0) {
+        pos--;
+        echo("\b \b");
+        continue;
+      }
       break;
     }
 
+    buf[pos++] = c;
     if (do_echo)
       echo(c);
   }
-ret:
   return string(buf, pos);
 }
 

@@ -10,6 +10,7 @@
 #define UART_IER_RDA 0x01
 #define UART_RBR 0x0
 #define UART_LCR 0x3
+#define UART_LSR 0x5
 
 #define PLIC_ENABLE_S_OFFSET 0x2080
 #define PLIC_THRESHOLD_S_OFFSET 0x201000

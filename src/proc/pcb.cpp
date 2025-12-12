@@ -64,14 +64,6 @@ void pcb_t::clear() {
   ftbl->clear();
   ftbl->drop();
   vfs->drop();
-  clear_vma();
-}
-
-void pcb_t::clear_vma() {
-  for (const auto &vma : this->vma) {
-    if (vma.backup)
-      vma.backup->drop();
-  }
   vma.clear();
 }
 
@@ -189,7 +181,7 @@ void pcb_t::send_signal(int sig) {
 }
 
 int tcb_t::sleep(size_t nano) {
-  timeout = (nano + tick_length - 1) / tick_length;
+  timeout = nano == -1ul ? (1l << 63) : (nano + tick_length - 1) / tick_length;
   napping->push_back(this);
   auto ret = suspend();
   if (ret == -EINTR)
@@ -214,14 +206,14 @@ void init_user(tcb_t *tcb) {
   va_t heap_start = os::roundup<PAGE_SIZE>(max);
 
   // Allocate a heap. It is initially quite small.
-  pcb->vma.push({
-    .begin = heap_start, .end = heap_start + PAGE_SIZE, .prot = PROT_READ | PROT_WRITE,
-    .flags = MAP_PRIVATE | VMA_IS_HEAP, .backup = nullptr, .offset = 0, .maxread = 0
+  pcb->vma.push(vma::vma_t {
+    heap_start, heap_start + PAGE_SIZE,
+    PROT_READ | PROT_WRITE, MAP_PRIVATE | VMA_IS_HEAP
   });
   // Allocate a stack. Note it grows downwards.
-  pcb->vma.push({
-    .begin = stack_top - user_stack_size, .end = tcb->usp = stack_top, .prot = PROT_READ | PROT_WRITE,
-    .flags = MAP_PRIVATE | VMA_IS_STACK, .backup = nullptr, .offset = 0, .maxread = 0
+  pcb->vma.push(vma::vma_t {
+    stack_top - user_stack_size, tcb->usp = stack_top,
+    PROT_READ | PROT_WRITE, MAP_PRIVATE | VMA_IS_STACK
   });
 }
 
@@ -437,19 +429,24 @@ int clone(unsigned flags, void *usp, void *tls) {
     copy_to_user(usp -= sizeof(auxv_entry), &entry, sizeof(auxv_entry));
 
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
-  auto tcb = active();
-  auto pcb = tcb->pcb;
-  pt::free(pcb->pt_root);
-  pcb->pt_root = __kernel_pt_root;
-  // Reset the page table root immediately.
+  // Reset the page table root immediately. We're about to free the root.
   {
     TLBRefreshGuard guard;
-    CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
+    CSRW(satp, SATP_MODE_SV39 | (__kernel_pt_root >> 12));
   }
-  pcb->clear_vma();
+
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  {
+    nopreempt _;
+    pt::free(pcb->pt_root);
+    pcb->pt_root = __kernel_pt_root;
+  }
+  pcb->vma.clear();
   
   int fd = pcb->open_file(path, O_RDONLY);
   auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
+  printk("loaded\n");
   if (!auxv) {
     printk("error: %d\n", auxv.error());
     // This process is in a bad state now. We must terminate it.
@@ -458,7 +455,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     // Moreover, note that fd isn't opened so shouldn't be closed.
     pcb->ftbl->clear();
     pcb->ftbl->drop();
-    pcb->clear_vma();
+    pcb->vma.clear();
     pcb->vfs->drop();
     scheduler.erase(tcb);
     return auxv;

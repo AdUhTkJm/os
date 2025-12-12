@@ -20,7 +20,7 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
         return i == 0 ? -EAGAIN : i;
       wait.push_back(active());
       if (suspend() != 0)
-        return i == 0 ? -EINTR : len;
+        return i == 0 ? -EINTR : i;
       c = console_input_buf->pop_front();
     }
     p[i] = *c;
@@ -198,7 +198,16 @@ size_t tty_inode::write(size_t, const void *buf, size_t len, int) {
 }
 
 short tty_inode::poll(unsigned short event) {
-  return tty.console->poll(event);
+  if (line.size() == 0)
+    return tty.console->poll(event);
+
+  // We still have something to read.
+  short result = 0;
+  if (event & POLLIN)
+    result |= POLLIN;
+  if (event & POLLOUT)
+    result |= POLLOUT;
+  return result;
 }
 
 void tty_inode::wake_read() {

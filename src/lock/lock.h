@@ -29,6 +29,11 @@ public:
   ~synchronized() { lock.release(); }
 };
 
+struct nopreempt {
+  nopreempt() { __asm__ volatile("csrc sie, 2"); }
+  ~nopreempt() { __asm__ volatile("csrs sie, 2"); }
+};
+
 }
 
 #endif

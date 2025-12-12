@@ -120,7 +120,7 @@
 #define ONOCR	0000020  /* No CR output at column 0.  */
 #define ONLRET	0000040  /* NL performs CR function.  */
 #define OFILL	0000100  /* Use fill characters for delay.  */
-#define OFDEL	0000200  /* Fill is DEL.  *//* c_iflag bits */
+#define OFDEL	0000200  /* Fill is DEL. */
 
 /* c_iflags bits */
 #define IGNBRK	0000001  /* Ignore break condition.  */

@@ -46,10 +46,9 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma::vma_t vma = {
-        .begin = aligned, .end = end, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
-        .backup = ldso, .offset = phdr.p_offset - off, .maxread = phdr.p_filesz + off
+        aligned, end, prot, MAP_PRIVATE | VMA_IS_PT_LOAD,
+        ldso, phdr.p_offset - off, phdr.p_filesz + off
       };
-      ldso->ref();
       pcb->vma.push(vma);
     }
   }
@@ -102,11 +101,10 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
       if (phdr.p_flags & PF_R) prot |= PROT_READ;
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
-      vma::vma_t vma = {
-        .begin = aligned, .end = end, .prot = prot, .flags = MAP_PRIVATE | VMA_IS_PT_LOAD,
-        .backup = content, .offset = phdr.p_offset - off, .maxread = phdr.p_filesz + off
+      vma::vma_t vma {
+        aligned, end, prot, MAP_PRIVATE | VMA_IS_PT_LOAD,
+        content, phdr.p_offset - off, phdr.p_filesz + off
       };
-      content->ref();
       pcb->vma.push(vma);
     }
 

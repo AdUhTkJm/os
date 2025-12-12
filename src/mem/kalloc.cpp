@@ -44,7 +44,7 @@ uintptr_t physbegin, physend;
 struct pframe_meta {
 #ifdef DEBUG_MEMORY
   void *alloc_pc;
-  stack::shadow_stack stack;
+  // stack::shadow_stack stack;
 #endif
   unsigned char refcnt;
 };
@@ -206,7 +206,8 @@ pa_t pframe() {
   meta[pos].refcnt++;
 #ifdef DEBUG_MEMORY
   meta[pos].alloc_pc = __builtin_return_address(0);
-  os::stack::copy(&meta[pos].stack);
+  // os::stack::copy(&meta[pos].stack);
+  memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
 #endif
   return pa;
 }
@@ -225,9 +226,10 @@ void pfree(pa_t p) {
 #ifdef DEBUG_MEMORY
   if (meta[pos].refcnt == 0) {
     printk("%p double-freed (previous allocation %p).\n", p, meta[pos].alloc_pc);
-    os::stack::dump(meta[pos].stack);
+    // os::stack::dump(meta[pos].stack);
     panic("memory: pfree");
   }
+  memset((void *) as_va(p), 0xCC, PAGE_SIZE);
 #endif
   
   if (--meta[pos].refcnt > 0)
