@@ -392,7 +392,10 @@ HANDLE(set_robust_list, headptr, size) {
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
-  return os::clone(flags, (void *) stack, (void *) tls);
+  tcb_t *tcb = os::clone(flags, stack, (void *) tls);
+  if (childtid)
+    copy_to_user((void *) childtid, &tcb->tid, sizeof(int));
+  return tcb->pcb->pid;
 }
 
 HANDLE(execve, _path, _argv, _envp) {
@@ -517,22 +520,18 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
     return -EINVAL;
   }
 
-  va_t start, end;
+  va_t start;
   if (!fixed) {
-    end = stack_top;
-    // Find the lowest VMA that we must not overlap with.
-    // In other words, this is the cap of the address.
-    for (auto &vma : pcb->vma) {
-      if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
+    start = 0x6000'0000;
+    for (const auto &vma : pcb->vma) {
+      if (vma.flags & VMA_IS_STACK)
         continue;
-      end = min(end, vma.begin);
+      start = max(start, vma.end);
     }
-    end = rounddown<PAGE_SIZE>(end);
-    start = rounddown<PAGE_SIZE>(end - len);
-  } else {
+    start = rounddown<PAGE_SIZE>(start);
+  } else
     start = rounddown<PAGE_SIZE>(addr);
-    end = roundup<PAGE_SIZE>(addr + len);
-  }
+  va_t end = roundup<PAGE_SIZE>(start + len);
   
   file *backup = nullptr;
   if (!anon && !pcb->ftbl->count(fd))
@@ -547,8 +546,7 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
 
   // Now allocate near this cap. Note that this has to be page-aligned.
   vma::vma_t vma(start, end, prot, flags, backup, offset, len);
-  if (pcb->vma.push(vma) != result::success)
-    return -EINVAL;
+  pcb->vma.push(vma);
   return vma.begin;
 }
 
@@ -813,13 +811,14 @@ namespace os {
 #endif
     panic("exception occurred in kernel");
   } else {
+    auto pid = active()->pcb->pid;
     switch (scause) {
     case 2: // Invalid instruction
-      printk("exception (user): invalid instruction %p when executing %p\n", stval, sepc);
+      printk("exception (user): pid %d: invalid instruction %p when executing %p\n", pid, stval, sepc);
       os::terminate(active(), -127);
       break;
     case 5:
-      printk("exception (user): load access fault at %p when executing %p\n", stval, sepc);
+      printk("exception (user): pid %d: load access fault at %p when executing %p\n", pid, stval, sepc);
       printk("page table flags: %x, physical address: %p\n", pte_flags(stval), to_pa(stval));
       os::terminate(active(), -127);
       break;

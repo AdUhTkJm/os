@@ -136,11 +136,6 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
     static_assert(roundup<PAGE_SIZE>(sizeof(vq::queue_legacy)) == size);
     pa_t mem = pmalloc(size / PAGE_SIZE);
 
-    // Allocate space for buffers.
-    req = pmalloc(1);
-    buffer = pmalloc(1);
-    stat = pmalloc(1);
-
     // Set up the registers and the queue.
     mmwr<uint32_t>(base + QUEUE_PFN, mem / PAGE_SIZE);
     queue = (vq::queue_legacy *) as_va(mem);
@@ -156,6 +151,7 @@ block_device::block_device(const device &device, bool legacy): descid(0) {
 
 vq::desc &block_device::next_descriptor() {
   // The non-legacy part is NYI.
+  // TODO: Test whether queue is full?
   assert(legacy);
   auto queue = (vq::queue_legacy*) this->queue;
   auto &desc = queue->desc[descid];
@@ -171,6 +167,8 @@ uint16_t block_device::indexof(const vq::desc &desc) {
 
 // The lba is the logical block address.
 int block_device::read_legacy(uint64_t lba, void *buffer) {
+  auto req = pframe(), buf = pframe(), stat = pframe();
+
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
   *(request_legacy *) as_va(req) = request_legacy {
     .type = 0, /* Read */
@@ -188,7 +186,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = this->buffer;
+  d2.addr = buf;
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
   d2.next = indexof(d3);
@@ -200,27 +198,39 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
 
   // Put the head of chain into available ring for the device to read.
   auto queue = (vq::queue_legacy*) this->queue;
-  queue->avail.ring[queue->avail.idx % vq::size] = indexof(d1);
+  uint16_t head = indexof(d1);
+  queue->avail.ring[queue->avail.idx % vq::size] = head;
   queue->avail.idx++;
 
   // Tell device that a new request has come.
   __asm__ volatile("fence" ::: "memory");
   wait.push_back(active());
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-  suspend();
 
-  auto status = mmrd<uint8_t>(stat);
-  if (status == 0) {
-    memcpy(buffer, (void*) as_va(this->buffer), 512);
-    return 0;
+  for (int i = 0;;) {
+    suspend();
+    for (uint16_t last = queue->used.idx; i != last; i++) {
+      // TODO: free the chain descriptors? (see next_descriptor)
+      vq::used_ring::element used = queue->used.ring[i % vq::size];
+      
+      if (used.id == head) {
+        auto status = mmrd<uint8_t>(stat);
+        if (status == 0)
+          memcpy(buffer, (void*) as_va(buf), 512);
+
+        pfree(req);
+        pfree(buf);
+        pfree(stat);
+        return status;
+      }
+    }
   }
-
-  // Status 1 = error, 2 = unsupported
-  return status;
 }
 
 int block_device::write_legacy(uint64_t lba, const void *buffer) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
+  auto req = pframe(), buf = pframe(), stat = pframe();
+
   *(request_legacy *) as_va(req) = request_legacy {
     .type = 1, /* Write */
     .reserved = 0,
@@ -228,7 +238,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   };
   
   mmwr(stat, uint8_t(0xff));
-  memcpy((void*) as_va(this->buffer), buffer, 512);
+  memcpy((void*) as_va(buf), buffer, 512);
 
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
@@ -238,7 +248,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = this->buffer;
+  d2.addr = buf;
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT;
   d2.next = indexof(d3);
@@ -258,6 +268,9 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
 
   auto status = mmrd<uint8_t>(stat);
+  pfree(req);
+  pfree(buf);
+  pfree(stat);
   return status;
 }
 

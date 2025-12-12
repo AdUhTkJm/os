@@ -91,9 +91,7 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   bool write = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_WRONLY;
   bool read = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_RDONLY;
 
-  // TODO: check search permission
   auto maybe_dentry = vfs->lookup_from(path, relbase);
-  printk("opening: %s\n", path.c_str());
   if (!maybe_dentry) {
     if (!create)
       return maybe_dentry;
@@ -141,7 +139,7 @@ va_t pcb_t::brk(va_t addr) {
   auto lowest = stack_top;
   // Find the lowest VMA that we must not overlap with.
   // In other words, this is the cap of the address.
-  for (auto &vma : this->vma) {
+  for (const auto &vma : this->vma) {
     if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
       continue;
     lowest = min(lowest, vma.begin);
@@ -313,7 +311,7 @@ void trap_return_setup(tcb_t *tcb) {
 #define CLONE_IO	0x80000000	/* Clone I/O context.  */
 #define CLONE_NEWTIME	0x00000080  /* New time namespace */
 
-int clone(unsigned flags, void *usp, void *tls) {
+tcb_t *clone(unsigned flags, va_t usp, void *tls) {
   // Parent thread/process.
   auto pt = active();
   auto pp = pt->pcb;
@@ -339,6 +337,7 @@ int clone(unsigned flags, void *usp, void *tls) {
     (*pidmap)[cp->pid] = cp;
 
     // Mark the parent's table as copy-on-write.
+    TLBRefreshGuard guard;
     pt::walk((pte_t *) as_va(pp->pt_root), [](pte_t &pte) {
       // Only do this on user pages that are writable.
       if (!(pte & PTE_U) || !(pte & PTE_W))
@@ -361,14 +360,14 @@ int clone(unsigned flags, void *usp, void *tls) {
   ct->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
   memcpy((char *) ct->ksp, (char *) pt->ksp, sizeof(trapframe));
   // Point to the new user stack.
-  ct->usp = (va_t) usp;
+  // From man clone(2), when usp is NULL we reuse the parent stack.
+  // Copy-on-write ensures this works.
+  ct->usp = usp ? usp : pt->usp;
 
   // Set the return value (a0) of child to zero.
   auto trap = (trapframe *) ct->ksp;
   trap->regs[8] = 0;
   ct->pc = trap->sepc;
-  
-  TLBRefreshGuard guard;
 
   // Copy the table, but not the files.
   cp->ftbl = share_files ? pp->ftbl : new process_file_table(*pp->ftbl);
@@ -380,11 +379,10 @@ int clone(unsigned flags, void *usp, void *tls) {
   cp->vfs = share_fs ? pp->vfs : new vfs(*pp->vfs);
   cp->vfs->ref();
 
-  // Copy various information from parent.
   ct->status = Ready;
   ct->tls = tls;
 
-  // No need to copy them again. We have copied the entire structure.
+  // Copy various information from parent, if we aren't sharing the PCB.
   if (!share_vm) {
     cp->kproc = pp->kproc;
     cp->uid = pp->euid;
@@ -396,8 +394,9 @@ int clone(unsigned flags, void *usp, void *tls) {
     cp->pgid = pp->pgid;
     cp->sid = pp->sid;
   }
+  
   scheduler.add(ct);
-  return cp->pid;
+  return ct;
 }
 
 /*
@@ -446,7 +445,6 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   
   int fd = pcb->open_file(path, O_RDONLY);
   auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
-  printk("loaded\n");
   if (!auxv) {
     printk("error: %d\n", auxv.error());
     // This process is in a bad state now. We must terminate it.

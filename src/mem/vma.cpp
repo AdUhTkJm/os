@@ -18,7 +18,7 @@ void map_single(void *va, pte_t *root) {
     auto type = scause == 12 ? "execute" : scause == 13 ? "load" : scause == 15 ? "store" : nullptr;
     if (type) {
       va_t sepc = ((trapframe *) tcb->ksp)->sepc;
-      printk("Unmapped address %p on %s, requested from %p. Terminate the process.\n", va, type, sepc);
+      printk("Unmapped address %p on %s, requested from instruction %p of process %d. Terminate the process.\n", va, type, sepc, pcb->pid);
     } else
       printk("Unmapped address %p. Terminate the process.\n", va);
     os::terminate(tcb, -127);
@@ -85,7 +85,7 @@ void map_single(void *va, pte_t *root) {
 
   if (read > 0) {
     SeekGuard guard(vma.backup, vma.offset + off);
-    vma.backup->read((void *) va_page, read);
+    int rd = vma.backup->read((void *) va_page, read);
   }
 
   if (read < PAGE_SIZE)
@@ -185,17 +185,44 @@ size_t vmas::find(va_t addr) const {
 }
 
 // Keep `vmas` sorted.
-result vmas::push(const vma_t &vma) {
-  auto point = find(vma.begin);
-  // Check that this isn't contained.
-  if (point != vmas.size()) {
-    const auto &land = vmas[point];
-    if (land.begin <= vma.begin && vma.begin < land.end)
-      return result::failure;
+void vmas::push(const vma_t &vma) {
+  auto begin = vma.begin, end = vma.end;
+  size_t i = find(begin);
+
+  // We must split if it's like this:
+  // prev [=======]
+  //          |------- begin
+  if (i > 0) {
+    const auto &prev = vmas[i - 1];
+    if (prev.begin < begin && begin < prev.end) {
+      split_at(i - 1, begin);
+      i++;
+    }
   }
 
-  vmas.insert(vmas.begin() + point, vma);
-  return result::success;
+  // Now there are two cases.
+  // Case 1.
+  //        [========]
+  // |----------| end
+  //    Here we must split end, and we can break.
+  //
+  // Case 2.
+  //    [====]
+  // |---------| end
+  //    In this case, we can simply erase the VMA, since it's completely covered.
+  while (i < vmas.size() && vmas[i].begin < end) {
+    const auto &cur = vmas[i];
+    if (cur.end > end) {
+      split_at(i, end);
+      break;
+    }
+    if (cur.begin >= begin)
+      vmas.erase(vmas.begin() + i);
+  }
+
+  // Finally record the new VMA.
+  // Note that we don't allow overwriting PT_LOAD or STACK, so we only check for heap here.
+  vmas.insert(vmas.begin() + i, vma);
 }
 
 bool vmas::has(va_t addr) const {

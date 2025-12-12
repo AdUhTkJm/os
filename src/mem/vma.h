@@ -26,7 +26,7 @@ struct vma_t {
   file *backup;
   size_t offset, maxread;
 
-  vma_t() = default;
+  vma_t(): backup(nullptr) {}
   vma_t(uintptr_t begin, uintptr_t end, int prot, int flags);
   vma_t(uintptr_t begin, uintptr_t end, int prot, int flags, file *backup, size_t offset, size_t maxread);
   vma_t(const vma_t &other);
@@ -55,7 +55,7 @@ struct vmas {
   vma_t &operator[](size_t index) { return vmas[index]; }
   const vma_t &operator[](size_t index) const { return vmas[index]; }
 
-  result push(const vma_t &vma);
+  void push(const vma_t &vma);
   bool has(va_t addr) const;
 
   // Finds the insertion place of `addr`, i.e. the first vma that is

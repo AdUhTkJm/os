@@ -161,7 +161,7 @@ void mark_reserved() {
   auto rsv = fdt::reserved();
   // Don't touch the space of the free-list allocator.
   // Also don't touch the kernel itself.
-  auto endpa = to_pa(__kernel_end);
+  auto endpa = (pa_t) (__kernel_end - KERNEL_OFFSET);
   rsv.push_back({ 0x8000'0000, endpa - 0x8000'0000 });
   rsv.push_back({ endpa, FREE_LIST_SIZE * PAGE_SIZE });
 
@@ -221,6 +221,7 @@ pa_t pframe_zeroed() {
 void pfree(pa_t p) {
   if (!p)
     return;
+  assert(p % PAGE_SIZE == 0);
   
   auto pos = p / PAGE_SIZE;
 #ifdef DEBUG_MEMORY
@@ -240,7 +241,7 @@ void pfree(pa_t p) {
   if (p >= end && p < end + FREE_LIST_SIZE * PAGE_SIZE) {
     auto *frame = (frame_t *) as_va(p);
     frame->next = free_head;
-    free_head = to_pa(frame);
+    free_head = p;
     return;
   }
 

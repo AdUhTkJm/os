@@ -94,7 +94,7 @@ struct device {
 // See section 2.7.
 namespace vq {
 
-constexpr int size = 16;
+constexpr int size = 32;
 constexpr int align = PAGE_SIZE;
 
 // This describes one buffer.
@@ -173,8 +173,6 @@ class block_device : public os::block_device {
     uint64_t sector;
   };
   static_assert(sizeof(request_legacy) == 16);
-
-  pa_t req, buffer, stat;
 
   vq::desc &next_descriptor();
   uint16_t indexof(const vq::desc &);

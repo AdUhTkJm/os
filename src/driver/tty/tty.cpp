@@ -60,6 +60,7 @@ string tty::readline() {
     case '\n':
       // Line end. Return.
       echo("\r\n");
+      buf[pos++] = '\n';
       return string(buf, pos);
     
     case '\b':

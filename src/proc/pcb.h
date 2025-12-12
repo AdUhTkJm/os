@@ -178,7 +178,7 @@ void suspend();
 int nextpid();
 
 // Forks a process.
-int clone(unsigned flags, void *usp, void *tls);
+tcb_t *clone(unsigned flags, va_t usp, void *tls);
 
 // Replaces a process image.
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp);
