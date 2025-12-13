@@ -214,5 +214,7 @@ expected<unique_ptr<char>> copy_from_user(char *usr);
 // Copies a null-terminated list of strings.
 expected<vector<string>> copy_from_user(char **usr);
 
+void setroot(pa_t pt_root);
+
 }
 #endif

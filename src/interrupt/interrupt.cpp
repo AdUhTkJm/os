@@ -371,7 +371,7 @@ HANDLE(uname, buf) {
     .version = "0.1",
     .machine = "RISC-V64",
   };
-  
+  copy_to_user((void *) buf, &name, sizeof(utsname));
   return 0;
 }
 
@@ -410,13 +410,12 @@ HANDLE(execve, _path, _argv, _envp) {
 
 HANDLE(exit, ret) {
   os::terminate(tcb, ret);
-  return 0; // Won't reach the thread.
+  panic("exit: unreachable");
 }
 
 HANDLE(exit_group, ret) {
-  for (auto x : pcb->threads)
-    os::terminate(x, ret);
-  return 0; // Won't reach the thread.
+  os::terminate(pcb, ret);
+  panic("exit_group: unreachable");
 }
 
 HANDLE(fcntl, fd, ty, args) {
@@ -754,6 +753,10 @@ HANDLE(rt_sigaction, sig, act, oldact) {
     };
   }
   return 0;
+}
+
+HANDLE(wait4, pid, wstatus, options, rusage) {
+  return detail::wait(pid, (void *) wstatus, options, (void *) rusage);
 }
 
 SYSHANDLE_END

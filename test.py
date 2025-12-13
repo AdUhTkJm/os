@@ -20,6 +20,7 @@ parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
 parser.add_argument("-m", "--mount", action="store_true")
 parser.add_argument("--docs", action="store_true")
+parser.add_argument("--log-refcnt", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
@@ -63,13 +64,18 @@ if not args.no_instrument:
   flags += ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
 
 # debug_memory relies on instrumentation.
-if not args.no_debug_memory and not args.no_instrument:
+if not args.no_debug_memory:
   flags += ["-DDEBUG_MEMORY"]
+
+if args.log_refcnt:
+  flags += ["-DLOG_REFCNT"]
 
 if args.no_syscall_log:
   flags += ["-DNO_SYSCALL_LOG"]
   
-if not args.no_debug:
+if args.no_debug:
+  flags += ["-DNDEBUG"]
+else:
   flags += ["-g"]
 
 CFLAGS.extend(flags)

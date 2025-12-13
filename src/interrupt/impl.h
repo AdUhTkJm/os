@@ -11,6 +11,7 @@ int fcntl(int fd, int ty, int arg);
 int mprotect(unsigned long start, unsigned long len, int prot);
 int munmap(unsigned long addr, unsigned long len);
 int ioctl(int fd, int op, void *argp);
+int wait(int pid, void *wstatus, int options, void *rusage);
 
 }
 

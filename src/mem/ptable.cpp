@@ -295,4 +295,9 @@ void free(pa_t root) {
 
 }
 
+void setroot(pa_t pt_root) {
+  TLBRefreshGuard guard;
+  CSRW(satp, SATP_MODE_SV39 | (pt_root >> 12));
+}
+
 }

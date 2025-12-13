@@ -90,10 +90,10 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   bool ctx_valid = false; // Whether the syscall/trap context is valid.
   bool kthread = false;   // Whether this is a kernel thread.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
-  int ret;                // Thread exit value / return code.
+  int ret;                // Thread return code.
   void __user *tls;       // Thread-local storage pointer.
-  sigset mask;            // Masked (ignored) signals.
-  sigset pending;         // Pending signals, for this thread.
+  sigset mask = 0;        // Masked (ignored) signals.
+  sigset pending = 0;     // Pending signals, for this thread.
   long timeout = 0;       // Timeout to last sleep.
 
   pcb_t *pcb;             // Parent process.
@@ -110,7 +110,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   int sleep(size_t nano);
 };
 
-struct pcb_t : os::intrusive_list_node<pcb_t> {
+struct pcb_t {
   pa_t pt_root;           // Root page table entry.
   vma::vmas vma;          // Virtual memory areas.
   pcb_t *parent;          // Parent.
@@ -120,16 +120,19 @@ struct pcb_t : os::intrusive_list_node<pcb_t> {
   int pid, pgid, sid;
   bool kproc = false;     // Kernel process.
   bool execd = false;     // Has performed `exec`.
+  bool zombie = false;    // Whether this is a zombie.
   os::intrusive_list<tcb_t> threads;
-  os::intrusive_list<pcb_t> children;
+  os::vector<pcb_t*> children;
   class vfs *vfs;
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
   int tidn = 0;           // Next tid.
+  int ret;                // Process return code.
   dentry *pwd;            // Process working directory.
   string execpath;        // The path to the executable.
-  sigset pending;         // Pending signals.
+  sigset pending = 0;     // Pending signals.
   sigaction sigact[32];   // Signal actions.
   os::tty::tty *tty;      // Terminal typewriter.
+  os::vector<tcb_t*> wait;// Threads suspended in wait() system call.
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
@@ -164,9 +167,11 @@ static_assert(offsetof(tcb_t, ksp) == 24);
 
 extern static_storage<hashmap<int, pcb_t*>> pidmap;
 
-void init(tcb_t *pcb);
-void init_user(tcb_t *pcb);
-void terminate(tcb_t *pcb, int ret);
+void init(tcb_t *tcb);
+void init_user(tcb_t *tcb);
+// We can terminate a thread or a process.
+void terminate(tcb_t *tcb, int ret);
+void terminate(pcb_t *pcb, int ret);
 
 // Set up the returning from the trap handler.
 void trap_return_setup(tcb_t *pcb);
@@ -198,6 +203,7 @@ tcb_t *make_kprocess(T fptr) {
   pcb->pid = pcb->pgid = pcb->sid = nextpid();
   pcb->kproc = true;
   pcb->gid = pcb->uid = 0; // root
+  pcb->parent = nullptr;
   
   // We aren't lazy-allocating here.
   pcb->vfs = new vfs;

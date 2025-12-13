@@ -12,7 +12,7 @@ constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 
 // The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
 // When we enable DEBUG_MEMORY, the meta becomes incredibly large.
-#ifdef DEBUG_MEMORY
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
 constexpr va_t MAX_PA_SIZE = 512_mb;
 #else
 constexpr va_t MAX_PA_SIZE = 2_gb;
@@ -42,7 +42,7 @@ os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
 uintptr_t physbegin, physend;
 
 struct pframe_meta {
-#ifdef DEBUG_MEMORY
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
   void *alloc_pc;
   // stack::shadow_stack stack;
 #endif
@@ -204,7 +204,7 @@ pa_t pframe() {
 
   auto pos = pa / PAGE_SIZE;
   meta[pos].refcnt++;
-#ifdef DEBUG_MEMORY
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
   meta[pos].alloc_pc = __builtin_return_address(0);
   // os::stack::copy(&meta[pos].stack);
   memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
@@ -224,7 +224,7 @@ void pfree(pa_t p) {
   assert(p % PAGE_SIZE == 0);
   
   auto pos = p / PAGE_SIZE;
-#ifdef DEBUG_MEMORY
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
   if (meta[pos].refcnt == 0) {
     printk("%p double-freed (previous allocation %p).\n", p, meta[pos].alloc_pc);
     // os::stack::dump(meta[pos].stack);
@@ -275,7 +275,7 @@ void *vmalloc_impl(size_t len) {
 }
 
 void vfree(void *p) {
-#ifdef FUNC_INSTRUMENT
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
   leak::record_free(p);
 #endif
   if (!p)

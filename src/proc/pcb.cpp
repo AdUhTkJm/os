@@ -59,8 +59,11 @@ void process_file_table::clear() {
 }
 
 void pcb_t::clear() {
-  pt::free(pt_root);
-  pt_root = __kernel_pt_root;
+  setroot(__kernel_pt_root);
+  { 
+    pt::free(pt_root);
+    pt_root = __kernel_pt_root;
+  }
   ftbl->clear();
   ftbl->drop();
   vfs->drop();
@@ -236,11 +239,20 @@ void init(tcb_t *tcb) {
 }
 
 void terminate(tcb_t *tcb, int ret) {
-  // This will dispatch.
-  scheduler.erase(tcb);
   auto pcb = tcb->pcb;
-  pcb->clear();
+  if (pcb->threads.size() == 1) {
+    assert(pcb->threads.front() == tcb);
+    terminate(pcb, ret);
+    return;
+  }
+
   tcb->ret = ret;
+  pcb->threads.erase(tcb);
+  scheduler.erase(tcb);
+}
+
+// This should kill all threads inside this process.
+void terminate(pcb_t *pcb, int ret) {
   // Change all child processes to children of init.
   // It is expected that init will recycle them later.
   auto init = (*pidmap)[1];
@@ -250,6 +262,30 @@ void terminate(tcb_t *tcb, int ret) {
     child->parent = init;
     init->children.push_back(child);
   }
+  pcb->children.clear();
+  pcb->ret = ret;
+  pcb->zombie = true;
+
+  // Wake up parent for wait() system call.
+  if (pcb->parent) {
+    for (auto thread : pcb->parent->wait)
+      scheduler.wakeup(thread, /*can_preempt=*/ false);
+  }
+  pcb->clear();
+  pidmap->erase(pcb->pid);
+
+  auto active = os::active();
+  bool has_active = false;
+  for (auto t : pcb->threads) {
+    if (t == active) {
+      has_active = true;
+      continue;
+    }
+    scheduler.erase(t);
+  }
+  if (has_active)
+    // Note: this does not return. It will dispatch a new thread.
+    scheduler.erase(active);
 }
 
 static void first_time_setup(tcb_t *tcb) {
@@ -270,7 +306,7 @@ static void first_time_setup(tcb_t *tcb) {
   else
     sstatus = (sstatus | (1 << 8));
   trap->sstatus = sstatus | (1 << 5);
-  CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
+  setroot(pcb->pt_root);
 }
 
 void trap_return_setup(tcb_t *tcb) {
@@ -280,7 +316,7 @@ void trap_return_setup(tcb_t *tcb) {
   }
 
   tcb->status = Running;
-  CSRW(satp, SATP_MODE_SV39 | (tcb->pcb->pt_root >> 12));
+  setroot(tcb->pcb->pt_root);
 }
 
 // Taken from <sched.h>
@@ -328,6 +364,8 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
   // We can reference to the same PCB.
   if (share_vm) {
     cp = pp;
+    // We do not copy the wait queue.
+    cp->wait.clear();
   } else {
     // When not sharing, we're copying the PCB as well.
     cp = new pcb_t;
@@ -429,10 +467,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
 
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
   // Reset the page table root immediately. We're about to free the root.
-  {
-    TLBRefreshGuard guard;
-    CSRW(satp, SATP_MODE_SV39 | (__kernel_pt_root >> 12));
-  }
+  setroot(__kernel_pt_root);
 
   auto tcb = active();
   auto pcb = tcb->pcb;
@@ -467,10 +502,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   pcb->pt_root = pframe();
   memcpy((void *) as_va(pcb->pt_root), (void*) as_va(__kernel_pt_root), PAGE_SIZE);
   // Reset the page table root.
-  {
-    TLBRefreshGuard guard;
-    CSRW(satp, SATP_MODE_SV39 | (pcb->pt_root >> 12));
-  }
+  setroot(pcb->pt_root);
 
   tcb->status = Init;
 
@@ -580,7 +612,6 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   auto trap = (trapframe *) tcb->ksp;
   trap->sepc = tcb->pc;
   trap->sscratch = tcb->usp;
-  printk("exec done, pc = %p, usp = %p\n", tcb->pc, tcb->usp);
   trap->regs[2] = stack_top - user_stack_size; // TLS
   return 0;
 }

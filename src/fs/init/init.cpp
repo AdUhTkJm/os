@@ -241,7 +241,10 @@ extern "C" void _start() {
     const char *envp[] = { "PATH=/bin:/usr/bin", nullptr }; 
     syscall((reg_t) "/bin/sh", (reg_t) argv, (reg_t) envp, execve);
 
-    printf("unreachable\n");
+    __builtin_unreachable();
   }
-  syscall(0, exit);
+
+  // Keep waiting for zombie processes.
+  for (;;)
+    syscall(-1, 0, 0, 0, wait4);
 }

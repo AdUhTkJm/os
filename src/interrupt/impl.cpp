@@ -197,4 +197,53 @@ int ioctl(int fd, int op, void *argp) {
   }
 }
 
+int wait(int pid, void *wstatus, int options, void *rusage) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  bool nohang = options & WNOHANG;
+  bool untraced = options & WUNTRACED;
+  // TODO
+  (void) untraced;
+
+  [[unlikely]] if (pid == int(0x8000'0000))
+    return -ESRCH;
+  
+  if (pid != -1) {
+    printk("wait4: unimplemented: pid = %d\n", pid);
+    return -EINVAL;
+  }
+  if (rusage)
+    printk("wait4: unimplemented: rusage\n");
+  if (!pcb->children.size())
+    return -ECHILD;
+
+  for (;;) {
+    if (!nohang) {
+      pcb->wait.push_back(tcb);
+      if (suspend() != 0)
+        return -EINTR;
+    }
+
+    // Check whether a child has changed.
+    for (auto child : pcb->children) {
+      if (child->zombie) {
+        if (wstatus) {
+          // See <wait.h> for the bits.
+          int status = (child->ret & 0xff) << 8;
+          copy_to_user(wstatus, &status, sizeof(int));
+        }
+
+        int pid = child->pid;
+        pcb->children.erase(child);
+        pcb->wait.erase(tcb);
+        delete child;
+        return pid;
+      }
+    }
+
+    if (nohang)
+      return 0;
+  }
+}
+
 }

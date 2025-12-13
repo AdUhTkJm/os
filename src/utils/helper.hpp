@@ -73,7 +73,7 @@ protected:
   atomic<int> refcnt;
 public:
   void drop() {
-#ifdef DEBUG_MEMORY
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
     printk("%p dropped, refcnt: %d\n", this, refcnt - 1);
     if (!--refcnt)
       printk("recycled\n"), delete this;
@@ -84,7 +84,7 @@ public:
   }
 
   void ref() {
-#ifdef DEBUG_MEMORY
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
     printk("%p referred, refcnt: %d\n", this, refcnt + 1);
 #endif
     refcnt++;

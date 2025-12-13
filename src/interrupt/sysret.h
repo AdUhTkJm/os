@@ -10,7 +10,7 @@
 
 #define AT_FDCWD -100
 
-// See <time.h>
+// From <time.h>
 
 /* Identifier for system-wide realtime clock.  */
 # define CLOCK_REALTIME			0
@@ -40,7 +40,7 @@ struct timespec {
   long tv_nsec;
 };
 
-// See <dirent.h>
+// From <dirent.h>
 struct linux_dirent64 {
   unsigned long inum;
   unsigned long _resv;
@@ -49,7 +49,7 @@ struct linux_dirent64 {
   char name[];
 };
 
-// See <linux/futex.h>
+// From <linux/futex.h>
 struct robust_list {
 	struct robust_list *next;
 };
@@ -60,7 +60,7 @@ struct robust_list_head {
 	struct robust_list *list_op_pending;
 };
 
-// See <signal.h>
+// From <signal.h>
 #define	SIG_BLOCK     0		 /* Block signals.  */
 #define	SIG_UNBLOCK   1		 /* Unblock signals.  */
 #define	SIG_SETMASK   2		 /* Set the set of blocked signals.  */
@@ -227,5 +227,9 @@ struct stat {
   struct timespec st_mtim;  /* Time of last modification */
   struct timespec st_ctim;  /* Time of last status change */
 };
+
+// From <sys/wait.h>
+#define	WNOHANG		1	/* Don't block waiting.  */
+#define	WUNTRACED	2	/* Report status of stopped children.  */
 
 #endif

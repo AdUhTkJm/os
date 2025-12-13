@@ -42,8 +42,8 @@ struct sigset {
 
 struct sigaction {
   void (*handler)(int, siginfo_t*, void*) = nullptr;
-  sigset mask;
-  unsigned long flags;
+  sigset mask = 0;
+  unsigned long flags = 0;
 };
 
 }

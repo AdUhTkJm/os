@@ -1,19 +1,23 @@
 \section{PCB}
 \label{sec:pcb}
 
-我先介绍一下我的 PCB (\textit{process control block}) 中含有哪些信息，然后再介绍它们的具体用途。
+我的进程/线程信息分为两块：TCB (\textit{thread control block}) 和 PCB (\textit{process control block})。调度器中存储的都是 TCB。
+
+TCB 中的内容是每个线程单独的信息，例如线程当前是否阻塞，\cref{sec:interrupt}中介绍的 ksp 与 usp，以及\cref{subsec:syscallctx}中提到的 system-call context。它还含有一个指向线程共有的 PCB 的指针。
+
+至于 PCB，粗略来看有这些东西：
 \begin{itemize}
 \item pid;
-\item uid, gid, suid, euid;
-\item 栈顶指针 (ksp, usp)，在\cref{sec:interrupt}中已经介绍;
-\item PC (\textit{program counter});
-\item 父进程与子进程;
+\item uid, suid, euid（以及对应的 gid, sgid, egid）;
+\item 进程开启时的 PC;
+\item 父进程与子进程；
 \item VMA (\textit{virtual memory area});
-\item system-call context，详见\cref{subsec:syscallctx};
+\item 开启的文件，以及 VFS context；
+\item 等待处理的信号，以及 signal handler；
 \item 进程的返回值。
 \end{itemize}
 
-值得注意的是，在启动时，我会生成一个 pid = -1 的假 PCB，作为调度器的“当前进程”，并在启动完成后移除。这可以简化一些启动时的特殊判断。
+值得注意的是，在启动时，我会生成一个 pid = -1 的假 PCB，作为调度器的“当前进程”，并在启动完成后移除。这可以简化大量启动时的特殊判断。
 
 \subsection{初始化}
 \label{subsec:pcbinit}

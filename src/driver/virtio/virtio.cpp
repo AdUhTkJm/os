@@ -167,31 +167,30 @@ uint16_t block_device::indexof(const vq::desc &desc) {
 
 // The lba is the logical block address.
 int block_device::read_legacy(uint64_t lba, void *buffer) {
-  auto req = pframe(), buf = pframe(), stat = pframe();
-
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
-  *(request_legacy *) as_va(req) = request_legacy {
+  request_legacy req {
     .type = 0, /* Read */
     .reserved = 0,
     .sector = lba,
   };
   
-  mmwr(stat, uint8_t(0xff));
+  int status = 0xff;
+  char buf[512];
 
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
   vq::desc &d3 = next_descriptor();
-  d1.addr = req;
+  d1.addr = to_pa(&req);
   d1.len = sizeof(request_legacy);
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = buf;
+  d2.addr = to_pa(&buf);
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
   d2.next = indexof(d3);
 
-  d3.addr = stat;
+  d3.addr = to_pa(&status);
   d3.len = 1;
   d3.flags = vq::descflags::WRITEONLY;
   d3.next = 0;
@@ -214,13 +213,9 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
       vq::used_ring::element used = queue->used.ring[i % vq::size];
       
       if (used.id == head) {
-        auto status = mmrd<uint8_t>(stat);
         if (status == 0)
-          memcpy(buffer, (void*) as_va(buf), 512);
+          memcpy(buffer, buf, 512);
 
-        pfree(req);
-        pfree(buf);
-        pfree(stat);
         return status;
       }
     }
@@ -229,31 +224,30 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
 
 int block_device::write_legacy(uint64_t lba, const void *buffer) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
-  auto req = pframe(), buf = pframe(), stat = pframe();
-
-  *(request_legacy *) as_va(req) = request_legacy {
+  request_legacy req {
     .type = 1, /* Write */
     .reserved = 0,
     .sector = lba,
   };
   
-  mmwr(stat, uint8_t(0xff));
-  memcpy((void*) as_va(buf), buffer, 512);
+  int status = 0xff;
+  char buf[512];
+  memcpy(buf, buffer, 512);
 
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
   vq::desc &d3 = next_descriptor();
-  d1.addr = req;
+  d1.addr = to_pa(&req);
   d1.len = sizeof(request_legacy);
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = buf;
+  d2.addr = to_pa(&buf);
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT;
   d2.next = indexof(d3);
 
-  d3.addr = stat;
+  d3.addr = to_pa(&status);
   d3.len = 1;
   d3.flags = vq::descflags::WRITEONLY;
   d3.next = 0;
@@ -266,11 +260,6 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   // Tell device that a new request has come.
   __asm__ volatile("fence" ::: "memory");
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-
-  auto status = mmrd<uint8_t>(stat);
-  pfree(req);
-  pfree(buf);
-  pfree(stat);
   return status;
 }
 

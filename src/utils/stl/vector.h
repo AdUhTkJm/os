@@ -81,7 +81,7 @@ public:
     sz = newsz;
   }
 
-  void insert(V *place, V element) {
+  void insert(V *place, const V &element) {
     long d = place - dat;
     if (sz == cap)
       reserve(max(16ul, cap * 2));
@@ -97,6 +97,21 @@ public:
     for (long i = d; i < long(sz); i++)
       dat[i] = dat[i + 1];
     sz--;
+  }
+
+  size_t find(const V &element) {
+    for (unsigned long i = 0; i < sz; i++) {
+      if (dat[i] == element)
+        return i;
+    }
+    return -1;
+  }
+
+  void erase(const V &element) {
+    size_t i = find(element);
+    if (i == -1ul)
+      return;
+    erase(dat + i);
   }
 
   void clear() {

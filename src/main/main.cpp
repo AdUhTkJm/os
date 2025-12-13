@@ -119,6 +119,7 @@ void main_high() {
   tcb_t *tcb = new (os::permanent) tcb_t;
   tcb->pcb = pcb;
   pcb->threads.push_back(tcb);
+  pcb->parent = nullptr;
 
   pcb->vfs = boot_pcb->vfs;
   pcb->vfs->ref();
