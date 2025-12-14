@@ -1,3 +1,5 @@
+#ifdef __riscv
+
 .section .text.low
 .global _start
 
@@ -140,3 +142,5 @@ __handler_end:
   ld t6, 232(sp)
   ld sp, 240(sp)
   sret
+
+#endif

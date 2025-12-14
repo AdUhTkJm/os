@@ -11,6 +11,8 @@
 
 // In nanosecond.
 extern int timer_tick;
+// In nanosecond, from Unix epoch.
+extern size_t realtime;
 
 // For a system call list:
 // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
@@ -202,6 +204,35 @@ HANDLE(mknodat, dirfd, _path, mode, dev) {
   return file->node()->create(basename(path), inodety, mode & ~pcb->umask);
 }
 
+HANDLE(sendfile, out, in, offptr, len) {
+  auto fout = pcb->ftbl->at(out);
+  if (!fout || !can_write(fout->flags))
+    return -EBADF;
+
+  auto fin = pcb->ftbl->at(in);
+  if (!fin || !can_read(fin->flags))
+    return -EBADF;
+
+  size_t offset = fin->offset;
+  if (offptr) {
+    auto p = copy_from_user((void *) offptr, sizeof(size_t));
+    if (!p)
+      return p;
+    offset = *(size_t*) p->get();
+  }
+
+  unique_ptr<char[]> buf(new char[len]);
+  int before = fin->seek(offset, file::begin);
+
+  long read = fin->read(buf.get(), len);
+  size_t written = fout->write(buf.get(), min(len, read));
+  
+  // We don't modify file position when offset is specified.
+  if (offptr)
+    fin->seek(before, file::begin);
+  return written;
+}
+
 HANDLE(openat, dirfd, _path, flags, mode) {
   auto path = copy_from_user((char *) _path);
   if (!path)
@@ -270,6 +301,8 @@ HANDLE(fchdir, fd) {
   return 0;
 }
 
+// These two system calls only exist in RISC-V.
+#ifdef RV
 HANDLE(fstatat, dirfd, _path, buf, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
@@ -324,6 +357,7 @@ HANDLE(fstat, fd, buf) {
   copy_to_user((void *) buf, &stat, sizeof(stat));
   return 0;
 }
+#endif // #ifdef RV
 
 HANDLE(sync, _) {
   for (auto fs : vfs::to_sync())
@@ -358,7 +392,7 @@ HANDLE(dup3, oldfd, newfd, flags) {
   // Currently `flags` can only be these two values.
   if (flags && flags != O_CLOEXEC)
     return -EINVAL;
-  
+
   if (auto node = dyn_cast<pipe_inode>(file->node()))
     node->incf(file);
 
@@ -463,7 +497,7 @@ HANDLE(getcwd, buf, size) {
   if (path.size() + 1 >= (unsigned long) size)
     return -ERANGE;
   copy_to_user((void*) buf, path.c_str(), path.size() + 1);
-  return 0;
+  return buf;
 }
 
 HANDLE(uname, buf) {
@@ -603,19 +637,22 @@ HANDLE(ioctl, fd, op, argp) {
 
 HANDLE(clock_gettime, id, tp) {
   timespec spec;
-  if (id == CLOCK_MONOTONIC) {
-    long time = rv_rdtime();
-    spec.tv_sec = time / 1'000'000'000;
-    spec.tv_nsec = time % 1'000'000'000;
-    copy_to_user(&tp, &spec, sizeof(timespec));
-    return 0;
-  }
-  if (id == CLOCK_REALTIME) {
-    printk("clock_gettime: no real time yet!\n");
+  size_t time = rdtime() * timer_tick;
+
+  switch (id) {
+  case CLOCK_MONOTONIC:
+    break; // Do nothing
+  case CLOCK_REALTIME:
+    time += realtime;
+    break;
+  default:
     return -EINVAL;
   }
-  printk("clock_gettime: unknown id: %d\n", id);
-  return -1;
+
+  spec.tv_sec = time / 1'000'000'000;
+  spec.tv_nsec = time % 1'000'000'000;
+  copy_to_user((void *) tp, &spec, sizeof(timespec));
+  return 0;
 }
 
 HANDLE(mmap, addr, len, prot, flags, fd, offset) {
@@ -913,7 +950,7 @@ namespace os {
     switch (kind) {
     case 5: { // Timer interrupt
       // Tick every 100ms.
-      sbi_set_timer(rv_rdtime() + tick_length / timer_tick);
+      sbi_set_timer(rdtime() + tick_length / timer_tick);
       scheduler.tick();
       scheduler.yield(/*sleepy=*/false); // TODO: check time slice
     }

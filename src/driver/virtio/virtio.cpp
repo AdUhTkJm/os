@@ -325,8 +325,11 @@ void probe() {
 
     // We only care for block devices for now. See section 5.
     int device_id = mmrd<int32_t>(base + 8);
-    if (device_id != 2)
+    if (device_id != 2) {
+      printk("device_id = %d\n", device_id);
+      // TODO
       continue;
+    }
 
     auto dev = new (os::permanent) block_device(device, legacy);
     (*disks)[block_device_cnt] = dev;

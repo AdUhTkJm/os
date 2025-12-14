@@ -218,13 +218,8 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
     return -ECHILD;
 
   for (;;) {
-    if (!nohang) {
-      pcb->wait.push_back(tcb);
-      if (suspend() != 0)
-        return -EINTR;
-    }
-
     // Check whether a child has changed.
+    // We must change first before we wait.
     for (auto child : pcb->children) {
       if (child->zombie) {
         if (wstatus) {
@@ -243,6 +238,10 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
 
     if (nohang)
       return 0;
+
+    pcb->wait.push_back(tcb);
+    if (suspend() != 0)
+      return -EINTR;
   }
 }
 

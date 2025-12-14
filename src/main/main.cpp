@@ -58,10 +58,41 @@ void idle() {
 bool os::onboot = true;
 // Used in interrupt.h. Tick length in nanoseconds.
 int timer_tick;
+// Nanoseconds since Unix epoch (1970.1.1)
+size_t realtime;
 
 void get_tick() {
   void *p = fdt::query("/cpus", "timebase-frequency");
   timer_tick = 1'000'000'000 / to_big_endian(*(unsigned *) p);
+}
+
+void get_real_time() {
+  char *p = (char *) fdt::pfdt + to_big_endian(fdt::pfdt->off_dt_struct);
+  fdt::walk(p, [&](const char *cdev, const char *cprop, void *property, int len) {
+    (void) len; (void) property;
+    if (strncmp("/soc/rtc@", cdev, 9) != 0)
+      return WalkResult::Continue;
+    
+    if (strcmp("compatible", cprop) == 0) {
+      if (strcmp((char *) property, "google,goldfish-rtc") != 0) {
+        printk("rtc: unknown compatible value %s\n", property);
+        panic("rtc: unknown property");
+      }
+      return WalkResult::Continue;
+    }
+
+    if (strcmp("reg", cprop) == 0) {
+      // For meaning, see:
+      //   https://android.googlesource.com/platform/external/qemu/%2B/master/docs/GOLDFISH-VIRTUAL-HARDWARE.TXT
+      // This device is introduced on line 213.
+      auto base = pa_t((fdt::detail::read_int(property) * 1ul << 32) + fdt::detail::read_int((char*) property + 4));
+      realtime = mmrd<unsigned>(base);
+      realtime |= size_t(mmrd<unsigned>(base + 4)) << 32;
+      return WalkResult::Interrupt;
+    }
+    
+    return WalkResult::Continue;
+  });
 }
 
 void main_high() {
@@ -146,7 +177,8 @@ void main_high() {
 
   // Enable timer.
   get_tick();
-  sbi_set_timer(rv_rdtime() + 10_ms / timer_tick);
+  get_real_time();
+  sbi_set_timer(rdtime() + 10_ms / timer_tick);
   printk("Boot finished.\n");
   for (;;) ;
 }

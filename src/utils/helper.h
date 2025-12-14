@@ -14,7 +14,7 @@
 #include "helper.hpp"
 #else
 #  define C
-#endif /* #ifdef __cplusplus */
+#endif
 
 /* Note that we're using clangd for IDE, but gcc for compilation. */
 #ifdef __has_cpp_attribute
@@ -36,6 +36,16 @@
 #define __assert0(x, line) do { [[unlikely]] if (!(x)) panic(__FILE__ ":" #line ": assertion failed: " #x); } while (0)
 #define __assert1(x, line) __assert0(x, line)
 #define assert(x) __assert1(x, __LINE__)
+
+/* I always don't remember the exact form of test macros, so redefine them here. */
+/* This also helps VSCode to highlight - just change position of IN_VSCODE. */
+#if defined(__riscv) || IN_VSCODE
+#  define RV
+#elif defined(__loongarch__)
+#  define LA
+#else
+#  error Unknown architecture.
+#endif
 
 typedef long ssize_t;
 
@@ -64,6 +74,6 @@ extern char __bss_begin[], __bss_end[];
 extern char __stack_top[];
 extern char __kernel_begin[], __kernel_end[];
 
-extern reg_t rv_rdtime();
+extern reg_t rdtime();
 
 #endif

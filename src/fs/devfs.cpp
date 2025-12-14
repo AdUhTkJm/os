@@ -60,8 +60,10 @@ block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force
   if (c.valid && !force_reload)
     return c;
   
-  if (dev->read(sector, c.data) != 0)
+  if (auto ret = dev->read(sector, c.data); ret != 0) {
+    printk("read return: %d\n", ret);
     panic("block device: read failed");
+  }
   c.valid = true;
   return c;
 }

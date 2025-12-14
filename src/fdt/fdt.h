@@ -54,7 +54,7 @@ const int END = 9;
 
 namespace detail {
 
-inline uint32_t read_int(char *p) {
+inline uint32_t read_int(void *p) {
   return to_big_endian(*(uint32_t *) p);
 }
 

@@ -163,14 +163,14 @@ int printk(const char *fmt, ...) {
       switch (*++p) {
       case 'd': {
         int64_t val = va_arg(args, int64_t);
-        itoa(val, buf, 10);
+        ltoa(val, buf, 10);
         kputs(buf);
         output += strlen(buf);
         break;
       }
       case 'x': {
         int64_t val = va_arg(args, int64_t);
-        itoa(val, buf, 16);
+        ltoa(val, buf, 16);
         kputs(buf);
         output += strlen(buf);
         break;

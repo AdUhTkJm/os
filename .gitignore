@@ -7,3 +7,4 @@ testsuite
 busybox
 scripts/rootfs
 mnt
+docker

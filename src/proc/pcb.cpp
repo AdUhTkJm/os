@@ -444,6 +444,8 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     cp->sid = pp->sid;
   }
   
+  printk("forked pid %d (%s)\n", cp->pid, cp->execpath.c_str());
+  
   scheduler.add(ct);
   return ct;
 }

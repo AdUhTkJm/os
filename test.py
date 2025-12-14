@@ -15,6 +15,7 @@ mp.set_start_method("fork")
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-r", "--run", action="store_true")
+parser.add_argument("--la", action="store_true")
 parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
@@ -33,25 +34,24 @@ SRC_DIR = Path("src")
 BUILD_DIR = Path("build")
 FINAL_BINARY = BUILD_DIR / "kernel"
 COMPILER = "riscv64-unknown-elf-g++"
+QEMU = "qemu-system-riscv64"
 AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-Wno-parentheses",
-  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
   "-Wno-invalid-offsetof", "-Wno-parentheses",
-  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
 ]
+# Note this is included in https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html.
 SFLAGS = [
-  "-c", "-ffreestanding", "-nostdlib",
-  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"
+  "-x", "assembler-with-cpp", "-c", "-ffreestanding", "-nostdlib",
 ]
-LDFLAGS = ["-T", "link.ld", "-nostdlib", "-mcmodel=medany"]
+LDFLAGS = ["-T", "link.ld", "-nostdlib"]
 CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
 INITRAMFS_PATH = SRC_DIR / "fs/init"
@@ -60,10 +60,10 @@ SPECIAL_FLAGS = {
 }
 
 flags = []
+
 if not args.no_instrument:
   flags += ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
 
-# debug_memory relies on instrumentation.
 if not args.no_debug_memory:
   flags += ["-DDEBUG_MEMORY"]
 
@@ -78,8 +78,23 @@ if args.no_debug:
 else:
   flags += ["-g"]
 
+if args.la:
+  # Loongarch.
+  # For loongarch documentation, see:
+  #   https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html
+  COMPILER = "loongarch64-unknown-linux-gnu-g++"
+  QEMU = "qemu-system-loongarch64"
+  MACHINESPEC = []
+else:
+  # RISC-V.
+  MACHINESPEC = ["-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"]
+  flags += MACHINESPEC
+  LDFLAGS.append("-mcmodel=medany")
+
 CFLAGS.extend(flags)
 CXXFLAGS.extend(flags)
+SFLAGS.extend(flags)
+
 def hash_file(path):
   h = hashlib.sha256()
   with open(path, 'rb') as f:
@@ -189,8 +204,7 @@ def compile_file(src_path: Path, obj_path: Path):
 
 def compile_initramfs(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
-  proc.check_call([COMPILER, "-ffreestanding", "-nostdlib", "-O2",
-  "-mcmodel=medany", "-march=rv64gc", "-mabi=lp64", "-o", str(obj_path),  str(src_path)])
+  proc.check_call([COMPILER, "-ffreestanding", "-nostdlib", "-O2", *MACHINESPEC, "-o", str(obj_path),  str(src_path)])
 
 def archive_objects(obj_files, lib_path: Path):
   if lib_path.exists():
@@ -332,11 +346,15 @@ if __name__ == "__main__":
     # -d in_asm -D qemu.log
     asm = "-d in_asm -D qemu.log" if args.assembly else ""
     gdb = "-S -s" if args.gdb else ""
-    proc.check_call(
+    proc.run(
 f"""
-~/.local/qemu/build/qemu-system-riscv64 -nographic -machine virt -bios default -kernel {BUILD_DIR}/kernel \
+~/.local/qemu/build/{QEMU} -nographic \
+-machine virt -bios default -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
--drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+-drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 \
+-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+-device virtio-net-device,netdev=net -netdev user,id=net \
+-rtc base=utc
 {asm} {gdb}
 """
   ,shell=True)

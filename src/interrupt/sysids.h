@@ -287,7 +287,7 @@ enum syscall {
   mkdir = 1030,
 #endif
 
-#ifdef __loongarch
+#ifdef __loongarch__
 // Based on https://git.musl-libc.org/cgit/musl/blame/arch/loongarch64/bits/syscall.h.in
 
   io_setup = 0,
@@ -315,7 +315,7 @@ enum syscall {
   epoll_pwait = 22,
   dup = 23,
   dup3 = 24,
-#define __NR3264_fcntl 25
+  fcntl = 25,
   inotify_init1 = 26,
   inotify_add_watch = 27,
   inotify_rm_watch = 28,
@@ -332,10 +332,10 @@ enum syscall {
   mount = 40,
   pivot_root = 41,
   nfsservctl = 42,
-#define __NR3264_statfs 43
-#define __NR3264_fstatfs 44
-#define __NR3264_truncate 45
-#define __NR3264_ftruncate 46
+  statfs = 43,
+  fstatfs = 44,
+  truncate = 45,
+  ftruncate = 46,
   fallocate = 47,
   faccessat = 48,
   chdir = 49,
@@ -351,7 +351,7 @@ enum syscall {
   pipe2 = 59,
   quotactl = 60,
   getdents64 = 61,
-#define __NR3264_lseek 62
+  lseek = 62,
   read = 63,
   write = 64,
   readv = 65,
@@ -360,7 +360,7 @@ enum syscall {
   pwrite64 = 68,
   preadv = 69,
   pwritev = 70,
-#define __NR3264_sendfile 71
+  sendfile = 71,
   pselect6 = 72,
   ppoll = 73,
   signalfd4 = 74,
@@ -507,8 +507,8 @@ enum syscall {
   keyctl = 219,
   clone = 220,
   execve = 221,
-#define __NR3264_mmap 222
-#define __NR3264_fadvise64 223
+  mmap = 222,
+  fadvise64 = 223,
   swapon = 224,
   swapoff = 225,
   mprotect = 226,
@@ -597,14 +597,5 @@ enum syscall {
   futex_wake = 454,
   futex_wait = 455,
   futex_requeue = 456,
-#define __NR_fcntl __NR3264_fcntl
-#define __NR_statfs __NR3264_statfs
-#define __NR_fstatfs __NR3264_fstatfs
-#define __NR_truncate __NR3264_truncate
-#define __NR_ftruncate __NR3264_ftruncate
-#define __NR_lseek __NR3264_lseek
-#define __NR_sendfile __NR3264_sendfile
-#define __NR_mmap __NR3264_mmap
-#define __NR_fadvise64 __NR3264_fadvise64
 #endif
 };
