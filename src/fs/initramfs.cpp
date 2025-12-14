@@ -87,7 +87,7 @@ void mount_initramfs() {
   pcb->vfs = new class vfs;
   pcb->vfs->ref();
   vfs::mount(dentry, dentry);
-  pcb->vfs->base = dentry->belong;
+  pcb->vfs->base = dentry;
   dentry->belong->parent = dentry->belong;
   
   for (auto *cpio = (cpio_newc_header_t *) initrd_start;;) {

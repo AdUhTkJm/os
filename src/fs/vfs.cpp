@@ -54,7 +54,7 @@ string resolve_link(string path, const string &link) {
   return link[0] == '/' ? link : normalize(path + "/" + link);
 }
 
-bool readable(int uid, int gid, inode *node) {
+bool readable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
@@ -64,7 +64,7 @@ bool readable(int uid, int gid, inode *node) {
   return true;
 }
 
-bool writable(int uid, int gid, inode *node) {
+bool writable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
@@ -74,7 +74,7 @@ bool writable(int uid, int gid, inode *node) {
   return true;
 }
 
-bool executable(int uid, int gid, inode *node) {
+bool executable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
@@ -84,7 +84,7 @@ bool executable(int uid, int gid, inode *node) {
   return true;
 }
 
-bool dentry::same(dentry *other) const {
+bool dentry::same(const dentry *other) const {
   if (this == other)
     return true;
   if (!node->same(other->node))
@@ -96,8 +96,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
   if (depth < 0)
     return -ELOOP;
 
-  // Normalize absolute paths
-  dentry *cur = (path.size() > 0 && path[0] == '/') ? base->root : from;
+  dentry *cur = (path.size() > 0 && path[0] == '/') ? base : from;
 
   vector<string> comps;
   for (auto comp : split(path, "/"))
@@ -121,6 +120,10 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
       continue;
 
     if (name == "..") {
+      // Prevent escape.
+      if (cur->same(base))
+        continue;
+
       if (cur->same(cur->belong->root)) {
         if (cur->belong->parent)
           cur = cur->belong->host->parent;
@@ -189,19 +192,19 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
 
   // Final mount traversal.
   if (lastsym && cur->mnt)
-      cur = cur->mnt->root;
+    cur = cur->mnt->root;
 
   return cur;
 }
 
 expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
   // Put a maximum on recursion depth to avoid infinite loops.
-  return lookup_impl(path, base->root, lastsym, 40);
+  return lookup_impl(path, base, lastsym, 40);
 }
 
 expected<dentry*> vfs::lookup_from(const string &path, dentry *dentry, bool lastsym) {
   bool relative = path[0] != '/';
-  return lookup_impl(path, relative ? dentry : base->root, lastsym, 40);
+  return lookup_impl(path, relative ? dentry : base, lastsym, 40);
 }
 
 // Moves the mount from `source` to `target`.
@@ -240,14 +243,20 @@ int vfs::move_mount(dentry *src, dentry *dst) {
   return 0;
 }
 
-int vfs::chroot(mount_t *mnt) {
-  synchronized syn(mountlock);
-  if (mnt == base)
+int vfs::chroot(dentry *entry) {
+  if (entry == base)
     return -EINVAL;
 
-  base = mnt;
-  base->parent = nullptr;
-  base->host = base->root;
+  base = entry;
+  base->parent = base;
+  base->name = "";
+  // Base should not be a mount point (we should have followed it).
+  assert(!base->mnt);
+  
+  // After chroot, we must also change pwd.
+  auto pcb = active()->pcb;
+  pcb->pwd = base;
+
   dcache->clear();
   return 0;
 }
@@ -331,6 +340,8 @@ unsigned char inode::as_dt(filetype ty) {
     return DT_LNK;
   case Socket:
     return DT_SOCK;
+  default:
+    return 0;
   }
   __builtin_unreachable();
 }

@@ -127,6 +127,7 @@ struct pcb_t {
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
   int tidn = 0;           // Next tid.
   int ret;                // Process return code.
+  int umask = 022;        // Mask on mode when creating file.
   dentry *pwd;            // Process working directory.
   string execpath;        // The path to the executable.
   sigset pending = 0;     // Pending signals.
@@ -207,7 +208,7 @@ tcb_t *make_kprocess(T fptr) {
   
   // We aren't lazy-allocating here.
   pcb->vfs = new vfs;
-  pcb->vfs->base = initramfs->root->belong;
+  pcb->vfs->base = initramfs->root;
   pcb->vfs->ref();
 
   pcb->ftbl = new process_file_table;

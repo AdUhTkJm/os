@@ -133,7 +133,7 @@ public:
 
   const uint64_t rtti;
 
-  enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket, FIFO };
+  enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket, FIFO, Bad };
   static unsigned char as_dt(filetype ty);
 
   virtual ~inode() = default;
@@ -149,11 +149,14 @@ public:
   virtual optional<string> readlink() = 0;
 
   virtual short poll(unsigned short event) { (void) event; return POLLIN | POLLOUT; }
+
   virtual void wait_on_read() {}
   virtual void wait_on_write() {}
   // Note that these functions might not return, as they would potentially preempt.
   virtual void wake_read() {}
   virtual void wake_write() {}
+
+  virtual void onchmod() {}
 
   struct item {
     long inum;
@@ -219,7 +222,8 @@ public:
     // The submounts.
     intrusive_list<mount_t> children;
     int flags;
-  } *base;
+  };
+  dentry *base;
 
   // Don't copy refcnt.
   vfs() {}
@@ -237,7 +241,7 @@ public:
   // These change global filesystem topology.
   static void mount(dentry *host, dentry *root, int flags = 0);
   static int move_mount(dentry *source, dentry *target);
-  int chroot(mount_t *mnt);
+  int chroot(dentry *entry);
 
   static void invalidate(inode *node, const string &name);
 
@@ -274,16 +278,16 @@ public:
     parent(parent), name(name), node(node), belong(belong) {}
 
   string path() const;
-  bool same(dentry *other) const;
+  bool same(const dentry *other) const;
 };
 
 string dirname(const string &path);
 string basename(const string &path);
 string normalize(const string &path);
 
-bool readable(int uid, int gid, inode *node);
-bool writable(int uid, int gid, inode *node);
-bool executable(int uid, int gid, inode *node);
+bool readable(int uid, int gid, const inode *node);
+bool writable(int uid, int gid, const inode *node);
+bool executable(int uid, int gid, const inode *node);
 
 }
 

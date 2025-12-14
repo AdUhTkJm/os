@@ -156,8 +156,52 @@ HANDLE(writev, fd, iov, cnt) {
   return total;
 }
 
+HANDLE(mkdirat, dirfd, _path, mode) {
+  auto pathp = copy_from_user((char *) _path);
+  if (!pathp)
+    return -EFAULT;
+
+  const char *path = pathp->get();
+  bool relative = path[0] != '/';
+  if (pcb->vfs->lookup(path))
+    return -EEXIST;
+
+  auto dir = dirname(path);
+  int fd = relative
+    ? pcb->open_file_from(dir, dirfd, O_RDONLY)
+    : pcb->open_file(dir, O_RDONLY);
+  
+  auto file = pcb->ftbl->at(fd);
+  return file->node()->create(basename(path), inode::Dir, mode & ~pcb->umask);
+}
+
+HANDLE(mknodat, dirfd, _path, mode, dev) {
+  auto pathp = copy_from_user((char *) _path);
+  if (!pathp)
+    return -EFAULT;
+
+  const char *path = pathp->get();
+  bool relative = path[0] != '/';
+  if (pcb->vfs->lookup(path))
+    return -EEXIST;
+
+  auto dir = dirname(path);
+  int fd = relative
+    ? pcb->open_file_from(dir, dirfd, O_RDONLY)
+    : pcb->open_file(dir, O_RDONLY);
+  
+  auto file = pcb->ftbl->at(fd);
+  auto inodety = ext2_inode::totype((ext2_inode::ftypeflags) (mode & ~0777));
+  if (inodety == inode::Bad)
+    return -EINVAL;
+  if (inodety == inode::BlockDevice || inodety == inode::CharDevice) {
+    printk("mknodat: unsupported: dev: %d\n", dev);
+    return -EINVAL;
+  }
+  return file->node()->create(basename(path), inodety, mode & ~pcb->umask);
+}
+
 HANDLE(openat, dirfd, _path, flags, mode) {
-  (void) dirfd;
   auto path = copy_from_user((char *) _path);
   if (!path)
     return -EFAULT;
@@ -170,6 +214,12 @@ HANDLE(openat, dirfd, _path, flags, mode) {
 
 HANDLE(close, fd) {
   return pcb->close_file(fd);
+}
+
+HANDLE(umask, mask) {
+  int m = pcb->umask;
+  pcb->umask = mask & 0777;
+  return m;
 }
 
 HANDLE(readlinkat, dirfd, _path, buf, size) {
@@ -224,13 +274,44 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     return fd;
   auto node = pcb->ftbl->at(fd)->node();
   stat stat {
+    .st_dev = 0,
     .st_ino = (unsigned long) node->inum(),
     .st_mode = (unsigned) (node->mode | ext2_inode::fromtype(node->type)),
     .st_nlink = node->nlink(),
     .st_uid = (unsigned) node->uid,
     .st_gid = (unsigned) node->gid,
+    .st_rdev = 0,
     .st_size = (long) node->size(),
     .st_blksize = 1024,
+    .st_blocks = 0,
+    .st_atim = {},
+    .st_mtim = {},
+    .st_ctim = {},
+  };
+  pcb->close_file(fd);
+  copy_to_user((void *) buf, &stat, sizeof(stat));
+  return 0;
+}
+
+HANDLE(fstat, fd, buf) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  auto node = file->node();
+  stat stat {
+    .st_dev = 0,
+    .st_ino = (unsigned long) node->inum(),
+    .st_mode = (unsigned) (node->mode | ext2_inode::fromtype(node->type)),
+    .st_nlink = node->nlink(),
+    .st_uid = (unsigned) node->uid,
+    .st_gid = (unsigned) node->gid,
+    .st_rdev = 0,
+    .st_size = (long) node->size(),
+    .st_blksize = 1024,
+    .st_blocks = 0,
+    .st_atim = {},
+    .st_mtim = {},
+    .st_ctim = {},
   };
   copy_to_user((void *) buf, &stat, sizeof(stat));
   return 0;
@@ -467,17 +548,21 @@ HANDLE(mount, _src, _tgt, _fsty, flags, data) {
 }
 
 HANDLE(chroot, apath) {
+  // Only root can chroot.
+  if (pcb->euid != 0)
+    return -EACCES;
+
   auto path = copy_from_user((char *) apath);
   if (!path)
     return path;
 
-  auto dentry = pcb->vfs->lookup(path->get(), /*lastsym=*/ false);
+  auto dentry = pcb->vfs->lookup(path->get());
   if (!dentry)
     return dentry;
-  auto mnt = (*dentry)->mnt;
-  if (!mnt)
-    return -EINVAL;
-  return pcb->vfs->chroot(mnt);
+  if ((*dentry)->node->type != inode::Dir)
+    return -ENOTDIR;
+
+  return pcb->vfs->chroot(*dentry);
 }
 
 HANDLE(prlimit64, pid, resource, new_rlim, old_rlim) {
@@ -503,6 +588,11 @@ HANDLE(clock_gettime, id, tp) {
     copy_to_user(&tp, &spec, sizeof(timespec));
     return 0;
   }
+  if (id == CLOCK_REALTIME) {
+    printk("clock_gettime: no real time yet!\n");
+    return -EINVAL;
+  }
+  printk("clock_gettime: unknown id: %d\n", id);
   return -1;
 }
 

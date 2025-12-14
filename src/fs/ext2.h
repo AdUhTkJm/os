@@ -61,7 +61,7 @@ public:
   enum ftypeflags : uint16_t {
     FIFO = 0x1000, CharDevice = 0x2000, Directory = 0x4000,
     BlockDevice = 0x6000, File = 0x8000, SymLink = 0xA000,
-    Socket = 0xC000
+    Socket = 0xC000, Bad = 0xFFFF
   };
   static ftypeflags fromtype(inode::filetype ty);
   static inode::filetype totype(ftypeflags ty);

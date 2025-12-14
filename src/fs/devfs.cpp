@@ -61,7 +61,7 @@ block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force
     return c;
   
   if (dev->read(sector, c.data) != 0)
-    memset(c.data, 0, 512); // Perhaps better notify the failure?
+    panic("block device: read failed");
   c.valid = true;
   return c;
 }

@@ -466,32 +466,28 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     copy_to_user(usp -= sizeof(auxv_entry), &entry, sizeof(auxv_entry));
 
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
-  // Reset the page table root immediately. We're about to free the root.
-  setroot(__kernel_pt_root);
-
   auto tcb = active();
   auto pcb = tcb->pcb;
+
+  // First check whether this is an ELF. If it isn't, we must not change anything.
+  int fd = pcb->open_file(path, O_RDONLY);
+  auto oldvma = pcb->vma;
+  pcb->vma.clear();
+  auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
+  if (!auxv) {
+    printk("execve: error: %d\n", auxv.error());
+    
+    // Do the rollback.
+    pcb->vma = oldvma;
+    return auxv;
+  }
+
+  // Reset the page table root immediately. We're about to free the root.
+  setroot(__kernel_pt_root);
   {
     nopreempt _;
     pt::free(pcb->pt_root);
     pcb->pt_root = __kernel_pt_root;
-  }
-  pcb->vma.clear();
-  
-  int fd = pcb->open_file(path, O_RDONLY);
-  auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
-  if (!auxv) {
-    printk("error: %d\n", auxv.error());
-    // This process is in a bad state now. We must terminate it.
-    // We cannot call clear() because that would double-free the root.
-    //
-    // Moreover, note that fd isn't opened so shouldn't be closed.
-    pcb->ftbl->clear();
-    pcb->ftbl->drop();
-    pcb->vma.clear();
-    pcb->vfs->drop();
-    scheduler.erase(tcb);
-    return auxv;
   }
   pcb->close_file(fd);
   pcb->execpath = path;

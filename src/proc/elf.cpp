@@ -56,6 +56,8 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
   return expected(header.e_entry + loadbase);
 }
 
+// When we emit an error, we must make sure that pcb and tcb isn't modified in any way,
+// except for VMAs (which will be handled in the caller).
 expected<auxv> load_elf(file *content, tcb_t *tcb) {
   if (!content)
     return -ENOENT;
@@ -71,7 +73,6 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   // It is very likely that tcb == active().
   // We must be aware: many other procedures implicitly touches it.
   auto pcb = tcb->pcb;
-  tcb->status = Init;
 
   content->seek(header.e_phoff, file::begin);
   // The random offset.
@@ -126,10 +127,14 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
     int fd = pcb->open_file(interp.get(), O_RDONLY);
     if (fd < 0)
       return fd;
+
     file *ldso = pcb->ftbl->at(fd);
     auto ret = load_interp(ldso, pcb);
-    if (!ret)
+    if (!ret) {
+      pcb->close_file(fd);
       return ret.error();
+    }
+    
     pc = *ret;
     auxv.entry = loadbase + header.e_entry;
     auxv.phdr = loadbase + header.e_phoff;
@@ -139,6 +144,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   }
 
   init_user(tcb);
+  tcb->status = Init;
   tcb->pc = pc;
   return auxv;
 }

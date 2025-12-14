@@ -268,8 +268,9 @@ ext2_inode::ftypeflags ext2_inode::fromtype(filetype ty) {
     return CharDevice;
   case filetype::FIFO:
     return FIFO;
+  default:
+    return Bad;
   }
-  panic("fromtype: unreachable");
 }
 
 ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
@@ -288,8 +289,9 @@ ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
     return filetype::CharDevice;
   case FIFO:
     return filetype::FIFO;
+  default:
+    return filetype::Bad;
   }
-  panic("totype: unreachable");
 }
 
 int ext2_inode::create(const string &name, filetype ty, int mode) {

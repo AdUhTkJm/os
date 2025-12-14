@@ -21,10 +21,10 @@ parser.add_argument("-a", "--assembly", action="store_true")
 parser.add_argument("-m", "--mount", action="store_true")
 parser.add_argument("--docs", action="store_true")
 parser.add_argument("--log-refcnt", action="store_true")
+parser.add_argument("--log-syscall", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
-parser.add_argument("--no-syscall-log", action="store_true")
 parser.add_argument("--gdb", action="store_true")
 
 args = parser.parse_args()
@@ -70,7 +70,7 @@ if not args.no_debug_memory:
 if args.log_refcnt:
   flags += ["-DLOG_REFCNT"]
 
-if args.no_syscall_log:
+if not args.log_syscall:
   flags += ["-DNO_SYSCALL_LOG"]
   
 if args.no_debug:
