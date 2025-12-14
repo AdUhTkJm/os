@@ -7,6 +7,7 @@
 #include "../mem/kalloc.h"
 #include "../proc/schedule.h"
 #include "../fs/ext2.h"
+#include "../fs/pipe.h"
 
 // In nanosecond.
 extern int timer_tick;
@@ -110,7 +111,7 @@ HANDLE(read, fd, _buf, len) {
 HANDLE(write, fd, _buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
-    return -ENOENT;
+    return -EBADF;
 
   auto buf = copy_from_user((void*) _buf, len);
   if (!buf)
@@ -122,7 +123,7 @@ HANDLE(write, fd, _buf, len) {
 HANDLE(writev, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
-    return -ENOENT;
+    return -EBADF;
 
   if (cnt <= 0)
     return -EINVAL;
@@ -216,6 +217,13 @@ HANDLE(close, fd) {
   return pcb->close_file(fd);
 }
 
+HANDLE(faccessat, dirfd, _path, mode) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  return detail::faccessat(dirfd, path->get(), mode);
+}
+
 HANDLE(umask, mask) {
   int m = pcb->umask;
   pcb->umask = mask & 0777;
@@ -268,8 +276,8 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     return -EFAULT;
   bool relative = (*path)[0] != '/';
   int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY)
-    : pcb->open_file(path->get(), O_RDONLY);
+    ? pcb->open_file_from(path->get(), dirfd, O_PATH)
+    : pcb->open_file(path->get(), O_PATH);
   if (fd < 0)
     return fd;
   auto node = pcb->ftbl->at(fd)->node();
@@ -317,6 +325,12 @@ HANDLE(fstat, fd, buf) {
   return 0;
 }
 
+HANDLE(sync, _) {
+  for (auto fs : vfs::to_sync())
+    fs->sync();
+  return 0;
+}
+
 HANDLE(brk, addr) {
   return pcb->brk(addr);
 }
@@ -325,6 +339,11 @@ HANDLE(dup, fd) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+
+  // Increase pipe reader/writer counts.
+  if (auto node = dyn_cast<pipe_inode>(file->node()))
+    node->incf(file);
+  
   return pcb->ftbl->allocate(file);
 }
 
@@ -339,6 +358,9 @@ HANDLE(dup3, oldfd, newfd, flags) {
   // Currently `flags` can only be these two values.
   if (flags && flags != O_CLOEXEC)
     return -EINVAL;
+  
+  if (auto node = dyn_cast<pipe_inode>(file->node()))
+    node->incf(file);
 
   pcb->ftbl->allocate(file, newfd);
   pcb->ftbl->set_desc(newfd, flags);
@@ -847,6 +869,33 @@ HANDLE(rt_sigaction, sig, act, oldact) {
 
 HANDLE(wait4, pid, wstatus, options, rusage) {
   return detail::wait(pid, (void *) wstatus, options, (void *) rusage);
+}
+
+HANDLE(reboot, magic, magic2, op, arg) {
+  if (magic != 0xfee1dead)
+    return -EINVAL;
+  if (magic2 != 0x28121969 && magic2 != 0x05121996 && magic2 != 0x16041998 && magic2 != 0x20112000)
+    return -EINVAL;
+  if (int(op) != int(0xcdef0123))
+    printk("reboot: unsupported op: %d\n", int(op));
+  sbi_system_reset();
+}
+
+HANDLE(pipe2, fds, flags) {
+  int extra = 0;
+  if (flags & O_CLOEXEC) extra |= O_CLOEXEC;
+  if (flags & O_NONBLOCK) extra |= O_NONBLOCK;
+  if (flags & O_DIRECT)
+    return -EINVAL;
+
+  auto pipe = pipefs.get(); // On creation it has a writer and a reader, so don't increment.
+
+  file *read = new file(new dentry("<pipe r>", pipe, nullptr), O_RDONLY | extra);
+  file *write = new file(new dentry("<pipe w>", pipe, nullptr), O_WRONLY | extra);
+
+  int fd[2] = { pcb->ftbl->allocate(read), pcb->ftbl->allocate(write) };
+  copy_to_user((void*) fds, fd, sizeof(fd));
+  return 0;
 }
 
 SYSHANDLE_END

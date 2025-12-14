@@ -246,4 +246,33 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   }
 }
 
+int faccessat(int dirfd, const char *path, int mode) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  bool relative = path[0] == '/';
+  int flags = 0;
+  int fd = relative
+    ? pcb->open_file_from(path, dirfd, O_PATH)
+    : pcb->open_file(path, O_PATH);
+
+  if (!fd)
+    return fd;
+
+  if (mode == F_OK)
+    return 0;
+
+  auto node = pcb->ftbl->at(fd)->node();
+  if (mode & R_OK && !(readable(pcb->uid, pcb->gid, node)))
+    return -EACCES;
+
+  if (mode & W_OK && !(writable(pcb->uid, pcb->gid, node)))
+    return -EACCES;
+
+  if (mode & X_OK && !(executable(pcb->uid, pcb->gid, node)))
+    return -EACCES;
+
+  return 0;
+}
+
 }

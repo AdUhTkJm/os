@@ -61,6 +61,10 @@ private:
   // The file descriptor table.
   os::hashmap<int, fddesc> desc;
 public:
+  process_file_table() = default;
+  process_file_table(const process_file_table &);
+  process_file_table &operator=(const process_file_table &);
+  
   int allocate(file *f, int fd = -1);
   // The semantics is like F_DUPFD, where `fd` isn't exact as in dup3, but a start-to-search point.
   int allocate_from(file *f, int fd);

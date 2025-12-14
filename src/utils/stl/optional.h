@@ -101,7 +101,7 @@ public:
       ptr()->~T();
   }
 
-  expected(expected&& other): has_value(other.has_value), errcode(other.errcode) {
+  expected(expected&& other): errcode(other.errcode), has_value(other.has_value) {
     if (other.has_value) {
       new (data) T((T &&) *other.ptr());
       other.ptr()->~T();

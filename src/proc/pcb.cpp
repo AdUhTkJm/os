@@ -4,6 +4,7 @@
 #include "../interrupt/sysret.h"
 #include "../mem/kalloc.h"
 #include "../utils/stl/unique_ptr.h"
+#include "../fs/pipe.h"
 
 extern int timer_tick;
 
@@ -53,9 +54,17 @@ void process_file_table::deallocate(int fd) {
 }
 
 void process_file_table::clear() {
-  for (auto [fd, f] : open)
+  for (auto [_, f] : open)
     f->close();
   open.clear();
+}
+
+process_file_table::process_file_table(const process_file_table &other): open(other.open), desc(other.desc) {
+  // Increase pipe reader/writer count.
+  for (auto [_, f] : open) {
+    if (auto node = dyn_cast<pipe_inode>(f->node()))
+      node->incf(f);
+  }
 }
 
 void pcb_t::clear() {
@@ -91,8 +100,10 @@ int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode) {
 int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mode) {
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
-  bool write = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_WRONLY;
-  bool read = (flags & 0x3) == O_RDWR || (flags & 0x3) == O_RDONLY;
+  bool write = can_write(flags);
+  bool read = can_read(flags);
+  if (flags & O_PATH)
+    write = read = create = false;
 
   auto maybe_dentry = vfs->lookup_from(path, relbase);
   if (!maybe_dentry) {

@@ -612,6 +612,13 @@ ext2_inode *ext2::read_from_inum(size_t inum) {
   return inode;
 }
 
+void ext2::sync() {
+  auto dev = dyn_cast<block_inode>(device);
+  if (!dev)
+    panic("ext2: not a block inode");
+  dev->flush();
+}
+
 expected<fs*> ext2_creator(const char *src) {
   auto tcb = active();
   auto pcb = tcb->pcb;

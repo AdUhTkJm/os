@@ -238,7 +238,7 @@ extern "C" void _start() {
     
     // Execute the shell.
     const char *argv[] = { "/bin/sh", nullptr };
-    const char *envp[] = { "PATH=/bin:/usr/bin:/usr/sbin", nullptr }; 
+    const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", nullptr }; 
     syscall((reg_t) "/bin/sh", (reg_t) argv, (reg_t) envp, execve);
 
     __builtin_unreachable();

@@ -17,6 +17,7 @@ public:
     for (size_t i = 0; i < sz; i++)
       dat[i] = v;
   }
+  vector(size_t sz): vector(V(), sz) {}
   ~vector() { delete[] dat; }
   vector(const vector &other): cap(other.cap), sz(other.sz) {
     dat = new (safe) V[cap];

@@ -23,30 +23,11 @@ public:
 
 extern static_storage<class devfs> devfs;
 
-#define DEV_INODE_DEFAULT_IMPL \
-  int create(const string &, filetype, int) override { return -ENOTDIR; } \
-  int unlink(const string &) override { return -ENOTDIR; } \
-  inode *lookup(const string &) override { return nullptr; } \
-  vector<item> list() override { return {}; } \
-  optional<string> readlink() override { return nullopt; } \
-  size_t size() const override { return 0; } \
-  long inum() const override { return (long) this; } \
-
-#define DEV_INODE_SYMLINK_IMPL \
-  size_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(s.size() - offset, len); memcpy(buf, s.c_str() + offset, l); return l; } \
-  size_t write(size_t, const void*, size_t, int) override { return 0; } \
-  int create(const string &, filetype, int) override { return -ENOTDIR; } \
-  int unlink(const string &) override { return -ENOTDIR; } \
-  inode *lookup(const string &) override { return nullptr; } \
-  vector<item> list() override { return {}; } \
-  size_t size() const override { return readlink()->size(); } \
-  long inum() const override { return (long) this; } \
-
 class console_inode : public inode_impl<console_inode> {
   os::vector<tcb_t *> wait;
   spinlock lock;
 public:
-  DEV_INODE_DEFAULT_IMPL;
+  FILE_INODE_DEFAULT_IMPL;
 
   console_inode(): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0) {
     type = CharDevice;
@@ -82,7 +63,6 @@ public:
 
   size_t size() const override { return 0; }
   long inum() const override { return (long) this; }
-  short poll(unsigned short) override { return POLLIN | POLLOUT; }
 
   // Special registration function.
   void record(const string &name, inode *node) {
@@ -105,7 +85,7 @@ class block_inode : public inode_impl<block_inode> {
   cached_sector &load_sector(unsigned sector, bool force_reload = false);
   void flush_sector(unsigned sector);
 public:
-  DEV_INODE_DEFAULT_IMPL;
+  FILE_INODE_DEFAULT_IMPL;
 
   block_inode(block_device *dev): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0), dev(dev) {
     type = BlockDevice;
@@ -122,7 +102,7 @@ class urandom_inode : public inode_impl<urandom_inode> {
   unsigned char key[32], nonce[12];
   unsigned long counter;
 public:
-  DEV_INODE_DEFAULT_IMPL;
+  FILE_INODE_DEFAULT_IMPL;
 
   urandom_inode();
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
@@ -136,7 +116,7 @@ class tty_inode : public inode_impl<tty_inode> {
 public:
   tty::tty tty;
 
-  DEV_INODE_DEFAULT_IMPL;
+  FILE_INODE_DEFAULT_IMPL;
 
   tty_inode(console_inode *console);
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
@@ -145,6 +125,15 @@ public:
   
   void wake_read() override;
   void wait_on_read() override;
+};
+
+class null_inode : public inode_impl<null_inode> {
+public:
+  FILE_INODE_DEFAULT_IMPL;
+
+  null_inode();
+  size_t read(size_t, void *, size_t, int) override { return 0; }
+  size_t write(size_t, const void*, size_t len, int) override { return len; }
 };
 
 extern static_storage<console_inode> console;

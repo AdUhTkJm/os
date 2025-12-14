@@ -24,6 +24,7 @@
 #define O_DIRECTORY 00200000 /* Fail if the path is not a directory */
 #define O_NOFOLLOW  00400000 /* Do not follow symbolic links */
 #define O_CLOEXEC   02000000 /* Close file descriptor upon execve() */
+#define O_PATH     010000000 /* Create as a path */
 
 #define FD_CLOEXEC  0x1
 
@@ -97,6 +98,9 @@ public:
   // This does not deallocate the inode.
   virtual void erase(inode *) = 0;
   virtual bool has_backup() = 0;
+
+  // Write all cache to disk.
+  virtual void sync() {}
 };
 
 // This will increase the inode's refcnt, even though dentry doesn't.
@@ -120,7 +124,7 @@ public:
   size_t read(void *buf, size_t len);
   size_t write(const void *buf, size_t len);
   size_t seek(long pos, whence whence); // Returns the old offset.
-  void close() { drop(); }
+  void close();
 };
 
 class inode {
@@ -157,6 +161,7 @@ public:
   virtual void wake_write() {}
 
   virtual void onchmod() {}
+  virtual void onclose(int openflags) { (void) openflags; }
 
   struct item {
     long inum;
@@ -209,6 +214,8 @@ private:
   static spinlock mountlock;
   // TODO: make it an LRU cache.
   static static_storage<os::hashmap<pair<dentry*, string>, dentry*>> dcache;
+  // All mounted filesystems that must respond to sync().
+  static static_storage<os::vector<fs*>> tosync;
 
   expected<dentry *> lookup_impl(const string &path, dentry *dentry, bool lastsym, int depth);
 public:
@@ -251,6 +258,8 @@ public:
 
   // Initialize the global structure.
   static void init();
+
+  static const vector<fs*> &to_sync() { return *tosync; }
 };
 
 class SeekGuard {
@@ -285,9 +294,33 @@ string dirname(const string &path);
 string basename(const string &path);
 string normalize(const string &path);
 
+// These check inode permissions.
 bool readable(int uid, int gid, const inode *node);
 bool writable(int uid, int gid, const inode *node);
 bool executable(int uid, int gid, const inode *node);
+
+// These check file permissions.
+inline bool can_write(int flags) { return (flags & 0x3) == O_RDWR || (flags & 0x3) == O_WRONLY; }
+inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x3) == O_RDONLY; }
+
+#define FILE_INODE_DEFAULT_IMPL \
+  int create(const string &, filetype, int) override { return -ENOTDIR; } \
+  int unlink(const string &) override { return -ENOTDIR; } \
+  inode *lookup(const string &) override { return nullptr; } \
+  vector<item> list() override { return {}; } \
+  optional<string> readlink() override { return nullopt; } \
+  size_t size() const override { return 0; } \
+  long inum() const override { return (long) this; } \
+
+#define SYMLINK_INODE_DEFAULT_IMPL \
+  size_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(s.size() - offset, len); memcpy(buf, s.c_str() + offset, l); return l; } \
+  size_t write(size_t, const void*, size_t, int) override { return 0; } \
+  int create(const string &, filetype, int) override { return -ENOTDIR; } \
+  int unlink(const string &) override { return -ENOTDIR; } \
+  inode *lookup(const string &) override { return nullptr; } \
+  vector<item> list() override { return {}; } \
+  size_t size() const override { return readlink()->size(); } \
+  long inum() const override { return (long) this; } \
 
 }
 

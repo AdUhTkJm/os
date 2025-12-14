@@ -1,0 +1,112 @@
+#include "pipe.h"
+
+namespace os {
+
+class pipefs pipefs;
+
+pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid), maxbuf(pipefs::maxbuf) {
+  lnkcnt = 0;
+  type = inode::FIFO;
+  mode = 0666;
+}
+
+size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
+  // Offset is not supported on pipes.
+  (void) offset;
+  synchronized _(lock);
+
+  auto tcb = active();
+  while (rpos == buffer.size()) {
+    // No more writers. EOF.
+    if (writers == 0)
+      return 0;
+
+    if (flags & O_NONBLOCK)
+      return -EAGAIN;
+
+    read_wait.push_back(tcb);
+    lock.release();
+    if (suspend() != 0)
+      return -EINTR;
+    lock.acquire();
+  }
+
+  auto sz = buffer.size();
+  auto l = min(buffer.size(), len);
+  memcpy(buf, buffer.data() + rpos, l);
+  rpos += l;
+
+  // Resize the vector if it is large enough, and more than half of it is already read.
+  if (sz >= 1_kb && rpos >= sz / 2) {
+    vector<char> v(sz - rpos);
+    memcpy(v.data(), buffer.data() + rpos, sz - rpos);
+    buffer = os::move(v);
+    rpos = 0;
+  }
+  return l;
+}
+
+size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+  (void) offset;
+  
+  synchronized _(lock);
+
+  auto tcb = active();
+  while (buffer.size() == maxbuf) {
+    // No more readers. Don't write.
+    if (readers == 0)
+      return -EPIPE;
+
+    if (flags & O_NONBLOCK)
+      return -EAGAIN;
+
+    write_wait.push_back(tcb);
+    lock.release();
+    if (suspend() != 0)
+      return -EINTR;
+    lock.acquire();
+  }
+
+  auto sz = buffer.size();
+  auto l = min(maxbuf - sz, len);
+  buffer.resize(sz + l);
+  memcpy(buffer.data() + sz, buf, l);
+  return l;
+}
+
+short pipe_inode::poll(unsigned short event) {
+  bool out = event & POLLOUT, in = event & POLLIN;
+  auto result = 0;
+  if (in && !buffer.empty())
+    result |= POLLIN;
+  if (out)
+    result |= POLLOUT;
+  return result;
+}
+
+void pipe_inode::onclose(int flags) {
+  bool read = (flags & 0x3) == O_RDONLY || (flags & 0x3) == O_RDWR;
+  bool write = (flags & 0x3) == O_WRONLY || (flags & 0x3) == O_RDWR;
+
+  {
+    synchronized _(lock);
+    if (read)
+      readers--;
+    if (write)
+      writers--;
+  }
+
+  if (!readers)
+    scheduler.wakeup_all(lock, write_wait);
+  if (!writers)
+    scheduler.wakeup_all(lock, read_wait);
+}
+
+void pipe_inode::incf(const file *file) {
+  if (can_read(file->flags))
+    incread();
+  if (can_write(file->flags))
+    incwrite();
+}
+
+}

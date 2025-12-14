@@ -158,6 +158,7 @@ public:
   ext2_inode *get() override;
   void erase(inode*) override;
   bool has_backup() override { return true; }
+  void sync() override;
 
   bool valid() { return superblock.magic == 0xef53; }
 };

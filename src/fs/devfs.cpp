@@ -167,11 +167,10 @@ size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags)
 }
 
 void block_inode::flush() {
-  for (const auto &[sector, c] : cache) {
+  for (const auto &[sector, c] : cache)
     // Note we can't capture reference directly, since the pair is temporarily constructed.
-    if (c.dirty)
-      flush_sector(sector);
-  }
+    // This `flush_sector` will always check dirtiness.
+    flush_sector(sector);
 }
 
 tty_inode::tty_inode(console_inode *console): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0), tty(console) {
@@ -218,9 +217,16 @@ void tty_inode::wait_on_read() {
   tty.console->wait_on_read();
 }
 
+null_inode::null_inode(): inode_impl(&*devfs, 0, 0) {
+  type = File;
+  lnkcnt = 1;
+  mode = 0666;
+}
+
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0) {
   type = Dir;
   lnkcnt = 2;
+  mode = 0755;
 }
 
 devfs::devfs() {
@@ -241,9 +247,8 @@ void mount_dev() {
   if (!dentry)
     panic("devfs: cannot find /dev");
 
-  // Create a tty.
-  auto tty = new (permanent) tty_inode(console);
-  root->record("tty", tty);
+  root->record("tty",  new (permanent) tty_inode(console));
+  root->record("null", new (permanent) null_inode());
   
   vfs::mount(*dentry, droot);
 }

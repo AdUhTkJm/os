@@ -7,6 +7,7 @@ static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> vfs::creator
 spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
 static_storage<os::hashmap<pair<dentry*, string>, dentry*>> vfs::dcache;
+static_storage<os::vector<fs*>> vfs::tosync;
 
 inode *file::node() {
   return entry->node;
@@ -47,6 +48,11 @@ size_t file::seek(long pos, whence whence) {
     break;
   }
   return before;
+}
+
+void file::close() {
+  node()->onclose(flags);
+  drop();
 }
 
 // Finds the next path to look up, given the current path and the symlink target.
@@ -276,7 +282,7 @@ file *vfs::open(const string &path, int flags) {
 }
 
 void vfs::close(file *f) {
-  f->drop();
+  f->close();
 }
 
 void vfs::mount(dentry *host, dentry *root, int flags) {
@@ -296,7 +302,10 @@ void vfs::mount(dentry *host, dentry *root, int flags) {
 expected<fs*> vfs::get(const string &fsname, const char *src) {
   if (!creators->count(fsname))
     return -EINVAL;
-  return (*creators)[fsname](src);
+  auto fs = (*creators)[fsname](src);
+  if ((*fs)->has_backup())
+    tosync->push_back(*fs);
+  return fs;
 }
 
 void vfs::record(const string &fsname, expected<fs*>(*creator)(const char*)) {
@@ -360,9 +369,7 @@ string dentry::path() const {
   for (const dentry *p = parent; p && p->parent != p; p = p->parent)
     result = p->name + "/" + result;
   
-  if (result == "")
-    return "/";
-  return result;
+  return "/" + result;
 }
 
 string basename(const string &path) {
@@ -420,6 +427,7 @@ string normalize(const string &path) {
 void vfs::init() {
   dcache.construct();
   creators.construct();
+  tosync.construct();
 }
 
 }

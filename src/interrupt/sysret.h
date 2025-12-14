@@ -232,4 +232,19 @@ struct stat {
 #define	WNOHANG		1	/* Don't block waiting.  */
 #define	WUNTRACED	2	/* Report status of stopped children.  */
 
+// From <unistd.h>
+#define	R_OK	4		/* Test for read permission.  */
+#define	W_OK	2		/* Test for write permission.  */
+#define	X_OK	1		/* Test for execute permission.  */
+#define	F_OK	0		/* Test for existence.  */
+
+
+#define	S_IFDIR	0040000	/* Directory.  */
+#define	S_IFCHR	0020000	/* Character device.  */
+#define	S_IFBLK	0060000	/* Block device.  */
+#define	S_IFREG	0100000	/* Regular file.  */
+#define	S_IFIFO	0010000	/* FIFO.  */
+#define	S_IFLNK	0120000	/* Symbolic link.  */
+#define	S_IFSOCK	0140000	/* Socket.  */
+
 #endif

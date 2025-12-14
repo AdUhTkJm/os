@@ -67,6 +67,7 @@ inode *tmpfs_inode::lookup(const string &name) {
 tmpfs::tmpfs(int uid, int gid): uid(uid), gid(gid) {
   auto node = get();
   node->type = inode::Dir;
+  node->mode = 0777;
   root = new dentry("tmp", node, nullptr);
 }
 

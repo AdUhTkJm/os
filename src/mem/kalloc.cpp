@@ -13,7 +13,7 @@ constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 // The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
 // When we enable DEBUG_MEMORY, the meta becomes incredibly large.
 #if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
-constexpr va_t MAX_PA_SIZE = 1_gb;
+constexpr va_t MAX_PA_SIZE = 32_mb;
 #else
 constexpr va_t MAX_PA_SIZE = 2_gb;
 #endif
@@ -102,11 +102,24 @@ void *vm_alloc_pages(size_t total, int flags) {
 
   if (!total)
     return nullptr;
-  size_t index = find_consecutive(vmmap, total, vm_from);
+
+#ifdef DEBUG_MEMORY
+  // Add two guard pages, one at beginning and one at end.
+  size_t actual = total + 2;
+#else
+  size_t actual = total;
+#endif
+
+  size_t index = find_consecutive(vmmap, actual, vm_from);
   if (index == -1ul)
     return nullptr;
 
   uintptr_t base = VM_BASE + index * PAGE_SIZE;
+#ifdef DEBUG_MEMORY
+  base += PAGE_SIZE;
+#endif
+
+  vmmap.set(index, index + actual);
 
   for (size_t i = 0; i < total; ++i) {
     pa_t frame = pframe();
@@ -117,13 +130,14 @@ void *vm_alloc_pages(size_t total, int flags) {
         pfree(*pa);
         vmmap[index + j] = 0;
       }
+      vmmap.clear(index, index + actual);
       return nullptr;
     }
     pmap(frame, base + i * PAGE_SIZE, MAP_4KB, flags);
-    vmmap[index + i] = 1;
   }
+  
   // Round-robin allocate.
-  vm_from += total;
+  vm_from += actual;
   return (void *) base;
 }
 
@@ -248,14 +262,14 @@ void pfree(pa_t p) {
 
 pa_t pmalloc(int pagecnt) {
   if (!pminit)
-    return 0;
+    panic("pmalloc: bitmap allocator uninitialized");
   if (pagecnt == 1)
     return pframe();
 
   // We always search from the beginning. (The round-robin won't be in sync with pframe().)
   auto index = find_consecutive(pmmap, pagecnt, 0);
   if (index == -1ul)
-    return 0;
+    panic("pmalloc: out of memory");
   pmmap.set(index, index + pagecnt);
   for (size_t i = index; i < index + pagecnt; i++)
     meta[i].refcnt++;

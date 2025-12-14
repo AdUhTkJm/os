@@ -147,14 +147,15 @@ inline bool is_valid(pte_t pte) {
 
 // This will only provide valid entries to the function `f`.
 template<class T> requires requires(T f, pte_t &t) { f(t); }
-void walk(pte_t *root, T f) {
+void walk(pte_t *root, T f, int level = 2) {
+  assert(level >= 0);
   for (unsigned i = 0; i < 512; i++) {
     if (!is_valid(root[i]))
       continue;
     
     f(root[i]);
     if (!is_leaf(root[i]))
-      walk((pte_t *) PTE_TO_VA(root[i]), f);
+      walk((pte_t *) PTE_TO_VA(root[i]), f, level - 1);
   }
 }
 
