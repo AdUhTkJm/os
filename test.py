@@ -45,13 +45,14 @@ CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-Wno-invalid-offsetof", "-Wno-parentheses",
+  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", "-Wno-parentheses",
 ]
 # Note this is included in https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html.
 SFLAGS = [
   "-x", "assembler-with-cpp", "-c", "-ffreestanding", "-nostdlib",
 ]
-LDFLAGS = ["-T", "link.ld", "-nostdlib"]
+LINK_SCRIPT = "link_la.ld" if args.la else "link.ld"
+LDFLAGS = ["-T", LINK_SCRIPT, "-nostdlib"]
 CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
 INITRAMFS_PATH = SRC_DIR / "fs/init"
@@ -351,8 +352,13 @@ f"""
 ~/.local/qemu/build/{QEMU} -nographic \
 -machine virt -bios default -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
+\
 -drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 \
 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+\
+-drive file=testsuite/sdcard-rv.img,if=none,format=raw,id=x1 \
+-device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
+\
 -device virtio-net-device,netdev=net -netdev user,id=net \
 -rtc base=utc
 {asm} {gdb}

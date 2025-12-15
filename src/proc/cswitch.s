@@ -1,3 +1,5 @@
+#ifdef __riscv
+
 .global context_save
 .global context_restore
 .section .text
@@ -60,3 +62,6 @@ context_restore:
 1:
   li a0, -4
   jr ra
+
+#endif
+

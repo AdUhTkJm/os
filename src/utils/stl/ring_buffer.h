@@ -87,7 +87,6 @@ public:
     tail = (tail + 1) % Size;
     count++;
     onfull.notify();
-    
   }
 
   T pop_front() {

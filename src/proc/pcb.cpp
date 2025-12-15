@@ -68,7 +68,7 @@ process_file_table::process_file_table(const process_file_table &other): open(ot
 }
 
 void pcb_t::clear() {
-  setroot(__kernel_pt_root);
+  setroot(pid, __kernel_pt_root);
   { 
     pt::free(pt_root);
     pt_root = __kernel_pt_root;
@@ -317,7 +317,7 @@ static void first_time_setup(tcb_t *tcb) {
   else
     sstatus = (sstatus | (1 << 8));
   trap->sstatus = sstatus | (1 << 5);
-  setroot(pcb->pt_root);
+  setroot(pcb->pid, pcb->pt_root);
 }
 
 void trap_return_setup(tcb_t *tcb) {
@@ -327,7 +327,8 @@ void trap_return_setup(tcb_t *tcb) {
   }
 
   tcb->status = Running;
-  setroot(tcb->pcb->pt_root);
+  auto pcb = tcb->pcb;
+  setroot(pcb->pid, pcb->pt_root);
 }
 
 // Taken from <sched.h>
@@ -444,8 +445,6 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     cp->sid = pp->sid;
   }
   
-  printk("forked pid %d (%s)\n", cp->pid, cp->execpath.c_str());
-  
   scheduler.add(ct);
   return ct;
 }
@@ -496,7 +495,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   }
 
   // Reset the page table root immediately. We're about to free the root.
-  setroot(__kernel_pt_root);
+  setroot(pcb->pid, __kernel_pt_root);
   {
     nopreempt _;
     pt::free(pcb->pt_root);
@@ -511,7 +510,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   pcb->pt_root = pframe();
   memcpy((void *) as_va(pcb->pt_root), (void*) as_va(__kernel_pt_root), PAGE_SIZE);
   // Reset the page table root.
-  setroot(pcb->pt_root);
+  setroot(pcb->pid, pcb->pt_root);
 
   tcb->status = Init;
 

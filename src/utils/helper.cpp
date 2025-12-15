@@ -18,27 +18,6 @@ C void panic(const char *s) {
   sbi_system_reset();
 }
 
-C uint32_t to_big_endian(uint32_t x) {
-  unsigned byte0 = x & 0xff;
-  unsigned byte1 = (x >> 8) & 0xff;
-  unsigned byte2 = (x >> 16) & 0xff;
-  unsigned byte3 = (x >> 24) & 0xff;
-  return byte3 + (byte2 << 8) + (byte1 << 16) + (byte0 << 24);
-}
-
-C uint64_t to_big_endian64(uint64_t x) {
-  uint64_t byte0 = x & 0xff;
-  uint64_t byte1 = (x >> 8) & 0xff;
-  uint64_t byte2 = (x >> 16) & 0xff;
-  uint64_t byte3 = (x >> 24) & 0xff;
-  uint64_t byte4 = (x >> 32) & 0xff;
-  uint64_t byte5 = (x >> 40) & 0xff;
-  uint64_t byte6 = (x >> 48) & 0xff;
-  uint64_t byte7 = (x >> 56) & 0xff;
-  return byte7 + (byte6 << 8) + (byte5 << 16) + (byte4 << 24)
-    + (byte3 << 32) + (byte2 << 40) + (byte1 << 48) + (byte0 << 56);
-}
-
 C void hexdump(const void *ptr, size_t len) {
   const uint8_t *buf = (const uint8_t *)ptr;
   for (size_t i = 0; i < len; i += 16) {

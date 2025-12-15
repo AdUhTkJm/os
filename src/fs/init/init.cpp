@@ -200,28 +200,30 @@ int printf(const char *fmt, ...) {
   return output;
 }
 
+constexpr unsigned short htons(unsigned short x) {
+  unsigned byte0 = x & 0xff;
+  unsigned byte1 = (x >> 8) & 0xff;
+  return byte1 + (byte0 << 8);
+}
+
 extern "C" void _start() {
   constexpr int stdin = 0, stdout = 1, stderr = 2;
 
   // Mount ext2.
-  int ret = syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
-  (void) ret;
+  syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
 
-  // Expand heap.
-  unsigned long p = syscall(0, brk);
-  unsigned long usp = syscall(p + 16384, brk);
-  int pid = syscall(0, usp, clone);
+  // Move mount.
+  syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, /*MS_MOVE=*/8192, mount);
+  syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, /*MS_MOVE=*/8192, mount);
+
+  // Switch root to ext2.
+  syscall((reg_t) "/mnt", chroot);
+
+  // Change current directory.
+  syscall((reg_t) "/", chdir);
+
+  int pid = syscall(0, 0, clone);
   if (pid == 0) {
-    // Move mount.
-    syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, /*MS_MOVE=*/8192, mount);
-    syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, /*MS_MOVE=*/8192, mount);
-
-    // Switch root to ext2.
-    syscall((reg_t) "/mnt", chroot);
-
-    // Change current directory.
-    syscall((reg_t) "/", chdir);
-
     // Redirect stdin/stdout/stderr to tty.
     int in = syscall(-1, (reg_t) "/dev/tty", /*O_RDONLY=*/0, 0, openat);
     int out = syscall(-1, (reg_t) "/dev/tty", /*O_WRONLY=*/1, 0, openat);

@@ -238,7 +238,6 @@ struct stat {
 #define	X_OK	1		/* Test for execute permission.  */
 #define	F_OK	0		/* Test for existence.  */
 
-
 #define	S_IFDIR	0040000	/* Directory.  */
 #define	S_IFCHR	0020000	/* Character device.  */
 #define	S_IFBLK	0060000	/* Block device.  */
@@ -246,5 +245,33 @@ struct stat {
 #define	S_IFIFO	0010000	/* FIFO.  */
 #define	S_IFLNK	0120000	/* Symbolic link.  */
 #define	S_IFSOCK	0140000	/* Socket.  */
+
+// From <sys/socket.h>
+#define AF_UNSPEC	0	/* Unspecified.  */
+#define AF_LOCAL	1	/* Local to host (pipes and file-domain).  */
+#define AF_UNIX		AF_LOCAL /* POSIX name for PF_LOCAL.  */
+#define AF_FILE		AF_LOCAL /* Another non-standard name for PF_LOCAL.  */
+#define AF_INET		2	/* IP protocol family.  */
+
+#define SOCK_STREAM  1
+#define SOCK_DGRAM   2
+#define SOCK_RAW     3
+
+struct sockaddr {
+  unsigned short sa_family;
+  char           sa_data[14];
+};
+
+// From <netinet/in.h>
+struct in_addr {
+  unsigned int s_addr;
+};
+
+struct sockaddr_in {
+  short          sin_family;
+  unsigned short sin_port;
+  struct in_addr sin_addr;
+  // 8 byte unused
+};
 
 #endif

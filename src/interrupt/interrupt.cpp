@@ -14,6 +14,11 @@ extern int timer_tick;
 // In nanosecond, from Unix epoch.
 extern size_t realtime;
 
+// Returns current timestamp.
+size_t now() {
+  return rdtime() * timer_tick + realtime;
+}
+
 // For a system call list:
 // https://jborza.com/post/2021-05-11-riscv-linux-syscalls/
 
@@ -50,12 +55,12 @@ long syshandle(trapframe *ksp) { \
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #define PRINT_FORMAT(x) "syscall " #x " (%d): "
-#define PRINT1(x, a) printk(PRINT_FORMAT(x) #a " = %p" "\n", syscall::x, a0);
-#define PRINT2(x, a, b) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p" "\n", syscall::x, a0, a1);
-#define PRINT3(x, a, b, c) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p" "\n", syscall::x, a0, a1, a2);
-#define PRINT4(x, a, b, c, d) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p" "\n", syscall::x, a0, a1, a2, a3);
-#define PRINT5(x, a, b, c, d, e) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p" "\n", syscall::x, a0, a1, a2, a3, a4);
-#define PRINT6(x, a, b, c, d, e, f) printk(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p" "\n", syscall::x, a0, a1, a2, a3, a4, a5);
+#define PRINT1(x, a) klog(PRINT_FORMAT(x) #a " = %p" "\n", syscall::x, a0);
+#define PRINT2(x, a, b) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p" "\n", syscall::x, a0, a1);
+#define PRINT3(x, a, b, c) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p" "\n", syscall::x, a0, a1, a2);
+#define PRINT4(x, a, b, c, d) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p" "\n", syscall::x, a0, a1, a2, a3);
+#define PRINT5(x, a, b, c, d, e) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p" "\n", syscall::x, a0, a1, a2, a3, a4);
+#define PRINT6(x, a, b, c, d, e, f) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p" "\n", syscall::x, a0, a1, a2, a3, a4, a5);
 
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
@@ -933,6 +938,14 @@ HANDLE(pipe2, fds, flags) {
   int fd[2] = { pcb->ftbl->allocate(read), pcb->ftbl->allocate(write) };
   copy_to_user((void*) fds, fd, sizeof(fd));
   return 0;
+}
+
+HANDLE(socket, domain, type, protocol) {
+  return detail::socket(domain, type, protocol);
+}
+
+HANDLE(bind, fd, sockaddr, size) {
+  return detail::bind(fd, (void *) sockaddr, size);
 }
 
 SYSHANDLE_END

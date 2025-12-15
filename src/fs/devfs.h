@@ -93,6 +93,7 @@ public:
   }
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
+  // poll() is default, as a regular file.
 
   // Special functionality.
   void flush();

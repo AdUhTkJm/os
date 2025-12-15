@@ -144,3 +144,17 @@ __handler_end:
   sret
 
 #endif
+
+#ifdef __loongarch__
+
+.section .text.low
+.globl stvec_pos
+
+# Unlike RISC-V, we do not need a separate _start,
+# as we don't really need to store a0 (FDT address) and a1 (hart id).
+# The linker will place kernel_main() at the correct place.
+
+stvec_pos:
+
+
+#endif

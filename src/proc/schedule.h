@@ -32,7 +32,7 @@ struct scheduler_t {
   // Wakes up everything in this container, and clears it.
   // We need the lock to protect the write to tcb.
   template<locklike Lock>
-  void wakeup_all(Lock &lock, os::vector<tcb_t*> &tcbs) {
+  void wakeup_all(Lock &lock, os::vector<tcb_t*> &tcbs, bool can_preempt = true) {
     synchronized syn(this->lock);
     {
       synchronized s2(lock);
@@ -43,7 +43,8 @@ struct scheduler_t {
       }
       tcbs.clear();
     }
-    maybe_preempt();
+    if (can_preempt)
+      maybe_preempt();
   }
   
   void maybe_preempt();

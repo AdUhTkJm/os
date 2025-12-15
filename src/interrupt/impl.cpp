@@ -1,6 +1,7 @@
 #include "sysret.h"
 #include "../fs/vfs.h"
 #include "../fs/devfs.h"
+#include "../fs/net.h"
 #include "../proc/schedule.h"
 #include "../driver/tty/tty.h"
 
@@ -272,6 +273,64 @@ int faccessat(int dirfd, const char *path, int mode) {
     return -EACCES;
 
   return 0;
+}
+
+int socket(int domain, int type, int protocol) {
+  if (domain != AF_INET) {
+    printk("socket: unsupported domain: %d\n", domain);
+    return -EINVAL;
+  }
+
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  switch (type) {
+  case SOCK_DGRAM: {
+    if (protocol != 0 && protocol != UDP)
+      return -EINVAL;
+
+    auto node = new udp_socket_inode(nullptr, ip::src, 0);
+    auto f = new file(new dentry("<sock>", node, nullptr), O_RDWR);
+    return pcb->ftbl->allocate(f);
+  }
+  default:
+    printk("socket: unsupported type: %d\n", type);
+    return -EINVAL;
+  }
+}
+
+int bind(int fd, void *_addr, unsigned len) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  auto addrp = copy_from_user(_addr, len);
+  if (!addrp)
+    return -addrp;
+  auto addr = addrp->get();
+
+  auto family = *(unsigned short *) addr;
+  if (family != AF_INET) {
+    printk("bind: unsupported family: %d\n", family);
+    return -EINVAL;
+  }
+
+  // Now this might be TCP inode or UDP inode.
+  // But we only have UDP now.
+  if (auto udp = dyn_cast<udp_socket_inode>(file->node())) {
+    if (len < sizeof(sockaddr_in))
+      return -EINVAL;
+
+    auto info = *(sockaddr_in *) addr;
+    udp->src = info.sin_addr.s_addr;
+    udp->srcport = info.sin_port;
+    return 0;
+  }
+
+  printk("bind: not udp inode\n");
+  return -EINVAL;
 }
 
 }

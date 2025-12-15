@@ -15,6 +15,8 @@ int munmap(unsigned long addr, unsigned long len);
 int ioctl(int fd, int op, void *argp);
 int wait(int pid, void *wstatus, int options, void *rusage);
 int faccessat(int dirfd, const char *path, int mode);
+int socket(int domain, int type, int protocol);
+int bind(int fd, void *sockaddr, unsigned len);
 
 int fromtype(inode::filetype ty);
 

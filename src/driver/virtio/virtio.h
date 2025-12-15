@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include "../../mem/ptable.h"
 #include "../../fs/devfs.h"
+#include "../../fs/net.h"
 
 /*
 For VirtIO specification, see
@@ -24,7 +25,7 @@ enum device_status : int32_t {
   FAILED = 128,
 };
 
-enum block_device_offsets {
+enum mmio_offsets {
   DEVICE_FEATURE = 0x10,
   DRIVER_FEATURE = 0x20,
   DEVICE_FEATURESEL = 0x14,
@@ -44,6 +45,8 @@ enum block_device_offsets {
   QUEUE_DEVICE_LOW = 0xa0,
   QUEUE_DEVICE_HIGH = 0xa4,
   QUEUE_RESET = 0xc0,
+  CONFIG_GENERATION = 0xfc,
+  CONFIG_BASE = 0x100,
 };
 
 enum block_device_legacy_offsets {
@@ -73,6 +76,11 @@ enum block_features {
   ZONED = 1 << 17,
 };
 #define SIZE_MAX 18446744073709551615
+
+// See Section 5.1.3.
+enum net_device_features {
+  MAC = 1 << 5,
+};
 
 enum features : unsigned long {
   VERSION_1 = 1ul << 32,
@@ -190,8 +198,38 @@ public:
   int write(uint64_t lba, const void *buffer) override;
 };
 
+class net_device : public os::net_device {
+  pa_t base;
+  vq::queue_legacy *rx, *tx; // Receive/transmit queues.
+  unsigned rxnext = 0, rxlast = 0, txlast = 0;
+  bool legacy;
+  spinlock lock;
+  os::vector<tcb_t*> txwait;
+
+  static constexpr size_t PACKET_BUF_SIZE = 2048;
+  char rxbuf[vq::size][PACKET_BUF_SIZE];
+  char txbuf[vq::size][PACKET_BUF_SIZE];
+
+  struct header {
+    uint8_t  flags;
+    uint8_t  gso_type;
+    uint16_t hdr_len;
+    uint16_t gso_size;
+    uint16_t csum_start;
+    uint16_t csum_offset;
+  };
+  friend void net_device_handler(int irq);
+public:
+  net_device(const device &, bool legacy);
+  net_device(const net_device &) = delete;
+  net_device &operator=(const net_device &) = delete;
+
+  int read();
+  int write(const void *buf, int len, bool block) override;
+  bool write_full() override;
+};
+
 void probe();
-block_device *get(int id);
 
 }
 

@@ -8,3 +8,4 @@ busybox
 scripts/rootfs
 mnt
 docker
+.vscode
