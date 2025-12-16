@@ -11,8 +11,9 @@ class tmpfs_inode : public os::inode_impl<tmpfs_inode> {
 
   os::hashmap<string, tmpfs_inode*> children;
   atomic<unsigned> lnkcnt;
+  inode::meta meta;
 public:
-  tmpfs_inode(class fs *fs, int uid, int gid): inode_impl(fs, uid, gid) { }
+  tmpfs_inode(class fs *fs, int uid, int gid, int mode, filetype ty): inode_impl(fs, uid, gid, mode, ty) { }
 
   size_t read(size_t offset, void* buf, size_t len, int flags) override;
   size_t write(size_t offset, const void* buf, size_t len, int flags) override;
@@ -22,6 +23,7 @@ public:
   inode *lookup(const string &name) override;
   os::vector<item> list() override;
   optional<string> readlink() override { return nullopt; }
+  inode::meta get_meta() override { return meta; }
 
   size_t size() const override { return data.size(); }
   // Note that `data.data()` will change, so we can't use it.
@@ -34,7 +36,7 @@ class tmpfs : public fs {
   int uid, gid;
 public:
   tmpfs(int uid, int gid);
-  tmpfs_inode *get() override { return new tmpfs_inode(this, uid, gid); }
+  tmpfs_inode *get() override { return new tmpfs_inode(this, uid, gid, 0, inode::Bad); }
   void erase(inode *) override { }
   bool has_backup() override { return false; }
 };

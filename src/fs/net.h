@@ -180,6 +180,8 @@ public:
   size_t read(size_t, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
+  // Sockets do not support things like `fstatat`.
+  meta get_meta() override { return meta(0, 0, 0); }
 
   void connect(ip::address addr, unsigned short port);
 };

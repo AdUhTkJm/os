@@ -20,6 +20,8 @@ public:
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;
   short poll(unsigned short) override;
+  // Pipes do not support things like `fstatat`.
+  meta get_meta() override { return meta(0, 0, 0); }
   void onclose(int flags) override;
 
   void incread() { readers++; }

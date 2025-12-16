@@ -209,7 +209,7 @@ constexpr unsigned short htons(unsigned short x) {
 extern "C" void _start() {
   constexpr int stdin = 0, stdout = 1, stderr = 2;
 
-  // Mount ext2.
+  // Mount ext2
   syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
 
   // Move mount.
@@ -221,6 +221,9 @@ extern "C" void _start() {
 
   // Change current directory.
   syscall((reg_t) "/", chdir);
+
+  // Mount proc.
+  syscall((reg_t) "", (reg_t) "/proc", (reg_t) "procfs", mount);
 
   int pid = syscall(0, 0, clone);
   if (pid == 0) {

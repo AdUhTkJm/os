@@ -4,7 +4,7 @@
 #include "../mem/kalloc.h"
 #include "../fs/initramfs.h"
 #include "../fs/devfs.h"
-#include "../fs/ext2.h"
+#include "../fs/ext.h"
 #include "../fs/tmpfs.h"
 #include "../fs/procfs.h"
 #include "../fdt/fdt.h"
@@ -130,6 +130,10 @@ void main_high() {
 
   // Initialize global vfs structure.
   vfs::init();
+  // We need to get real time in order to make sure metadata is working.
+  get_tick();
+  get_real_time();
+
   os::mount_initramfs();
   os::plic::init();
   os::mount_dev();
@@ -139,8 +143,8 @@ void main_high() {
 
   // Register known, mountable fs'es.
   vfs::record("ext2", ext2_creator);
-  vfs::record("tmp", tmp_creator);
-  vfs::record("proc", procfs_creator);
+  vfs::record("tmpfs", tmp_creator);
+  vfs::record("procfs", procfs_creator);
   
   // Create an idle kernel process.
   pidmap.construct();
@@ -179,8 +183,6 @@ void main_high() {
   pcb->vfs->close(init);
 
   // Enable timer.
-  get_tick();
-  get_real_time();
   sbi_set_timer(rdtime() + 10_ms / timer_tick);
   printk("Boot finished.\n");
   for (;;) ;

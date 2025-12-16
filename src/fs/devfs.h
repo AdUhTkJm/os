@@ -26,16 +26,15 @@ extern static_storage<class devfs> devfs;
 class console_inode : public inode_impl<console_inode> {
   os::vector<tcb_t *> wait;
   spinlock lock;
+  inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
 
-  console_inode(): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0) {
-    type = CharDevice;
-    mode = 0666; // rw-rw-rw-
-  }
+  console_inode(): inode_impl(devfs.get(), 0, 0, 0666, CharDevice) {}
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
+  inode::meta get_meta() override { return meta; }
 
   void wake_read() override;
   void wait_on_read() override;
@@ -43,6 +42,7 @@ public:
 
 class devroot : public inode_impl<devroot> {
   hashmap<string, inode*> children;
+  inode::meta meta;
 public:
   DIR_INODE_DEFAULT_IMPL;
 
@@ -66,10 +66,13 @@ public:
     children[name] = node;
     node->linked();
   }
+  
+  inode::meta get_meta() override { return meta; }
 };
 
 class block_inode : public inode_impl<block_inode> {
   block_device *dev;
+  inode::meta meta;
 
   struct cached_sector {
     unsigned char data[512];
@@ -84,13 +87,11 @@ class block_inode : public inode_impl<block_inode> {
 public:
   FILE_INODE_DEFAULT_IMPL;
 
-  block_inode(block_device *dev): inode_impl(devfs.get(), /*uid=*/0, /*gid=*/0), dev(dev) {
-    type = BlockDevice;
-    mode = 0666; // rw-rw-rw-
-  }
+  block_inode(block_device *dev): inode_impl(devfs.get(), 0, 0, 0666, BlockDevice), dev(dev) {}
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   // poll() is default, as a regular file.
+  inode::meta get_meta() override { return meta; }
 
   // Special functionality.
   void flush();
@@ -99,18 +100,21 @@ public:
 class urandom_inode : public inode_impl<urandom_inode> {
   unsigned char key[32], nonce[12];
   unsigned long counter;
+  inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
 
   urandom_inode();
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
+  inode::meta get_meta() override { return meta; }
 
   void add_entropy(unsigned long entropy);
 };
 
 class tty_inode : public inode_impl<tty_inode> {
   string line;
+  inode::meta meta;
 public:
   tty::tty tty;
 
@@ -120,18 +124,21 @@ public:
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
+  inode::meta get_meta() override { return meta; }
   
   void wake_read() override;
   void wait_on_read() override;
 };
 
 class null_inode : public inode_impl<null_inode> {
+  inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
 
   null_inode();
   size_t read(size_t, void *, size_t, int) override { return 0; }
   size_t write(size_t, const void*, size_t len, int) override { return len; }
+  inode::meta get_meta() override { return meta; }
 };
 
 extern static_storage<console_inode> console;

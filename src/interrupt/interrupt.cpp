@@ -6,7 +6,7 @@
 #include "../driver/plic/plic.h"
 #include "../mem/kalloc.h"
 #include "../proc/schedule.h"
-#include "../fs/ext2.h"
+#include "../fs/ext.h"
 #include "../fs/pipe.h"
 #include "../utils/log.h"
 
@@ -320,6 +320,7 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   if (fd < 0)
     return fd;
   auto node = pcb->ftbl->at(fd)->node();
+  auto meta = node->get_meta();
   stat stat {
     .st_dev = 0,
     .st_ino = (unsigned long) node->inum(),
@@ -331,9 +332,9 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_size = (long) node->size(),
     .st_blksize = 1024,
     .st_blocks = 0,
-    .st_atim = {},
-    .st_mtim = {},
-    .st_ctim = {},
+    .st_atim = { .tv_sec = long(meta.atime / 1_s), .tv_nsec = long(meta.atime % 1_s) },
+    .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
+    .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
   };
   pcb->close_file(fd);
   copy_to_user((void *) buf, &stat, sizeof(stat));
@@ -345,6 +346,7 @@ HANDLE(fstat, fd, buf) {
   if (!file)
     return -EBADF;
   auto node = file->node();
+  auto meta = node->get_meta();
   stat stat {
     .st_dev = 0,
     .st_ino = (unsigned long) node->inum(),
@@ -356,9 +358,9 @@ HANDLE(fstat, fd, buf) {
     .st_size = (long) node->size(),
     .st_blksize = 1024,
     .st_blocks = 0,
-    .st_atim = {},
-    .st_mtim = {},
-    .st_ctim = {},
+    .st_atim = { .tv_sec = long(meta.atime / 1_s), .tv_nsec = long(meta.atime % 1_s) },
+    .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
+    .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
   };
   copy_to_user((void *) buf, &stat, sizeof(stat));
   return 0;

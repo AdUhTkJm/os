@@ -312,6 +312,14 @@ void vfs::record(const string &fsname, expected<fs*>(*creator)(const char*)) {
   (*creators)[fsname] = creator;
 }
 
+vector<string> vfs::recorded_fs() {
+  vector<string> result;
+  result.reserve(creators->size());
+  for (const auto &[name, _] : *creators)
+    result.push_back(name);
+  return result;
+}
+
 void inode::drop() {
   if (--refcnt)
     return;

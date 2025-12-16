@@ -1,4 +1,4 @@
-#include "ext2.h"
+#include "ext.h"
 #include "../proc/schedule.h"
 
 namespace {
@@ -13,15 +13,11 @@ static_storage<ext2> ext2fs;
 
 // Create a node from existing data.
 ext2_inode::ext2_inode(class fs *fs, const struct meta &meta, long inum):
-  inode_impl(fs, meta.uid, meta.gid), meta(meta), _inum(inum) {
-  // Copy data from disk into memory.
-  type = totype(ftypeflags(meta.type & 0xf000));
-  mode = meta.type & 0xfff;
-}
+  inode_impl(fs, meta.uid, meta.gid, meta.type & 0xfff, totype(ftypeflags(meta.type & 0xf000))), meta(meta), _inum(inum) {}
 
 // Create an empty node.
 ext2_inode::ext2_inode(class fs *fs, long inum):
-  inode_impl(fs, -1, -1), meta(), _inum(inum) { }
+  inode_impl(fs, -1, -1, 0000, filetype::Bad), meta(), _inum(inum) { }
 
 size_t ext2_inode::locate(size_t byte, int flags) {
   auto fs = static_cast<ext2*>(this->fs);
@@ -277,7 +273,7 @@ size_t ext2_inode::read(size_t offset, void *buf, size_t len, int flags) {
   }
 
   size_t time = now();
-  meta.last_access_time = time;
+  meta.atime = time;
   return read;
 }
 
@@ -327,8 +323,8 @@ size_t ext2_inode::write(size_t offset, const void *buf, size_t len, int flags) 
     meta.sz = pos;
   
   size_t time = now();
-  meta.last_write_time = time;
-  meta.last_access_time = time;
+  meta.mtime = time;
+  meta.atime = time;
   fs->update_meta(this);
   return written;
 }
@@ -398,6 +394,7 @@ ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
 int ext2_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;
+  meta.atime = meta.mtime = now();
 
   auto fs = static_cast<ext2*>(this->fs);
   auto node = fs->get();
@@ -408,7 +405,7 @@ int ext2_inode::create(const string &name, filetype ty, int mode) {
   node->meta.uid = pcb->uid;
   node->meta.gid = pcb->gid;
   node->meta.lnkcnt = (ty == Dir) ? 2 : 1;
-  node->meta.create_time = now();
+  node->meta.ctime = now();
   fs->update_meta(node);
 
   // Metadata always get updated in add_dirent().
@@ -423,7 +420,16 @@ int ext2_inode::create(const string &name, filetype ty, int mode) {
   return 0;
 }
 
+inode::meta ext2_inode::get_meta() {
+  return inode::meta(
+    meta.atime,
+    meta.ctime,
+    meta.mtime
+  );
+}
+
 int ext2_inode::unlink(const string &name) {
+  meta.atime = meta.mtime = now();
   (void) name;
   return 0;
 }
@@ -431,6 +437,7 @@ int ext2_inode::unlink(const string &name) {
 inode *ext2_inode::lookup(const string &name) {
   if (type != Dir)
     return nullptr;
+  meta.atime = now();
 
   auto fs = static_cast<ext2*>(this->fs);
 
@@ -483,6 +490,7 @@ static inode::filetype direntry_to_type(unsigned char ty) {
 vector<inode::item> ext2_inode::list() {
   if (type != Dir)
     return {};
+  meta.atime = now();
 
   auto fs = static_cast<ext2*>(this->fs);
   vector<item> result;
@@ -514,6 +522,8 @@ vector<inode::item> ext2_inode::list() {
 optional<string> ext2_inode::readlink() {
   if (type != filetype::Link)
     return nullopt;
+  meta.atime = now();
+  
   // Data is directly stored in the directptr array, plus 3 indirect pointers.
   if (meta.sz <= 60) {
     char *str = (char*) &meta.directptr;
@@ -558,6 +568,7 @@ ext2::ext2(inode *device): device(device) {
   // Root is always at inode 2.
   root = new dentry("", read_from_inum(2), nullptr);
   printk("ext2 version = %d.%d\n", superblock.ver_major, superblock.ver_minor);
+  printk("features: %x %x %x\n", superblock.required_features, superblock.readonly_features, superblock.optional_features);
 }
 
 size_t ext2::offset(size_t id) {

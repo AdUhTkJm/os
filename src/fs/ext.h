@@ -16,9 +16,9 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
     uint16_t type; // file type + permission
     uint16_t uid;
     uint32_t sz;
-    uint32_t last_access_time; // atime
-    uint32_t create_time;      // ctime
-    uint32_t last_write_time;  // mtime
+    uint32_t atime; // atime
+    uint32_t ctime;      // ctime
+    uint32_t mtime;  // mtime
     uint32_t delete_time;
     uint16_t gid;
     uint16_t lnkcnt;
@@ -77,6 +77,7 @@ public:
   inode *lookup(const string &name) override;
   vector<item> list() override;
   optional<string> readlink() override;
+  inode::meta get_meta() override;
 
   size_t size() const override { return meta.sz; }
   long inum() const override { return _inum; }

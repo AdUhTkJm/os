@@ -145,7 +145,7 @@ void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, p
 }
 
 udp_socket_inode::udp_socket_inode(net_device *dev, ip::address src, unsigned short port):
-  inode_impl(&sockfs, 0, 0), dev(dev), src(src), srcport(port) {
+  inode_impl(&sockfs, 0, 0, 0666, Socket), dev(dev), src(src), srcport(port) {
   demux->record(this);
 }
 

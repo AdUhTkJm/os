@@ -84,12 +84,6 @@ namespace os {
 class inode;
 class dentry;
 
-struct filemeta {
-  size_t atime; // Access time.
-  size_t mtime; // Modification time.
-  size_t ctime; // Creation time.
-};
-
 // Returns nanoseconds since 1970.1.1.
 size_t now();
 
@@ -148,6 +142,14 @@ public:
   const uint64_t rtti;
 
   enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket, FIFO, Bad };
+  struct meta {
+    size_t atime; // Access time.
+    size_t ctime; // Creation time.
+    size_t mtime; // Modification time.
+    meta() { atime = ctime = mtime = now(); }
+    meta(size_t atime, size_t ctime, size_t mtime): atime(atime), ctime(ctime), mtime(mtime) {}
+  };
+  
   static unsigned char as_dt(filetype ty);
 
   virtual ~inode() = default;
@@ -161,6 +163,9 @@ public:
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
   virtual optional<string> readlink() = 0;
+
+  // Returns access/creation/modification time.
+  virtual meta get_meta() = 0;
 
   virtual short poll(unsigned short event) { (void) event; return POLLIN | POLLOUT; }
 
@@ -199,7 +204,8 @@ public:
   int mode; // Access mode.
   int uid, gid;
 
-  inode(class fs *fs, int uid, int gid, uint64_t rtti): rtti(rtti), fs(fs), uid(uid), gid(gid) { refcnt = 1; }
+  inode(class fs *fs, int uid, int gid, int mode, filetype type, uint64_t rtti):
+    rtti(rtti), type(type), fs(fs), mode(mode), uid(uid), gid(gid) { refcnt = 1; /* lnkcnt implicitly zeroed. */ }
 };
 
 template<class T>
@@ -209,7 +215,7 @@ class inode_impl : public inode {
     return (uint64_t) &unique;
   }
 public:
-  inode_impl(class fs *fs, int uid, int gid): inode(fs, uid, gid, (long) class_id()) {}
+  inode_impl(class fs *fs, int uid, int gid, int mode, filetype type): inode(fs, uid, gid, mode, type, (long) class_id()) {}
   static bool classof(inode *p) {
     return p->rtti == class_id();
   }
@@ -265,6 +271,8 @@ public:
   // Constructs a new in-memory `fs` structure according to the given fs.
   expected<fs*> get(const string &fsname, const char *src);
   static void record(const string &fsname, expected<fs*>(*creator)(const char*));
+  // Returns all registered filesystems (ones that we're able to mount).
+  static vector<string> recorded_fs();
 
   // Initialize the global structure.
   static void init();

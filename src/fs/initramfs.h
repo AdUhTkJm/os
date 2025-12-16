@@ -49,6 +49,8 @@ public:
   vector<item> list() override;
   // We don't support symlinks for now.
   optional<string> readlink() override { return nullopt; }
+  // TODO: In fact we should read from disk image.
+  meta get_meta() override { return meta(0, 0, 0); }
 
   size_t size() const override { return sz; }
   long inum() const override { return (long) data; }
@@ -57,13 +59,12 @@ public:
 class initramfs : public fs {
 public:
   initramfs() {
-    auto rootnode = new (os::permanent) initramfs_inode(this, 0, 0);
-    rootnode->type = inode::Dir;
+    auto rootnode = new (os::permanent) initramfs_inode(this, 0, 0, 0777, inode::Dir);
     rootnode->sz = 0;
     root = new class dentry("", rootnode, nullptr);
   }
 
-  initramfs_inode *get() override { return new (os::permanent) initramfs_inode(this, 0, 0); }
+  initramfs_inode *get() override { return new (os::permanent) initramfs_inode(this, 0, 0, 0777, inode::Bad); }
   void erase(inode *) override { }
   bool has_backup() override { return false; }
 } extern *initramfs;
