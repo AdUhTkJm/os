@@ -29,6 +29,8 @@ public:
   }
 
   vector &operator=(const vector &other) {
+    if (this == &other)
+      return *this;
     delete[] dat;
     dat = new V[cap];
     sz = other.sz;
@@ -82,7 +84,7 @@ public:
     sz = newsz;
   }
 
-  void insert(V *place, const V &element) {
+  void insert(const V *place, const V &element) {
     long d = place - dat;
     if (sz == cap)
       reserve(max(16ul, cap * 2));
@@ -93,7 +95,7 @@ public:
     sz++;
   }
 
-  void erase(V *place) {
+  void erase(const V *place) {
     auto d = place - dat;
     for (long i = d; i < long(sz); i++)
       dat[i] = dat[i + 1];

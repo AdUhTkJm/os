@@ -11,11 +11,18 @@ int vsprintf(char *dst, const char *fmt, va_list args);
 void klog(const char *fmt, ...);
 
 struct log_buffer {
-  char buf[8192];
+  // This shouldn't be too big.
+  // Kernel stackc is 8KB, and we want to place an array of the same size on stack when we are calling syslog().
+  char buf[2048];
   unsigned head = 0, tail = 0;
   spinlock lock;
 
   void write(const char *data, unsigned len);
+  // Consumes data.
+  unsigned read(char *dst, unsigned len);
+  // Doesn't consume data.
+  unsigned read_all(char *dst, unsigned len);
+  unsigned used();
 } extern log;
 
 }

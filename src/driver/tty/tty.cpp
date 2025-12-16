@@ -31,9 +31,6 @@ void tty::send(int sig) {
 }
 
 string tty::readline() {
-  auto tcb = active();
-  auto pcb = tcb->pcb;
-
   pos = 0;
   for (char c; pos < sizeof(buf);) {
     for (int len = 0; len != 1;)

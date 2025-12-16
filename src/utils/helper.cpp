@@ -5,12 +5,11 @@
 
 C void kputs(const char *s) {
   unsigned len = strlen(s);
-  auto *pa = (const char *) os::to_pa(s);
-  sbi_console_write(len, pa);
+  sbi_console_write(len, os::to_pa(s));
 }
 
 C void kputch(char c) {
-  sbi_console_write(1, (const char*) os::to_pa(&c));
+  sbi_console_write(1, os::to_pa(&c));
 }
 
 C void panic(const char *s) {

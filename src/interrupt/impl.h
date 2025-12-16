@@ -17,6 +17,7 @@ int wait(int pid, void *wstatus, int options, void *rusage);
 int faccessat(int dirfd, const char *path, int mode);
 int socket(int domain, int type, int protocol);
 int bind(int fd, void *sockaddr, unsigned len);
+int syslog(int type, char *buf, unsigned long size);
 
 int fromtype(inode::filetype ty);
 

@@ -69,24 +69,25 @@ size_t ext2_inode::locate(size_t byte, int flags) {
   return -1;
 }
 
-result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
+int ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
   auto fs = static_cast<ext2*>(this->fs);
   unsigned block_size = fs->blksz;
   auto size = block_size / sizeof(int);
   if (index < 12) {
     meta.directptr[index] = value;
-    return result::success;
+    return 0;
   }
   index -= 12;
 
-  char zeroes[512];
-  memset(zeroes, 0, 512);
+  unique_ptr<char[]> zeroes_p(new char[block_size]);
+  char *zeroes = zeroes_p.get();
+  memset(zeroes, 0, block_size);
   if (index < size) {
     // Allocate the single-indirect block if it's not present.
     if (meta.indirect1 == 0) {
       unsigned b = fs->balloc();
       if (b == -1u)
-        return result::failure;
+        return -ENOSPC;
 
       meta.indirect1 = b;
       fs->device->write(fs->offset(b), zeroes, block_size, flags);
@@ -94,8 +95,10 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
 
     // Find the correct block. Each index is 4-byte long.
     unsigned b = fs->balloc();
+    if (b == -1u)
+      return -ENOSPC;
     fs->device->write(fs->offset(meta.indirect1) + index * sizeof(int), &b, sizeof(int), flags);
-    return result::success;
+    return 0;
   }
 
   index -= size;
@@ -104,7 +107,7 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
     if (meta.indirect2 == 0) {
       unsigned b = fs->balloc();
       if (b == -1u)
-        return result::failure;
+        return -ENOSPC;
 
       meta.indirect2 = b;
       fs->device->write(fs->offset(b), zeroes, block_size, flags);
@@ -117,9 +120,8 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
     if (l1 == 0) {
       l1 = fs->balloc();
       if (l1 == -1u)
-        return result::failure;
+        return -ENOSPC;
 
-      meta.indirect1 = l1;
       fs->device->write(fs->offset(l1), zeroes, block_size, flags);
       fs->device->write(l1pos, &l1, sizeof(int), flags);
     }
@@ -127,19 +129,19 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
     // Find the L0 block.
     unsigned b = fs->balloc();
     if (b == -1u)
-      return result::failure;
+      return -ENOSPC;
     size_t l0pos = fs->offset(l1) + (index % size) * sizeof(int);
     fs->device->write(l0pos, &b, sizeof(int), flags);
-    return result::success;
+    return 0;
   }
 
   index -= size * size;
-  if (index <= size * size * size) {
+  if (index < size * size * size) {
     // Allocate the triple-indirect block if it's not present.
     if (meta.indirect3 == 0) {
       unsigned b = fs->balloc();
       if (b == -1u)
-        return result::failure;
+        return -ENOSPC;
 
       meta.indirect3 = b;
       fs->device->write(fs->offset(b), zeroes, block_size, flags);
@@ -152,9 +154,8 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
     if (l2 == 0) {
       l2 = fs->balloc();
       if (l2 == -1u)
-        return result::failure;
+        return -ENOSPC;
 
-      meta.indirect2 = l2;
       fs->device->write(fs->offset(l2), zeroes, block_size, flags);
       fs->device->write(l2pos, &l2, sizeof(int), flags);
     }
@@ -166,9 +167,8 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
     if (l1 == 0) {
       l1 = fs->balloc();
       if (l1 == -1u)
-        return result::failure;
+        return -ENOSPC;
 
-      meta.indirect1 = l1;
       fs->device->write(fs->offset(l1), zeroes, block_size, flags);
       fs->device->write(l1pos, &l1, sizeof(int), flags);
     }
@@ -176,14 +176,77 @@ result ext2_inode::set_pointer(unsigned index, unsigned value, int flags) {
     // Find the L0 block.
     unsigned b = fs->balloc();
     if (b == -1u)
-      return result::failure;
+      return -ENOSPC;
     size_t l0pos = fs->offset(l1) + (index % size) * sizeof(int);
     fs->device->write(l0pos, &b, sizeof(int), flags);
-    return result::success;
+    return 0;
   }
 
   // Too large.
-  return result::failure;
+  return -ENOSPC;
+}
+
+int ext2_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
+  auto fs = static_cast<ext2*>(this->fs);
+  size_t blksz = fs->blksz;
+
+  for (size_t off = 0; off < meta.sz; off += blksz) {
+    size_t b = locate(off, 0);
+    if (!b)
+      continue;
+
+    unique_ptr<char[]> block = new char[blksz];
+    fs->device->read(fs->offset(b), block.get(), blksz, 0);
+
+    size_t pos = 0;
+    while (pos < blksz) {
+      // The old entry. We traverse through the entry list.
+      auto *de = (direntry *)(block.get() + pos);
+      size_t len = roundup<4>(sizeof(direntry) + de->namelen);
+
+      // This is a full entry that occupies the rest of the block.
+      // We shrink the previous entry and then create a new one.
+      if (de->size - len >= roundup<4>(sizeof(direntry) + name.size())) {
+        de->size = len;
+
+        auto *ne = (direntry *)(block.get() + pos + len);
+        ne->inum = inum;
+        ne->namelen = name.size();
+        ne->type = type;
+        ne->size = blksz - (pos + len);
+        memcpy(ne->name, name.c_str(), name.size());
+
+        fs->device->write(fs->offset(b), block.get(), blksz, 0);
+        fs->update_meta(this);
+        return 0;
+      }
+
+      pos += de->size;
+    }
+  }
+
+  // No space available. We must allocate a new block.
+  unsigned newblk = fs->balloc();
+  if (!newblk)
+    return -ENOSPC;
+
+  set_pointer(meta.sz / blksz, newblk, 0);
+
+  unique_ptr<char[]> block = new char[blksz];
+  memset(block.get(), 0, blksz);
+
+  auto *entry = (direntry *) block.get();
+  entry->inum = inum;
+  entry->namelen = name.size();
+  entry->type = type;
+  entry->size = blksz;
+  memcpy(entry->name, name.c_str(), name.size());
+
+  fs->device->write(fs->offset(newblk), block.get(), blksz, 0);
+  meta.sz += blksz;
+  fs->update_meta(this);
+
+  return 0;
 }
 
 size_t ext2_inode::read(size_t offset, void *buf, size_t len, int flags) {
@@ -213,10 +276,15 @@ size_t ext2_inode::read(size_t offset, void *buf, size_t len, int flags) {
     read += chunk;
   }
 
+  size_t time = now();
+  meta.last_access_time = time;
   return read;
 }
 
 size_t ext2_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+  if (len == 0)
+    return 0;
+
   bool append = flags & O_APPEND;
   auto fs = static_cast<ext2*>(this->fs);
   offset = append ? meta.sz : offset;
@@ -232,8 +300,19 @@ size_t ext2_inode::write(size_t offset, const void *buf, size_t len, int flags) 
       return written;
     
     if (b == 0) {
-      // TODO: deal with sparse holes: allocate new blocks.
-      return written;
+      unsigned newblk = fs->balloc();
+      if (!newblk)
+        break;
+
+      // Attach block to inode.
+      set_pointer(pos / fs->blksz, newblk, flags);
+
+      // Zero the new block.
+      unique_ptr<char[]> zero(new char[fs->blksz]);
+      memset(zero.get(), 0, fs->blksz);
+      fs->device->write(fs->offset(newblk), zero.get(), fs->blksz, 0);
+
+      b = newblk;
     }
     size_t chunk = min(size - pos % size, end - pos);
 
@@ -244,11 +323,13 @@ size_t ext2_inode::write(size_t offset, const void *buf, size_t len, int flags) 
     pos += chunk;
     written += chunk;
   }
-  if (pos > meta.sz) {
+  if (pos > meta.sz)
     meta.sz = pos;
-    fs->update_meta(this);
-  }
-
+  
+  size_t time = now();
+  meta.last_write_time = time;
+  meta.last_access_time = time;
+  fs->update_meta(this);
   return written;
 }
 
@@ -273,6 +354,27 @@ ext2_inode::ftypeflags ext2_inode::fromtype(filetype ty) {
   }
 }
 
+int ext2_inode::to_dirent_type(filetype ty) {
+  switch (ty) {
+  case filetype::File:
+    return 1;
+  case filetype::Dir:
+    return 2;
+  case filetype::Link:
+    return 7;
+  case filetype::BlockDevice:
+    return 4;
+  case filetype::Socket:
+    return 6;
+  case filetype::CharDevice:
+    return 3;
+  case filetype::FIFO:
+    return 5;
+  default:
+    return 0;
+  }
+}
+
 ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
   switch (ty) {
   case File:
@@ -293,45 +395,31 @@ ext2_inode::filetype ext2_inode::totype(ftypeflags ty) {
     return filetype::Bad;
   }
 }
-
 int ext2_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;
-  // Find a new inode.
+
   auto fs = static_cast<ext2*>(this->fs);
   auto node = fs->get();
 
-  auto tcb = active();
-  auto pcb = tcb->pcb;
+  auto pcb = active()->pcb;
 
-  // Update the metadata.
   node->meta.type = fromtype(ty) | mode;
   node->meta.uid = pcb->uid;
   node->meta.gid = pcb->gid;
-  node->meta.lnkcnt = ty == Dir ? 2 : 1;
-
-  // Update the in-memory node.
-  node->mode = mode;
-  node->uid = pcb->uid;
-  node->gid = pcb->gid;
-  node->lnkcnt = node->meta.lnkcnt;
-
-  // Write back to the filesystem.
+  node->meta.lnkcnt = (ty == Dir) ? 2 : 1;
+  node->meta.create_time = now();
   fs->update_meta(node);
 
-  // Create a new directory entry here.
-  int size = roundup<4>(sizeof(direntry) + name.size());
-  unique_ptr entry((direntry *) vmalloc(size));
-  entry->namelen = name.size();
-  entry->size = size;
-  entry->inum = node->_inum;
-  // Copy the name into the flexible array at the end.
-  memcpy(entry->name, name.c_str(), name.size());
-  // Append a directory entry. write() will update metadata for us.
-  meta.lnkcnt++;
-  linked();
-  write(meta.sz, entry.get(), size, 0);
-  fs->update_meta(this);
+  // Metadata always get updated in add_dirent().
+  if (auto ret = add_dirent(name, node->_inum, to_dirent_type(ty)); ret)
+    return ret;
+
+  if (ty == Dir) {
+    node->add_dirent(".", node->_inum, to_dirent_type(Dir));
+    node->add_dirent("..", _inum, to_dirent_type(Dir));
+    meta.lnkcnt++;
+  }
   return 0;
 }
 
@@ -359,7 +447,7 @@ inode *ext2_inode::lookup(const string &name) {
       return nullptr;
 
     if (entry.inum != 0) {
-      unique_ptr<char[]> p = new char[entry.namelen + 1];
+      unique_ptr<char[]> p(new char[entry.namelen + 1]);
       fs->device->read(offset + sizeof(entry), p.get(), entry.namelen, 0);
       p[entry.namelen] = '\0';
       // For string comparison, we must make sure `p` is a null-terminated string.

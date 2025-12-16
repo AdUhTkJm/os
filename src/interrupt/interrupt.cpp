@@ -8,6 +8,7 @@
 #include "../proc/schedule.h"
 #include "../fs/ext2.h"
 #include "../fs/pipe.h"
+#include "../utils/log.h"
 
 // In nanosecond.
 extern int timer_tick;
@@ -15,7 +16,7 @@ extern int timer_tick;
 extern size_t realtime;
 
 // Returns current timestamp.
-size_t now() {
+size_t os::now() {
   return rdtime() * timer_tick + realtime;
 }
 
@@ -54,13 +55,13 @@ long syshandle(trapframe *ksp) { \
 #define ARGS5(a, b, c, d, e) reg_t a = a0, b = a1, c = a2, d = a3, e = a4;
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
-#define PRINT_FORMAT(x) "syscall " #x " (%d): "
-#define PRINT1(x, a) klog(PRINT_FORMAT(x) #a " = %p" "\n", syscall::x, a0);
-#define PRINT2(x, a, b) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p" "\n", syscall::x, a0, a1);
-#define PRINT3(x, a, b, c) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p" "\n", syscall::x, a0, a1, a2);
-#define PRINT4(x, a, b, c, d) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p" "\n", syscall::x, a0, a1, a2, a3);
-#define PRINT5(x, a, b, c, d, e) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p" "\n", syscall::x, a0, a1, a2, a3, a4);
-#define PRINT6(x, a, b, c, d, e, f) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p" "\n", syscall::x, a0, a1, a2, a3, a4, a5);
+#define PRINT_FORMAT(x) #x " (%d): "
+#define PRINT1(x, a) klog(PRINT_FORMAT(x) #a " = %p", syscall::x, a0);
+#define PRINT2(x, a, b) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p", syscall::x, a0, a1);
+#define PRINT3(x, a, b, c) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p", syscall::x, a0, a1, a2);
+#define PRINT4(x, a, b, c, d) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p", syscall::x, a0, a1, a2, a3);
+#define PRINT5(x, a, b, c, d, e) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p", syscall::x, a0, a1, a2, a3, a4);
+#define PRINT6(x, a, b, c, d, e, f) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p", syscall::x, a0, a1, a2, a3, a4, a5);
 
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
@@ -244,8 +245,8 @@ HANDLE(openat, dirfd, _path, flags, mode) {
     return -EFAULT;
   bool relative = (*path)[0] != '/';
   int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY)
-    : pcb->open_file(path->get(), O_RDONLY);
+    ? pcb->open_file_from(path->get(), dirfd, flags)
+    : pcb->open_file(path->get(), flags);
   return fd;
 }
 
@@ -905,6 +906,7 @@ HANDLE(rt_sigaction, sig, act, oldact) {
       .mask = sigact.sa_mask.val,
       .flags = sigact.sa_flags
     };
+    pcb->sigact[sig] = a;
   }
   return 0;
 }
@@ -946,6 +948,10 @@ HANDLE(socket, domain, type, protocol) {
 
 HANDLE(bind, fd, sockaddr, size) {
   return detail::bind(fd, (void *) sockaddr, size);
+}
+
+HANDLE(syslog, type, buf, size) {
+  return detail::syslog(type, (char *) buf, size);
 }
 
 SYSHANDLE_END
@@ -1019,7 +1025,7 @@ namespace os {
       auto trap = (trapframe *) pcb->ksp;
       trap->regs[8] = syshandle(trap); // a0
 #ifndef NO_SYSCALL_LOG
-      printk("return: %p\n", trap->regs[8]);
+      klog(" -> (%p)\n", trap->regs[8]);
 #endif
       break;
     }

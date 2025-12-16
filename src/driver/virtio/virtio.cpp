@@ -194,24 +194,27 @@ uint16_t block_device::indexof(const vq::desc &desc) {
 // The lba is the logical block address.
 int block_device::read_legacy(uint64_t lba, void *buffer) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
-  request_legacy req {
+  // We need to ensure that they lie in the same page, so we can't just put them on `ksp`.
+  // But it doesn't matter for `status` - one byte always works.
+  pa_t req = pframe();
+  pa_t buf = pframe();
+  *(request_legacy*) as_va(req) = {
     .type = 0, /* Read */
     .reserved = 0,
     .sector = lba,
   };
   
-  int status = 0xff;
-  char buf[512];
+  unsigned char status = 0xff;
 
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
   vq::desc &d3 = next_descriptor();
-  d1.addr = to_pa(&req);
+  d1.addr = req;
   d1.len = sizeof(request_legacy);
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = to_pa(&buf);
+  d2.addr = buf;
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
   d2.next = indexof(d3);
@@ -241,8 +244,10 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
       
       if (used.id == head) {
         if (status == 0)
-          memcpy(buffer, buf, 512);
+          memcpy(buffer, (void *) as_va(buf), 512);
 
+        pfree(req);
+        pfree(buf);
         return status;
       }
     }
@@ -251,15 +256,16 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
 
 int block_device::write_legacy(uint64_t lba, const void *buffer) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
-  request_legacy req {
+  pa_t req = pframe();
+  pa_t buf = pframe();
+  *(request_legacy*) as_va(req) = {
     .type = 1, /* Write */
     .reserved = 0,
     .sector = lba,
   };
   
   int status = 0xff;
-  char buf[512];
-  memcpy(buf, buffer, 512);
+  memcpy((void *) as_va(buf), buffer, 512);
 
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
@@ -288,6 +294,8 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   // Tell device that a new request has come.
   __asm__ volatile("fence" ::: "memory");
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
+  pfree(buf);
+  pfree(req);
   return status;
 }
 

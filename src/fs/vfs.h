@@ -5,26 +5,27 @@
 #include "../utils/stl/atomic.h"
 #include "../utils/stl/optional.h"
 
-#define O_RDONLY    00000000 /* Open for reading only */
-#define O_WRONLY    00000001 /* Open for writing only */
-#define O_RDWR      00000002 /* Open for reading and writing */
+#define O_RDONLY    0x00000000 /* Open for reading only */
+#define O_WRONLY    0x00000001 /* Open for writing only */
+#define O_RDWR      0x00000002 /* Open for reading and writing */
 
-#define O_CREAT     00000100 /* Create file if it does not exist */
-#define O_EXCL      00000200 /* Exclusive use flag (used with O_CREAT) */
-#define O_NOCTTY    00000400 /* If path is a terminal, do not make it the controlling terminal */
-#define O_TRUNC     00001000 /* Truncate size to 0 */
+#define O_CREAT     0x00000040 /* Create file if it does not exist */
+#define O_EXCL      0x00000080 /* Exclusive use flag (used with O_CREAT) */
+#define O_NOCTTY    0x00000100 /* If path is a terminal, do not make it the controlling terminal */
+#define O_TRUNC     0x00000200 /* Truncate size to 0 */
 
-#define O_APPEND    00002000 /* Writes append to the end of file */
-#define O_NONBLOCK  00004000 /* Non-blocking mode */
-#define O_SYNC      00010000 /* Write operations finish only when data and metadata are committed to disk */
-#define O_FSYNC     O_SYNC   /* Synonym for O_SYNC */
+#define O_APPEND    0x00000400 /* Writes append to the end of file */
+#define O_NONBLOCK  0x00000800 /* Non-blocking mode */
+#define O_SYNC      0x00001000 /* Write operations finish only when data and metadata are committed to disk */
+#define O_FSYNC     O_SYNC     /* Synonym for O_SYNC */
 
-#define O_ASYNC     00020000 /* Enable signal generation (SIGIO) when input or output becomes possible */
-#define O_DIRECT    00040000 /* Bypass buffer cache (Direct I/O) */
-#define O_DIRECTORY 00200000 /* Fail if the path is not a directory */
-#define O_NOFOLLOW  00400000 /* Do not follow symbolic links */
-#define O_CLOEXEC   02000000 /* Close file descriptor upon execve() */
-#define O_PATH     010000000 /* Create as a path */
+#define O_ASYNC     0x00002000 /* Enable signal generation (SIGIO) when input or output becomes possible */
+#define O_DIRECT    0x00004000 /* Bypass buffer cache (Direct I/O) */
+#define O_LARGEFILE 0x00008000 /* Allow >= 2GB files. Ignored on 64-bit */
+#define O_DIRECTORY 0x00010000 /* Fail if the path is not a directory */
+#define O_NOFOLLOW  0x00020000 /* Do not follow symbolic links */
+#define O_CLOEXEC   0x00080000 /* Close file descriptor upon execve() */
+#define O_PATH      0x00200000 /* Create as a path */
 
 #define FD_CLOEXEC  0x1
 
@@ -82,6 +83,15 @@ namespace os {
 
 class inode;
 class dentry;
+
+struct filemeta {
+  size_t atime; // Access time.
+  size_t mtime; // Modification time.
+  size_t ctime; // Creation time.
+};
+
+// Returns nanoseconds since 1970.1.1.
+size_t now();
 
 class fs {
 public:
@@ -320,6 +330,13 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
   size_t size() const override { return readlink()->size(); } \
+  long inum() const override { return (long) this; } \
+
+#define DIR_INODE_DEFAULT_IMPL \
+  size_t read(size_t, void *, size_t, int) override { return -EISDIR; } \
+  size_t write(size_t, const void *, size_t, int) override { return -EISDIR; } \
+  optional<string> readlink() override { return nullopt; } \
+  size_t size() const override { return 0; } \
   long inum() const override { return (long) this; } \
 
 }

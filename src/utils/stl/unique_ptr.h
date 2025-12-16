@@ -36,7 +36,7 @@ public:
     T* tmp = ptr;
     ptr = other.ptr;
     other.ptr = tmp;
-}
+  }
 
   void reset(T *p = nullptr) {
     delete ptr;
@@ -63,9 +63,9 @@ public:
   unique_ptr(unique_ptr<T> &&other): ptr(other.ptr) {
     other.ptr = nullptr;
   }
-  unique_ptr& operator=(unique_ptr<T>&& other) {
+  unique_ptr& operator=(unique_ptr<T> &&other) {
     if (this != &other) {
-      delete ptr;
+      delete[] ptr;
       ptr = other.ptr;
       other.ptr = nullptr;
     }
@@ -84,10 +84,10 @@ public:
     T* tmp = ptr;
     ptr = other.ptr;
     other.ptr = tmp;
-}
+  }
 
   void reset(T *p = nullptr) {
-    delete ptr;
+    delete[] ptr;
     ptr = p;
   }
 

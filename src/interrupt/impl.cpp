@@ -4,6 +4,7 @@
 #include "../fs/net.h"
 #include "../proc/schedule.h"
 #include "../driver/tty/tty.h"
+#include "../utils/log.h"
 
 namespace os::detail {
 
@@ -331,6 +332,43 @@ int bind(int fd, void *_addr, unsigned len) {
 
   printk("bind: not udp inode\n");
   return -EINVAL;
+}
+
+int syslog(int type, char *buf, unsigned long len) {
+  constexpr size_t logsize = sizeof(log.buf);
+  len = min(len, logsize);
+  char kbuf[logsize];
+  unsigned read = 0;
+  switch (type) {
+  case SYSLOG_ACTION_OPEN:
+  case SYSLOG_ACTION_CLOSE:
+    return 0;
+  case SYSLOG_ACTION_READ: {
+    read = log.read(kbuf, len);
+    copy_to_user(buf, kbuf, read);
+    return read;
+  }
+  case SYSLOG_ACTION_READ_ALL:
+  case SYSLOG_ACTION_READ_CLEAR: {
+    read = log.read_all(kbuf, len);
+    copy_to_user(buf, kbuf, read);
+    if (type == SYSLOG_ACTION_READ_ALL)
+      return read;
+    [[fallthrough]];
+  }
+  case SYSLOG_ACTION_CLEAR: {
+    synchronized _(log.lock);
+    log.head = log.tail = 0;
+    return read;
+  }
+  case SYSLOG_ACTION_SIZE_UNREAD:
+    return log.used();
+  case SYSLOG_ACTION_SIZE_BUFFER:
+    return logsize;
+  default:
+    printk("syslog: unknown functionality: %d\n", type);
+    return -EINVAL;
+  }
 }
 
 }

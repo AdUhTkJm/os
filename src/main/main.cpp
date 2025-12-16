@@ -6,6 +6,7 @@
 #include "../fs/devfs.h"
 #include "../fs/ext2.h"
 #include "../fs/tmpfs.h"
+#include "../fs/procfs.h"
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
 #include "../proc/schedule.h"
@@ -97,7 +98,8 @@ void get_real_time() {
 
 void main_high() {
   // Set up page table.
-  memset(__bss_begin, 0, __bss_end - __bss_begin);
+  // Don't directly subtract the arrays: that is UB.
+  memset(__bss_begin, 0, (pa_t) __bss_end - (pa_t) __bss_begin);
   auto pt_root = (pte_t *) as_va((pa_t) 0x80201000);
   punmap((va_t) 0x80000000ul, MAP_1GB, pt_root);
   // Clear the half of user-space to make sure there won't be bad entries when copying.
@@ -138,6 +140,7 @@ void main_high() {
   // Register known, mountable fs'es.
   vfs::record("ext2", ext2_creator);
   vfs::record("tmp", tmp_creator);
+  vfs::record("proc", procfs_creator);
   
   // Create an idle kernel process.
   pidmap.construct();

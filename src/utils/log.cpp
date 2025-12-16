@@ -1,5 +1,6 @@
 #include "log.h"
 #include "libc.h"
+#include "../mem/ptable.h"
 
 namespace {
 
@@ -11,7 +12,7 @@ void strcpy_r(char *&dst, const char *src) {
 }
 
 // This has to be outside `os` to match declaration.
-/*
+
 C int printk(const char *fmt, ...) {
   char buf[1024];
 
@@ -21,10 +22,9 @@ C int printk(const char *fmt, ...) {
   int len = os::vsprintf(buf, fmt, args);
 
   va_end(args);
-  sbi_console_write(len, buf);
+  sbi_console_write(len, os::to_pa(buf));
   return len;
 }
-*/
 
 namespace os {
 
@@ -151,6 +151,39 @@ void log_buffer::write(const char *data, unsigned len) {
     if (head == tail)
       tail = (tail + 1) % sizeof(buf);
   }
+}
+
+unsigned log_buffer::read(char *dst, unsigned len) {
+  unsigned read = 0;
+  synchronized _(lock);
+
+  while (log.tail != log.head && read < len) {
+    dst[read++] = log.buf[log.tail];
+    log.tail = (log.tail + 1) % sizeof(log.buf);
+  }
+  return read;
+}
+
+unsigned log_buffer::read_all(char *dst, unsigned len) {
+  unsigned read = 0;
+  synchronized _(lock);
+
+  unsigned pos = log.tail;
+  unsigned available = used();
+
+  while (available && read < len) {
+    dst[read++] = log.buf[pos];
+    pos = (pos + 1) % sizeof(log.buf);
+    available--;
+  }
+
+  return read;
+}
+
+unsigned log_buffer::used() {
+  if (log.head >= log.tail)
+    return log.head - log.tail;
+  return sizeof(log.buf) - (log.tail - log.head);
 }
 
 }

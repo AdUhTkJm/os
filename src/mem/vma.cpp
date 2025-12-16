@@ -85,7 +85,7 @@ void map_single(void *va, pte_t *root) {
 
   if (read > 0) {
     SeekGuard guard(vma.backup, vma.offset + off);
-    int rd = vma.backup->read((void *) va_page, read);
+    vma.backup->read((void *) va_page, read);
   }
 
   if (read < PAGE_SIZE)

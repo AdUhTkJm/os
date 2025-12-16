@@ -38,8 +38,8 @@ typedef struct {
 
 C sbiret_t sbicall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7);
 
-C inline sbiret_t sbi_console_write(reg_t len, const char *s) {
-  return sbicall(len, (reg_t) s, 0, 0, 0, 0, SBI_DBCN_CONSOLE_WRITE);
+C inline sbiret_t sbi_console_write(reg_t len, reg_t s) {
+  return sbicall(len, s, 0, 0, 0, 0, SBI_DBCN_CONSOLE_WRITE);
 }
 
 C inline sbiret_t sbi_console_write_byte(reg_t byte) {

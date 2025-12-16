@@ -16,9 +16,9 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
     uint16_t type; // file type + permission
     uint16_t uid;
     uint32_t sz;
-    uint32_t last_access_time;
-    uint32_t create_time;
-    uint32_t last_write_time;
+    uint32_t last_access_time; // atime
+    uint32_t create_time;      // ctime
+    uint32_t last_write_time;  // mtime
     uint32_t delete_time;
     uint16_t gid;
     uint16_t lnkcnt;
@@ -52,7 +52,10 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
   size_t locate(size_t byte, int flags);
 
   // Set the index'th block in the pointer table to value `block`.
-  result set_pointer(unsigned index, unsigned value, int flags);
+  int set_pointer(unsigned index, unsigned value, int flags);
+
+  // Adds a directory entry.
+  int add_dirent(const string &name, unsigned inum, unsigned char type);
 public:
   using inode_impl::inode_impl;
   ext2_inode(class fs *fs, const struct meta &meta, long inum);
@@ -65,6 +68,7 @@ public:
   };
   static ftypeflags fromtype(inode::filetype ty);
   static inode::filetype totype(ftypeflags ty);
+  static int to_dirent_type(inode::filetype ty);
 
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t offset, const void *buf, size_t len, int flags) override;

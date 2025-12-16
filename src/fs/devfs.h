@@ -44,9 +44,10 @@ public:
 class devroot : public inode_impl<devroot> {
   hashmap<string, inode*> children;
 public:
+  DIR_INODE_DEFAULT_IMPL;
+
+  // Is it really read-only?
   devroot(class fs *fs);
-  size_t read(size_t, void *, size_t, int) override { return 0; }
-  size_t write(size_t, const void *, size_t, int) override { return -EROFS; }
   int create(const string &, inode::filetype, int) override { return -EROFS; }
   int unlink(const string &) override { return -EROFS; }
   inode *lookup(const string &name) override {
@@ -59,10 +60,6 @@ public:
       result.push_back({ .inum = (long) inode, .name = name, .ty = inode->type });
     return result;
   }
-  optional<string> readlink() override { return nullopt; }
-
-  size_t size() const override { return 0; }
-  long inum() const override { return (long) this; }
 
   // Special registration function.
   void record(const string &name, inode *node) {

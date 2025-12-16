@@ -13,7 +13,7 @@ constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 // The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
 // When we enable DEBUG_MEMORY, the meta becomes incredibly large.
 #if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
-constexpr va_t MAX_PA_SIZE = 32_mb;
+constexpr va_t MAX_PA_SIZE = 128_mb;
 #else
 constexpr va_t MAX_PA_SIZE = 2_gb;
 #endif
@@ -189,7 +189,9 @@ void mark_reserved() {
 namespace os {
 
 void pincref(pa_t p) {
-  meta[p / PAGE_SIZE].refcnt++;
+  size_t pos = (p - physbegin) / PAGE_SIZE;
+  assert(pos < sizeof(meta) / sizeof(pframe_meta));
+  meta[pos].refcnt++;
 }
 
 pa_t pframe() {
@@ -215,6 +217,7 @@ pa_t pframe() {
   }
 
   auto pos = (pa - physbegin) / PAGE_SIZE;
+  assert(pos < sizeof(meta) / sizeof(pframe_meta));
   meta[pos].refcnt++;
 #if defined(DEBUG_MEMORY)
   memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
@@ -234,6 +237,7 @@ void pfree(pa_t p) {
   assert(p % PAGE_SIZE == 0);
   
   auto pos = (p - physbegin) / PAGE_SIZE;
+  assert(pos < sizeof(meta) / sizeof(pframe_meta));
 #if defined(DEBUG_MEMORY)
   if (meta[pos].refcnt == 0) {
     printk("%p double-freed\n", p);
@@ -271,6 +275,7 @@ pa_t pmalloc(int pagecnt) {
   if (index == -1ul)
     panic("pmalloc: out of memory");
   pmmap.set(index, index + pagecnt);
+  assert(index + pagecnt < sizeof(meta) / sizeof(pframe_meta));
   for (size_t i = index; i < index + pagecnt; i++)
     meta[i].refcnt++;
   return index * PAGE_SIZE + physbegin;

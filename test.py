@@ -360,7 +360,7 @@ f"""
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
 \
 -device virtio-net-device,netdev=net -netdev user,id=net \
--rtc base=utc
+-rtc base=utc \
 {asm} {gdb}
 """
   ,shell=True)
