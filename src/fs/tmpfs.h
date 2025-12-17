@@ -13,6 +13,8 @@ class tmpfs_inode : public os::inode_impl<tmpfs_inode> {
   atomic<unsigned> lnkcnt;
   inode::meta meta;
 public:
+  META_DEFAULT_IMPL;
+  
   tmpfs_inode(class fs *fs, int uid, int gid, int mode, filetype ty): inode_impl(fs, uid, gid, mode, ty) { }
 
   size_t read(size_t offset, void* buf, size_t len, int flags) override;
@@ -22,8 +24,7 @@ public:
   int unlink(const string &name) override;
   inode *lookup(const string &name) override;
   os::vector<item> list() override;
-  optional<string> readlink() override { return nullopt; }
-  inode::meta get_meta() override { return meta; }
+  optional<string> readlink() override { return nullopt; }\
 
   size_t size() const override { return data.size(); }
   // Note that `data.data()` will change, so we can't use it.

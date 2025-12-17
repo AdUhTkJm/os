@@ -257,7 +257,7 @@ int faccessat(int dirfd, const char *path, int mode) {
     ? pcb->open_file_from(path, dirfd, O_PATH)
     : pcb->open_file(path, O_PATH);
 
-  if (!fd)
+  if (fd < 0)
     return fd;
 
   if (mode == F_OK)

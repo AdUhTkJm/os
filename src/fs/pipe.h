@@ -22,6 +22,7 @@ public:
   short poll(unsigned short) override;
   // Pipes do not support things like `fstatat`.
   meta get_meta() override { return meta(0, 0, 0); }
+  void set_meta(const inode::meta &) override {}
   void onclose(int flags) override;
 
   void incread() { readers++; }

@@ -3,10 +3,14 @@
 
 namespace os {
 
+bool vfs::path_comparator::operator()(const pair<dentry *, string> &l, const pair<dentry *, string> &r) const {
+  return l.second == r.second && l.first->same(r.first);
+}
+
 static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> vfs::creators;
 spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
-static_storage<os::hashmap<pair<dentry*, string>, dentry*>> vfs::dcache;
+static_storage<os::hashmap<pair<dentry*, string>, dentry*, detail::fnv_1a<pair<dentry *, string>>, vfs::path_comparator>> vfs::dcache;
 static_storage<os::vector<fs*>> vfs::tosync;
 
 inode *file::node() {
@@ -145,15 +149,15 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
         return -EPERM;
 
     auto key = pair { cur, name };
-    if (dcache->count(key))
-      cur = (*dcache)[key];
+    if (auto it = dcache->find(key); it != dcache->end())
+      cur = (*it).second;
     else {
       auto inode = cur->node->lookup(name);
       if (!inode)
         return -ENOENT;
 
       dentry *child = new dentry(name, inode, cur->belong, cur);
-      (*dcache)[key] = child;
+      dcache->insert(key, child);
       cur = child;
 
       {
@@ -267,8 +271,10 @@ int vfs::chroot(dentry *entry) {
   return 0;
 }
 
-void vfs::invalidate(inode *node, const string &name) {
-  (void) node; (void) name;
+void vfs::invalidate(dentry *entry, const string &name) {
+  // We don't use negative entries (i.e. explicit noent), because it would be hard to determine when to put it back,
+  // when the same file is created again.
+  dcache->erase({ entry, name });
 }
 
 file *vfs::open(const string &path, int flags) {
@@ -371,6 +377,18 @@ file::file(dentry *entry, int flags): entry(entry), offset(0), flags(flags) {
   refcnt = 0;
   node()->ref();
 }
+
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
+void file::ondrop() {
+  int cnt = refcnt.load();
+  printk("dropped %s, refcnt: %d -> %d\n", entry->path().c_str(), cnt, cnt - 1);
+}
+
+void file::onref() {
+  int cnt = refcnt.load();
+  printk("referred %s, refcnt: %d -> %d\n", entry->path().c_str(), cnt, cnt + 1);
+}
+#endif
 
 string dentry::path() const {
   string result = name;

@@ -137,16 +137,10 @@ string tty::readline() {
       backspace();
       break;
 
-    case 0x1b: // ESC
-      state = escape1;
-      break;
-
-    case '[':
-      if (state == escape1) {
-        state = escape2;
-        continue;
-      }
-      break;
+    // This behaviour is currently buggy. Don't know why.
+    // case 0x1b: // ESC
+    //   state = escape1;
+    //   break;
 
     default:
       if (state == escape0) {

@@ -72,20 +72,29 @@ class ext_inode : public os::inode_impl<ext_inode> {
   };
 
   friend class ext;
+  unique_ptr<char[]> read_block(unsigned long block);
+  void write_block(unsigned long block, const char *data);
+  int flags;
+
   // Finds the block number of this byte.
   // There might be some sparse holes, which would mean zero.
-  size_t locate_ext2(size_t byte, int flags);
-  size_t locate_ext4(size_t byte, int flags);
+  size_t locate_ext2(size_t byte);
+  size_t locate_ext4(size_t byte);
 
-  size_t locate(size_t byte, int flags);
+  size_t locate(size_t byte);
 
   // Set the index'th block in the pointer table to value `block`.
-  int set_pointer_ext2(unsigned index, size_t value, int flags);
-  int set_pointer_ext4(unsigned index, size_t value, int flags);
+  int set_pointer_ext2(unsigned index, size_t value);
+  int set_pointer_ext4(unsigned index, size_t value);
 
-  int set_pointer(unsigned index, size_t value, int flags);
+  int set_pointer(unsigned index, size_t value);
 
-  vector<extent_header*> find_path(unsigned index, int flags);
+  vector<unsigned long> find_path(unsigned index);
+  // Split node at level `level`, by inserting an extent `ext` into it.
+  expected<extent_idx> split(const vector<unsigned long> &path, int level, int pos, const extent &ext);
+  int insert_extent(const vector<unsigned long> &path, int level, int pos, const extent &ext);
+
+  unsigned insertion_pos(extent_idx *indices, unsigned cnt, size_t logical);
 
   // Adds a directory entry.
   int add_dirent(const string &name, unsigned inum, unsigned char type);
@@ -113,6 +122,7 @@ public:
   vector<item> list() override;
   optional<string> readlink() override;
   inode::meta get_meta() override;
+  void set_meta(const inode::meta &meta) override;
 
   size_t size() const override { return meta.sz; }
   long inum() const override { return _inum; }
@@ -214,6 +224,8 @@ class ext : public fs {
   os::vector<block_group> gdt;
   inode *device;
   os::crc32c<0x1edc6f41> crc;
+  // This cannot become LRU; we hope each inode file has a single instance in memory.
+  os::hashmap<size_t, ext_inode*> nodecache;
 
   // Configuration.
   bool extent;
@@ -242,6 +254,9 @@ class ext : public fs {
   
   // Allocate a new block.
   size_t balloc();
+  void free_inode(size_t inum);
+  void free_block(size_t block);
+  void free_blocks(ext_inode *node, size_t block, int level);
   friend class ext_inode;
 public:
   ext(inode *device);

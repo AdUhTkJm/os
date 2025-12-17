@@ -62,7 +62,7 @@ public:
       }
     }
   public:
-    iterator(hashmap<K, V> *parent, size_t i): parent(parent), i(i) {
+    iterator(hashmap<K, V, Hash, Eq> *parent, size_t i): parent(parent), i(i) {
       if (i < parent->cap && parent->table[i].state != Occupied)
         advance();
     }
@@ -71,7 +71,6 @@ public:
     iterator &operator--() { retract(); return *this; }
     iterator operator--(int) { auto it = *this; retract(); return it; }
     pair<K, V&> operator*() { return { parent->table[i].key, parent->table[i].value }; }
-    pair<K, V&> operator->() { return {}; }
     bool operator==(const iterator &other) const { return i == other.i; }
     bool operator!=(const iterator &other) const { return i != other.i; }
   };

@@ -51,6 +51,7 @@ public:
   optional<string> readlink() override { return nullopt; }
   // TODO: In fact we should read from disk image.
   meta get_meta() override { return meta(0, 0, 0); }
+  void set_meta(const meta &) override {}
 
   size_t size() const override { return sz; }
   long inum() const override { return (long) data; }

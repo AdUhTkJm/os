@@ -57,6 +57,7 @@ void process_file_table::clear() {
   for (auto [_, f] : open)
     f->close();
   open.clear();
+  desc.clear();
 }
 
 process_file_table::process_file_table(const process_file_table &other): open(other.open), desc(other.desc) {
@@ -79,13 +80,13 @@ void pcb_t::clear() {
   vma.clear();
 }
 
-int pcb_t::open_file(const string &path, int flags, int mode) {
-  return open_file_from(path, pwd, flags, mode);
+int pcb_t::open_file(const string &path, int flags, int mode, inode::filetype type) {
+  return open_file_from(path, pwd, flags, mode, type);
 }
 
-int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode) {
+int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode, inode::filetype type) {
   if (dirfd == AT_FDCWD)
-    return open_file_from(path, pwd, flags, mode);
+    return open_file_from(path, pwd, flags, mode, type);
   
   if (!ftbl->count(dirfd))
     return -EBADF;
@@ -94,16 +95,16 @@ int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode) {
   if (entry->node->type != inode::Dir)
     return -ENOTDIR;
 
-  return open_file_from(path, entry, flags, mode);
+  return open_file_from(path, entry, flags, mode, type);
 }
 
-int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mode) {
+int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mode, inode::filetype type) {
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
   bool write = can_write(flags);
   bool read = can_read(flags);
   if (flags & O_PATH)
-    write = read = create = false;
+    write = read = false;
 
   auto maybe_dentry = vfs->lookup_from(path, relbase);
   if (!maybe_dentry) {
@@ -116,7 +117,7 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
       return maybe_parent;
 
     auto node = (*maybe_parent)->node;
-    if (int err = node->create(basename(path), inode::File, mode); err != 0)
+    if (int err = node->create(basename(path), type, mode); err != 0)
       return err;
 
     return open_file(path, flags & ~O_CREAT);
@@ -487,8 +488,6 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   pcb->vma.clear();
   auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
   if (!auxv) {
-    printk("execve: error: %d\n", auxv.error());
-    
     // Do the rollback.
     pcb->vma = oldvma;
     return auxv;

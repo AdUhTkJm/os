@@ -116,6 +116,43 @@ HANDLE(read, fd, _buf, len) {
   return ret;
 }
 
+HANDLE(readv, fd, iov, cnt) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  if (cnt <= 0)
+    return -EINVAL;
+
+  auto iovecs = copy_from_user((void*) iov, cnt * sizeof(iovec));
+  if (!iovecs)
+    return -EFAULT;
+
+  auto iovk = (iovec *) iovecs->get();
+  long total = 0;
+  for (int i = 0; i < cnt; i++) {
+    const auto &v = iovk[i];
+
+    if (v.iov_len == 0)
+      continue;
+
+    // Copy a single buffer.
+    unique_ptr<char[]> buf(new char[v.iov_len]);
+    ssize_t n = file->read(buf.get(), v.iov_len);
+    if (n <= 0)
+      return total ? total : n;
+
+    copy_to_user(v.iov_base, buf.get(), v.iov_len);
+
+    total += n;
+    // If we have a partial read, then we stop immediately.
+    if ((size_t) n < v.iov_len)
+      break;
+  }
+
+  return total;
+}
+
 HANDLE(write, fd, _buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
@@ -143,9 +180,10 @@ HANDLE(writev, fd, iov, cnt) {
   auto iovk = (iovec *) iovecs->get();
   long total = 0;
   for (int i = 0; i < cnt; i++) {
-    auto &v = iovk[i];
+    const auto &v = iovk[i];
 
-    if (v.iov_len == 0) continue;
+    if (v.iov_len == 0)
+      continue;
 
     // Copy a single buffer.
     auto buf = copy_from_user(v.iov_base, v.iov_len);
@@ -172,16 +210,11 @@ HANDLE(mkdirat, dirfd, _path, mode) {
 
   const char *path = pathp->get();
   bool relative = path[0] != '/';
-  if (pcb->vfs->lookup(path))
-    return -EEXIST;
-
-  auto dir = dirname(path);
+  int flags = O_PATH | O_CREAT | O_EXCL;
   int fd = relative
-    ? pcb->open_file_from(dir, dirfd, O_RDONLY)
-    : pcb->open_file(dir, O_RDONLY);
-  
-  auto file = pcb->ftbl->at(fd);
-  return file->node()->create(basename(path), inode::Dir, mode & ~pcb->umask);
+    ? pcb->open_file_from(path, dirfd, flags, mode & ~pcb->umask, inode::Dir)
+    : pcb->open_file(path, flags, mode & ~pcb->umask, inode::Dir);
+  return fd < 0 ? fd : 0;
 }
 
 HANDLE(mknodat, dirfd, _path, mode, dev) {
@@ -259,6 +292,69 @@ HANDLE(faccessat, dirfd, _path, mode) {
   if (!path)
     return -EFAULT;
   return detail::faccessat(dirfd, path->get(), mode);
+}
+
+HANDLE(utimensat, dirfd, _path, times, flags) {
+  bool follow = !(flags & AT_SYMLINK_NOFOLLOW);
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  
+  bool relative = (*path)[0] != '/';
+  bool emptypath = flags & AT_EMPTY_PATH;
+  file *file = nullptr;
+  inode *node;
+  if (!emptypath) {
+    int fd = relative
+      ? pcb->open_file_from(path->get(), dirfd, O_PATH)
+      : pcb->open_file(path->get(), O_PATH);
+    printk("fd = %d\n", fd);
+    if (fd < 0)
+      return fd;
+
+    file = pcb->ftbl->at(fd);
+    if (!file)
+      return -EBADF;
+    node = file->node();
+  } else if (dirfd != AT_FDCWD) {
+    file = pcb->ftbl->at(dirfd);
+    if (!file)
+      return -EBADF;
+    node = file->node();
+  } else node = pcb->pwd->node;
+
+  if (!writable(pcb->uid, pcb->gid, node))
+    return -EACCES;
+
+  auto now = os::now();
+  size_t atime = now, mtime = now;
+  auto meta_before = node->get_meta();
+  bool changed = false;
+  if (times != 0) {
+    auto timep = copy_from_user((void*) times, sizeof(timespec) * 2);
+    if (!timep)
+      return -EFAULT;
+    auto time = (timespec *) timep->get();
+    if (time[0].tv_nsec >= long(1_s) || time[1].tv_nsec >= long(1_s))
+      return -EINVAL;
+
+    if (time[0].tv_nsec == UTIME_OMIT)
+      atime = meta_before.atime;
+    else if (time[0].tv_nsec != UTIME_NOW)
+      changed = true, atime = time[0].tv_nsec + time[0].tv_sec * 1_s;
+
+    if (time[1].tv_nsec == UTIME_OMIT)
+      mtime = meta_before.mtime;
+    else if (time[1].tv_nsec != UTIME_NOW)
+      changed = true, mtime = time[1].tv_nsec + time[1].tv_sec * 1_s;
+  }
+
+  if (changed && node->uid != pcb->uid)
+    return -EACCES;
+
+  inode::meta meta(atime, now, mtime);
+  node->set_meta(meta);
+  return 0;
 }
 
 HANDLE(umask, mask) {
@@ -370,6 +466,59 @@ HANDLE(fstat, fd, buf) {
 HANDLE(sync, _) {
   for (auto fs : vfs::to_sync())
     fs->sync();
+  return 0;
+}
+
+HANDLE(fsync, fd) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  file->node()->fs->sync();
+  return 0;
+}
+
+HANDLE(fdatasync, fd) {
+  // TODO: We still flush the entire file system.
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  file->node()->fs->sync();
+  return 0;
+}
+
+HANDLE(unlinkat, dirfd, _path, flags) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+
+  bool relative = (*path)[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(path->get(), dirfd, O_PATH)
+    : pcb->open_file(path->get(), O_PATH);
+  if (fd < 0)
+    return fd;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  // We cannot unlink a directory.
+  if (file->node()->type == inode::Dir)
+    return -EISDIR;
+
+  auto dir = file->entry->parent->node;
+  if (!writable(pcb->uid, pcb->gid, dir))
+    return -EACCES;
+
+  // unlink() will check whether `dir` is indeed a dir.
+  int ret = dir->unlink(file->entry->name);
+  if (ret < 0)
+    return ret;
+
+  // Forget it in dcache.
+  vfs::invalidate(file->entry->parent, file->entry->name);
   return 0;
 }
 

@@ -74,23 +74,28 @@ protected:
 public:
   void drop() {
 #if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
-    printk("%p dropped, refcnt: %d\n", this, refcnt - 1);
-    if (!--refcnt)
-      printk("recycled\n"), delete this;
-#else
+    ondrop();
+#endif
     if (!--refcnt)
       delete this;
-#endif
   }
 
   void ref() {
 #if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
-    printk("%p referred, refcnt: %d\n", this, refcnt + 1);
+    onref();
 #endif
     refcnt++;
   }
 
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
+  virtual void ondrop() {}
+  virtual void onref() {}
+  virtual ~shared() {}
+#endif
+
+#ifndef NDEBUG
   int inspect_refcnt() { return refcnt; }
+#endif
 };
 
 }

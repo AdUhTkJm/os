@@ -12,11 +12,11 @@ class filesystems : public inode_impl<filesystems> {
   inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   filesystems(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
   size_t read(size_t, void *, size_t, int) override;
   size_t write(size_t, const void *, size_t, int) override { return -EPERM; }
-  inode::meta get_meta() override { return meta; }
 };
 
 }
@@ -26,14 +26,14 @@ class procroot : public inode_impl<procroot> {
   inode::meta meta;
 public:
   DIR_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   procroot(class fs *fs);
   // It is not allowed to create/unlink.
-  int create(const string &, filetype, int) override { return -EPERM; }
-  int unlink(const string &) override { return -EPERM; }
+  int create(const string &, filetype, int) override { return -EACCES; }
+  int unlink(const string &) override { return -EACCES; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
-  inode::meta get_meta() override { return meta; }
 };
 
 // An empty FS that does nothing.

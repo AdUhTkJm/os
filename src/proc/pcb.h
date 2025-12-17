@@ -64,6 +64,7 @@ public:
   process_file_table() = default;
   process_file_table(const process_file_table &);
   process_file_table &operator=(const process_file_table &);
+  ~process_file_table() { clear(); }
   
   int allocate(file *f, int fd = -1);
   // The semantics is like F_DUPFD, where `fd` isn't exact as in dup3, but a start-to-search point.
@@ -143,9 +144,9 @@ struct pcb_t {
   // before destruction, and then put itself to a zombie state.
   void clear();
 
-  int open_file_from(const string &name, dentry *relbase, int flags, int mode = 0);
-  int open_file_from(const string &name, int dirfd, int flags, int mode = 0);
-  int open_file(const string &name, int flags, int mode = 0);
+  int open_file_from(const string &name, dentry *relbase, int flags, int mode, inode::filetype type);
+  int open_file_from(const string &name, int dirfd, int flags, int mode = 0, inode::filetype type = inode::File);
+  int open_file(const string &name, int flags, int mode = 0, inode::filetype type = inode::File);
   int close_file(int fd);
 
   void send_signal(int sig);

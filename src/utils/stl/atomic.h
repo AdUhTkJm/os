@@ -11,25 +11,39 @@ class atomic {
   mutable spinlock lock;
   T t{};
 
-  T load() {
-    synchronized syn(lock);
+public:
+  T load() const {
+    synchronized _(lock);
     return t;
   }
 
   void store(T t) {
-    synchronized syn(lock);
+    synchronized _(lock);
     this->t = t;
   }
-public:
+
   /* implicit */ atomic(T t): t(t) { }
   atomic() {}
+  atomic(const atomic&) = delete;
+  atomic& operator=(const atomic&) = delete;
+  atomic& operator=(T t) {
+    store(t);
+    return *this;
+  }
 
-  operator T() { return load(); }
+  operator T() const { return load(); }
 
-  T fetch_add(T t) {
-    synchronized syn(lock);
+  T fetch_add(T v) {
+    synchronized _(lock);
     auto old = t;
-    this->t += t;
+    t += v;
+    return old;
+  }
+
+  T fetch_sub(T v) {
+    synchronized _(lock);
+    T old = t;
+    t -= v;
     return old;
   }
 
@@ -44,23 +58,23 @@ public:
   }
 
   T operator++() {
-    synchronized syn(lock);
+    synchronized _(lock);
     return ++t;
   }
 
   T operator++(int) {
-    synchronized syn(lock);
+    synchronized _(lock);
     auto before = t++;
     return before;
   }
 
   T operator--() {
-    synchronized syn(lock);
+    synchronized _(lock);
     return --t;
   }
 
   T operator--(int) {
-    synchronized syn(lock);
+    synchronized _(lock);
     auto before = t--;
     return before;
   }

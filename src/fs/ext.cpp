@@ -1,6 +1,25 @@
 #include "ext.h"
 #include "../proc/schedule.h"
 
+namespace {
+
+template<typename T>
+void insert(T *arr, uint16_t &size, int pos, const T &ent) {
+  for (int i = size; i >= pos; i++)
+    arr[i + 1] = arr[i];
+  arr[pos] = ent;
+  size++;
+}
+
+template<typename T>
+void remove_entry(T *arr, uint16_t &size, int pos) {
+  for (int i = pos; i < size; i++)
+    arr[i] = arr[i + 1];
+  size--;
+}
+
+}
+
 namespace os {
 
 static_storage<ext> ext2fs;
@@ -13,7 +32,7 @@ ext_inode::ext_inode(class fs *fs, const struct meta &meta, long inum):
 ext_inode::ext_inode(class fs *fs, long inum):
   inode_impl(fs, -1, -1, 0000, filetype::Bad), meta(), _inum(inum) { }
 
-size_t ext_inode::locate_ext2(size_t byte, int flags) {
+size_t ext_inode::locate_ext2(size_t byte) {
   auto fs = static_cast<ext*>(this->fs);
   auto block_size = fs->blksz;
   size_t cnt = byte / block_size;
@@ -68,10 +87,27 @@ unsigned ext_inode::crc(const extent_header *extent_block) const {
   return fs->crc(extent_block, fs->blksz - 12, hash);
 }
 
-size_t ext_inode::locate_ext4(size_t byte, int flags) {
+unique_ptr<char[]> ext_inode::read_block(unsigned long block) {
+  auto fs = static_cast<ext*>(this->fs);
+  unique_ptr<char[]> buf(new char[fs->blksz]);
+  fs->device->read(fs->offset(block), buf.get(), fs->blksz, flags);
+  return buf;
+}
+
+void ext_inode::write_block(unsigned long block, const char *data) {
+  auto fs = static_cast<ext*>(this->fs);
+  fs->device->write(fs->offset(block), data, fs->blksz, flags);
+}
+
+size_t ext_inode::locate_ext4(size_t byte) {
   auto fs = static_cast<ext*>(this->fs);
   uint32_t tgt = byte / fs->blksz;
-  auto header = find_path(tgt, flags).back();
+  auto block = find_path(tgt).back();
+  extent_header *header;
+  if (block != 0) {
+    auto buf = read_block(block);
+    header = (extent_header *) buf.get();
+  } else header = (extent_header *) meta.directptr;
   extent* ext = (extent*) (header + 1);
   
   for (int i = 0; i < header->entries; i++) {
@@ -86,13 +122,22 @@ size_t ext_inode::locate_ext4(size_t byte, int flags) {
   return 0;
 }
 
-size_t ext_inode::locate(size_t byte, int flags) {
-  if (meta.flags & EXT4_INODE_EXTENTS)
-    return locate_ext4(byte, flags);
-  return locate_ext2(byte, flags);
+unsigned ext_inode::insertion_pos(extent_idx *indices, unsigned cnt, size_t logical) {
+  // TODO: binary search?
+  for (int i = cnt - 1; i >= 0; i--) {
+    if (indices[i].logical <= logical)
+      return i + 1;
+  }
+  return -1;
 }
 
-int ext_inode::set_pointer_ext2(unsigned index, size_t value, int flags) {
+size_t ext_inode::locate(size_t byte) {
+  if (meta.flags & EXT4_INODE_EXTENTS)
+    return locate_ext4(byte);
+  return locate_ext2(byte);
+}
+
+int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
   auto fs = static_cast<ext*>(this->fs);
   unsigned block_size = fs->blksz;
   auto size = block_size / sizeof(int);
@@ -209,14 +254,15 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value, int flags) {
   return -ENOSPC;
 }
 
-vector<ext_inode::extent_header*> ext_inode::find_path(unsigned tgt, int flags) {
-  vector<extent_header*> path;
+vector<unsigned long> ext_inode::find_path(unsigned tgt) {
+  vector<unsigned long> path;
   auto fs = static_cast<ext*>(this->fs);
   auto header = (extent_header *) meta.directptr;
   unique_ptr<char[]> buf(new char[fs->blksz]);
+  uint64_t block = 0;
 
   for (auto idx = (extent_idx *) (header + 1);;) {
-    path.push_back(header);
+    path.push_back(block);
     if (header->magic != 0xf30a)
       // Filesystem corrupted.
       panic("ext4: corrupted headers");
@@ -237,7 +283,7 @@ vector<ext_inode::extent_header*> ext_inode::find_path(unsigned tgt, int flags) 
       return path;
 
     // The new block still starts with a header, and followed by indices.
-    auto block = ((unsigned long) node->leaf_hi << 32) + node->leaf_lo;
+    block = ((unsigned long) node->leaf_hi << 32) + node->leaf_lo;
     fs->device->read(fs->offset(block), buf.get(), fs->blksz, flags);
     header = (extent_header*) buf.get();
     idx = (extent_idx*) (header + 1);
@@ -253,11 +299,145 @@ vector<ext_inode::extent_header*> ext_inode::find_path(unsigned tgt, int flags) 
   }
 }
 
-// TODO: This only handles very limited parts.
-int ext_inode::set_pointer_ext4(unsigned index, size_t value, int flags) {
+expected<ext_inode::extent_idx> ext_inode::split(const vector<unsigned long> &path, int level, int pos, const extent &ext) {
+  auto fs = static_cast<class ext*>(this->fs);
+  assert(path[level] != 0);
+  auto blockbuf = read_block(path[level]);
+  auto old = (extent_header *) blockbuf.get();
+
+  uint64_t b = fs->balloc();
+  if (b == -1ul)
+    return -ENOSPC;
+
+  unique_ptr<char[]> buf(new char[fs->blksz]);
+
+  // Allocate a new header.
+  auto h = (extent_header *) buf.get();
+  // Leave some space for CRC.
+  unsigned space = fs->blksz - sizeof(extent_header);
+  int mid = old->entries / 2;
+  if (fs->do_crc)
+    space -= 12;
+
+  h->magic = 0xf30a;
+  h->max = space / sizeof(extent);
+  h->depth = 0;
+  h->entries = old->entries - mid;
+  h->gen = old->gen;
+  old->entries = mid;
+
+  auto old_ext = (extent *) (old + 1);
+  auto new_ext = (extent *) (h + 1);
+
+  // Split half of entries into the new header.
+  memcpy(new_ext, &old_ext[mid], (old->entries - mid) * sizeof(extent));
+
+  // Calculate CRC for the new leaf block if required.
+  if (fs->do_crc)
+    *(unsigned*) ((char *) h + space) = crc(h);  
+
+  // Insert the given entry, `ext`.
+  if (pos < mid)
+    insert(old_ext, old->entries, pos, ext);
+  else
+    insert(new_ext, h->entries, pos - mid, ext);
+
+  // Write back.
+  fs->device->write(fs->offset(path[level]), old, fs->blksz, 0);
+  fs->device->write(fs->offset(b), h, fs->blksz, 0);
+
+  // Now we must insert a new record into parent's index entry,
+  // that points to the newly allocated extent.
+  extent_idx out {
+    .logical = new_ext[0].logical,
+    .leaf_lo = (unsigned) b,
+    .leaf_hi = (uint16_t) (b >> 32),
+    .__pad = 0,
+  };
+  return out;
+}
+
+int ext_inode::insert_extent(const vector<unsigned long> &path, int level, int pos, const extent &ext) {
+  // Split leaf.
+  auto outp = split(path, level, pos, ext);
+  if (!outp)
+    return outp;
+  auto out = *outp;
+
+  // Insert the entry into parents.
+  for (int i = int(path.size()) - 2; i >= 1; i--) {
+    auto parent = path[i];
+    auto buf = read_block(parent);
+    auto header = (extent_header*) buf.get();
+    auto indices = (extent_idx *) (header + 1);
+    unsigned pos = insertion_pos(indices, header->entries, out.logical);
+
+    if (header->entries != header->max) {
+      insert(indices, header->entries, pos, out);
+      write_block(parent, buf.get());
+      return 0;
+    }
+
+    // Now we must also split header.
+    // Since the sizes and paddings are equal, we can reuse the same function.
+    static_assert(sizeof(extent) == sizeof(extent_idx));
+    // Remember that copy constructor of `expected` is disabled.
+    auto r = split(path, i, pos, *(extent*) &out);
+    if (!r)
+      return r;
+    out = *r;
+  }
+  
+  auto header = (extent_header *) meta.directptr;
+  // It doesn't matter whether this is extent_idx or extent. The `logical` field is at the same position.
+  auto indices = (extent_idx *) (header + 1);
+
+  if (header->entries != header->max) {
+    insert(indices, header->entries, pos, out);
+    return 0;
+  }
+
+  // If we reached here, we must split the root.
+  auto fs = static_cast<class ext*>(this->fs);
+  auto block = fs->balloc();
+  if (block == -1ul)
+    return -ENOSPC;
+
+  // We don't split the root into half, as it's too small; rather, we move all entries out.
+  // Copy the contents into the new block.
+  unique_ptr<char[]> buf(new char[fs->blksz]);
+  auto h = (extent_header *) buf.get();
+  unsigned space = fs->blksz - sizeof(extent_header);
+  if (fs->do_crc)
+    space -= 12;
+
+  h->magic = 0xf30a;
+  h->depth = header->depth;
+  h->entries = header->entries;
+  h->gen = header->gen;
+  h->max = space / sizeof(extent);
+  memcpy(h + 1, header + 1, 48);
+  write_block(block, buf.get());
+
+  // Update the root, i.e. inode's metadata. No write back now; wait for update_meta() later.
+  extent_idx idx {
+    .logical = indices->logical,
+    .leaf_lo = (unsigned) block,
+    .leaf_hi = (uint16_t) (block >> 32),
+    .__pad = 0,
+  };
+  header->entries = 1;
+  header->depth = h->depth + 1;
+  memcpy(h + 1, &idx, sizeof(extent_idx));
+  return 0;
+}
+
+int ext_inode::set_pointer_ext4(unsigned index, size_t value) {
   auto fs = static_cast<ext*>(this->fs);
-  auto path = find_path(index, flags);
-  auto header = path.back();
+  auto path = find_path(index);
+  auto block = path.back();
+  auto buf = read_block(block);
+  auto header = (extent_header *) buf.get();
   auto exts = (extent *) (header + 1);
 
   assert(header->depth == 0);
@@ -269,54 +449,32 @@ int ext_inode::set_pointer_ext4(unsigned index, size_t value, int flags) {
     // We can merge this block with the previous entry.
     if (index == last.logical + last.len && value == phys + last.len && last.len < 0x7fff) {
       last.len++;
+      // Write back. (If block == 0, then this is a change of metadata, and will be written back later.)
+      if (block) {
+        auto off = (header->entries - 1) * sizeof(extent) + sizeof(extent_header);
+        fs->device->write(fs->offset(block) + off, &last, sizeof(extent), flags);
+      }
       return 0;
     }
   }
 
   // We can't merge, and have to create a new entry.
   if (header->entries == header->max) {
-    // We don't have space for a new entry, so we must split.
-    // Allocate a new physical block for the new leaf.
-    size_t newblk = fs->balloc(); 
-    if (newblk == -1ul)
+    // Split this node. We need to make sure logical block is always sorted.
+    size_t phys = fs->balloc();
+    if (phys == -1ul)
       return -ENOSPC;
-
-    // Buffer for the new leaf block.
-    unique_ptr<char[]> buf(new char[fs->blksz]);
-    
-    // Setup new leaf header.
-    // Leave some space for CRC if it is present.
-    auto h = (extent_header*) buf.get();
-    unsigned space = fs->blksz - sizeof(extent_header);
-    if (fs->do_crc)
-      space -= 12;
-    h->magic = 0xf30a;
-    h->entries = header->entries;
-    h->max = space / sizeof(extent);
-    h->depth = h->gen = 0;
-  
-    // Calculate CRC for the new leaf block if required.
-    if (fs->do_crc)
-      *(unsigned*) ((char *) header + space) = crc(header);
-    
-    // Copy existing extents.
-    memcpy(h + 1, header + 1, header->entries * sizeof(extent));
-
-    // Write the new block back.
-    fs->device->write(fs->offset(newblk), buf.get(), fs->blksz, 0);
-      
-    // Now the original header only has 1 entry, and its depth is increased.
-    header->entries = 1;
-    header->depth = 1;
-    auto idx = (extent_idx *) (header + 1);
-    idx->logical = 0;
-    idx->leaf_hi = newblk >> 32;
-    idx->leaf_lo = (unsigned) newblk;
-
-    // Set the header to the newly created header.
-    header = h;
+    extent ext {
+      .logical = index,
+      .len = 1,
+      .phys_hi = (uint16_t) (phys >> 32),
+      .phys_lo = (unsigned) phys,
+    };
+    // We always append at last - no sparse files (TODO).
+    return insert_extent(path, header->depth, header->entries, ext);
   }
 
+  // Always append for now. (TODO)
   extent &ext = exts[header->entries];
   ext.logical = index;
   ext.len = 1;
@@ -326,18 +484,19 @@ int ext_inode::set_pointer_ext4(unsigned index, size_t value, int flags) {
   return 0;
 }
 
-int ext_inode::set_pointer(unsigned index, size_t value, int flags) {
+int ext_inode::set_pointer(unsigned index, size_t value) {
   if (meta.flags & EXT4_INODE_EXTENTS)
-    return set_pointer_ext4(index, value, flags);
-  return set_pointer_ext2(index, value, flags);
+    return set_pointer_ext4(index, value);
+  return set_pointer_ext2(index, value);
 }
 
 int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   auto fs = static_cast<ext*>(this->fs);
   size_t blksz = fs->blksz;
+  flags = 0;
 
   for (size_t off = 0; off < meta.sz; off += blksz) {
-    size_t b = locate(off, 0);
+    size_t b = locate(off);
     if (!b)
       continue;
 
@@ -379,7 +538,6 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   auto sz = (unsigned long)meta.sz + blksz;
   if (fs->size_64) {
     sz += ((unsigned long) meta.acl << 32);
-    printk("meta.acl = %ld\n", meta.acl);
     meta.sz = sz % (1ull << 32);
     meta.acl = sz / (1ull << 32);
   }
@@ -388,7 +546,7 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   else
     meta.sz = sz;
 
-  set_pointer(meta.sz / blksz, newblk, 0);
+  set_pointer(meta.sz / blksz, newblk);
 
   unique_ptr<char[]> block = new char[blksz];
   memset(block.get(), 0, blksz);
@@ -407,6 +565,7 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
 
 size_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
   auto fs = static_cast<ext*>(this->fs);
+  this->flags = flags;
 
   size_t size = fs->blksz;
   size_t pos = offset;
@@ -414,7 +573,7 @@ size_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
   size_t read = 0;
 
   while (pos < end) {
-    size_t b = locate(pos, flags);
+    size_t b = locate(pos);
 
     if (b == -1ul)
       return read;
@@ -440,6 +599,7 @@ size_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
 size_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   if (len == 0)
     return 0;
+  this->flags = flags;
 
   bool append = flags & O_APPEND;
   auto fs = static_cast<ext*>(this->fs);
@@ -464,7 +624,7 @@ size_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   }
 
   while (pos < end) {
-    size_t b = locate(pos, flags);
+    size_t b = locate(pos);
     if (b == -1ul)
       return written;
     
@@ -474,7 +634,7 @@ size_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) {
         break;
 
       // Attach block to inode.
-      set_pointer(pos / fs->blksz, newblk, flags);
+      set_pointer(pos / fs->blksz, newblk);
 
       // Zero the new block.
       unique_ptr<char[]> zero(new char[fs->blksz]);
@@ -562,10 +722,12 @@ ext_inode::filetype ext_inode::totype(ftypeflags ty) {
     return filetype::Bad;
   }
 }
+
 int ext_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;
   meta.atime = meta.mtime = now();
+  flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
   auto node = fs->get();
@@ -599,23 +761,86 @@ inode::meta ext_inode::get_meta() {
   );
 }
 
+void ext_inode::set_meta(const inode::meta &meta) {
+  this->meta.atime = meta.atime;
+  this->meta.ctime = meta.ctime;
+  this->meta.mtime = meta.mtime;
+}
+
 int ext_inode::unlink(const string &name) {
-  meta.atime = meta.mtime = now();
-  (void) name;
-  return 0;
+  if (type != Dir)
+    return -ENOTDIR;
+
+  meta.ctime = meta.mtime = now();
+  flags = 0;
+
+  auto fs = static_cast<ext*>(this->fs);
+  unsigned prevoff = -1;
+  for (unsigned pos = 0; pos < meta.sz; prevoff = pos) {
+    // Read the directory entry header.
+    int block = locate(pos);
+    unsigned offset = block * fs->blksz + pos % fs->blksz;
+    direntry entry;
+    fs->device->read(offset, &entry, sizeof(direntry), flags);
+    
+    if (entry.size < sizeof(entry))
+      panic("unlink: corrupt filesystem");
+
+    pos += entry.size;
+    if (entry.inum == 0)
+      continue;
+    
+    unique_ptr<char[]> p(new char[entry.namelen + 1]);
+    fs->device->read(offset + sizeof(entry), p.get(), entry.namelen, flags);
+    p[entry.namelen] = '\0';
+    if (name != p.get())
+      continue;
+
+    // The node itself must also be unlinked.
+    // The file system caches all inodes, so that the same inode on disk will result in the same inode in memory.
+    auto inode = fs->read_from_inum(entry.inum);
+    if (inode->type == Dir)
+      return -EISDIR;
+    
+    // Now we unlink it: merge the length to previous header.
+    bool first = pos % fs->blksz == 0;
+    if (first) {
+      // When there is no previous header, simply set inum to zero.
+      entry.inum = 0;
+      fs->device->write(offset, &entry, sizeof(direntry), flags);
+    } else {
+      int prevblk = locate(prevoff);
+      prevoff = prevblk * fs->blksz + prevoff % fs->blksz;
+
+      direntry prev;
+      fs->device->read(prevoff, &prev, sizeof(direntry), 0);
+      prev.size += entry.size;
+      fs->device->write(prevoff, &prev, sizeof(direntry), 0);
+    }
+
+    // Forget it in dcache. This isn't done here; see (the unique) caller, handler of `unlinkat`.
+    inode->meta.lnkcnt--;
+    
+    fs->update_meta(inode);
+    inode->unlinked();
+    fs->update_meta(this);
+    return 0;
+  }
+  return -ENOENT;
 }
 
 inode *ext_inode::lookup(const string &name) {
   if (type != Dir)
     return nullptr;
   meta.atime = now();
+  flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
 
   // The basic structure is similar to list().
   for (unsigned pos = 0; pos < meta.sz;) {
     // Read the directory entry header.
-    int block = locate(pos, 0);
+    int block = locate(pos);
     unsigned offset = block * fs->blksz + pos % fs->blksz;
     direntry entry;
     fs->device->read(offset, &entry, sizeof(entry), 0);
@@ -662,12 +887,13 @@ vector<inode::item> ext_inode::list() {
   if (type != Dir)
     return {};
   meta.atime = now();
+  flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
   vector<item> result;
   for (unsigned pos = 0; pos < meta.sz;) {
     // Read the directory entry header.
-    int block = locate(pos, 0);
+    int block = locate(pos);
     unsigned offset = block * fs->blksz + pos % fs->blksz;
     direntry entry;
     fs->device->read(offset, &entry, sizeof(entry), 0);
@@ -729,7 +955,7 @@ ext::ext(inode *device): device(device) {
   do_crc = superblock.readonly_features & 0x400;
   fs_64 = superblock.required_features & 0x80;
   size_64 = superblock.readonly_features & 0x2;
-  if (superblock.required_features & ~0x2c2) {
+  if (superblock.required_features & ~0x2c6) {
     printk("mount: cannot understand required features %x\n", superblock.required_features);
     return;
   }
@@ -877,9 +1103,51 @@ size_t ext::balloc() {
   return -1;
 }
 
+void ext::free_blocks(ext_inode *node, size_t block, int level) {
+  if (!block)
+    return;
+
+  auto data = node->read_block(block);
+  auto p = (unsigned *) data.get();
+  free_block(block);
+  if (level == 1) {
+    for (unsigned i = 0; i < blksz / sizeof(int); i++)
+      free_block(p[i]);
+    return;
+  }
+
+  for (unsigned i = 0; i < blksz / sizeof(int); i++) {
+    size_t pos = p[i];
+    free_blocks(node, pos, level - 1);
+  }
+}
+
 void ext::erase(inode *n) {
-  // auto node = cast<ext2_inode>(n);
-  (void) n;
+  auto node = cast<ext_inode>(n);
+  if (nodecache.count(node->_inum))
+    nodecache.erase(node->_inum);
+
+  // Free all blocks of this inode.
+  // free_block(0) will be a no-op.
+  if (!extent) {
+    for (auto x : node->meta.directptr)
+      free_block(x);
+
+    free_blocks(node, node->meta.indirect1, 1);
+    free_blocks(node, node->meta.indirect2, 2);
+    free_blocks(node, node->meta.indirect3, 3);
+  } else {
+    panic("no extent yet");
+  }
+
+  // Free the inode.
+  auto inum = node->_inum;
+
+  // Zero the inode.
+  memset(&node->meta, 0, sizeof(struct ext_inode::meta));
+  update_meta(node);
+
+  free_inode(inum);
 }
 
 // These are a pair of functions that read/write metadata.
@@ -896,7 +1164,59 @@ void ext::update_meta(ext_inode *node) {
   device->write(offset, &node->meta, superblock.inode_size, 0);
 }
 
+void ext::free_inode(size_t inum) {
+  if (inum == 0 || inum >= superblock.total_inodes)
+    return;
+
+  unsigned group = (inum - 1) / superblock.inodes_per_group;
+  block_group &gd = gdt[group];
+
+  size_t bitmap = read_64(gd.inode_bitmap, gd.inode_bitmap_hi);
+  size_t offset = bitmap * blksz + (inum - 1) / 8;
+  int bit = (inum - 1) % 8;
+  unsigned char value;
+  
+  device->read(offset, &value, 1, 0);
+  if (!(value & (1 << bit)))
+    panic("ext2: free_inode: double free");
+  value &= ~(1 << bit);
+  device->write(offset, &value, 1, 0);
+
+  // Note this doesn't have a 64-bit version.
+  superblock.free_inodes++;
+  unsigned free = read_32(gd.free_inodes_count, gd.free_inodes_count_hi);
+  write_32(free + 1, gd.free_inodes_count, gd.free_inodes_count_hi);
+}
+
+void ext::free_block(size_t block) {
+  if (block == 0 || block >= superblock.total_blocks)
+    return;
+
+  unsigned group = (block - 1) / superblock.block_per_group;
+  block_group &gd = gdt[group];
+
+  size_t bitmap = read_64(gd.block_bitmap, gd.block_bitmap_hi);
+  size_t offset = bitmap * blksz + (block - 1) / 8;
+  int bit = (block - 1) % 8;
+  unsigned char value;
+
+  device->read(offset, &value, 1, 0);
+  if (!(value & (1 << bit)))
+    panic("ext2: free_inode: double free");
+  value &= ~(1 << bit);
+  device->write(offset, &value, 1, 0);
+  
+  unsigned free = read_32(gd.free_blocks_count, gd.free_blocks_count_hi);
+  write_32(free + 1, gd.free_blocks_count, gd.free_blocks_count_hi);
+
+  size_t free_ = read_64(superblock.free_blocks, superblock.free_blocks_hi);
+  write_64(free_ + 1, superblock.free_blocks, superblock.free_blocks_hi);
+}
+
 ext_inode *ext::read_from_inum(size_t inum) {
+  if (nodecache.count(inum))
+    return nodecache[inum];
+
   auto group = (inum - 1) / superblock.inodes_per_group;
   auto index = (inum - 1) % superblock.inodes_per_group;
 
@@ -909,7 +1229,7 @@ ext_inode *ext::read_from_inum(size_t inum) {
   device->read(offset, meta, superblock.inode_size, 0);
   auto inode = new ext_inode(this, *meta, inum);
   vfree(meta);
-  return inode;
+  return nodecache[inum] = inode;
 }
 
 void ext::sync() {

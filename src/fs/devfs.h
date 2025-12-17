@@ -29,12 +29,12 @@ class console_inode : public inode_impl<console_inode> {
   inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   console_inode(): inode_impl(devfs.get(), 0, 0, 0666, CharDevice) {}
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
-  inode::meta get_meta() override { return meta; }
 
   void wake_read() override;
   void wait_on_read() override;
@@ -45,6 +45,7 @@ class devroot : public inode_impl<devroot> {
   inode::meta meta;
 public:
   DIR_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   // Is it really read-only?
   devroot(class fs *fs);
@@ -66,8 +67,6 @@ public:
     children[name] = node;
     node->linked();
   }
-  
-  inode::meta get_meta() override { return meta; }
 };
 
 class block_inode : public inode_impl<block_inode> {
@@ -86,12 +85,12 @@ class block_inode : public inode_impl<block_inode> {
   void flush_sector(unsigned sector);
 public:
   FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   block_inode(block_device *dev): inode_impl(devfs.get(), 0, 0, 0666, BlockDevice), dev(dev) {}
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   // poll() is default, as a regular file.
-  inode::meta get_meta() override { return meta; }
 
   // Special functionality.
   void flush();
@@ -103,11 +102,11 @@ class urandom_inode : public inode_impl<urandom_inode> {
   inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   urandom_inode();
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
-  inode::meta get_meta() override { return meta; }
 
   void add_entropy(unsigned long entropy);
 };
@@ -119,12 +118,12 @@ public:
   tty::tty tty;
 
   FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   tty_inode(console_inode *console);
   size_t read(size_t offset, void *buf, size_t len, int flags) override;
   size_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
-  inode::meta get_meta() override { return meta; }
   
   void wake_read() override;
   void wait_on_read() override;
@@ -134,11 +133,11 @@ class null_inode : public inode_impl<null_inode> {
   inode::meta meta;
 public:
   FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
 
   null_inode();
   size_t read(size_t, void *, size_t, int) override { return 0; }
   size_t write(size_t, const void*, size_t len, int) override { return len; }
-  inode::meta get_meta() override { return meta; }
 };
 
 extern static_storage<console_inode> console;

@@ -46,7 +46,6 @@ int tmpfs_inode::unlink(const string &name) {
   if (!children.count(name))
     return -ENOENT;
 
-  vfs::invalidate(this, name);
   auto node = children[name];
   node->unlinked();
 

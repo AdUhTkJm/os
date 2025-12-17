@@ -182,6 +182,7 @@ public:
   short poll(unsigned short) override;
   // Sockets do not support things like `fstatat`.
   meta get_meta() override { return meta(0, 0, 0); }
+  void set_meta(const inode::meta &) override {}
 
   void connect(ip::address addr, unsigned short port);
 };

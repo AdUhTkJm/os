@@ -238,6 +238,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
     wait.push_back(active());
     if (suspend() != 0)
       return -EINTR;
+    RFENCE;
     for (uint16_t last = queue->used.idx; i != last; i++) {
       vq::used_ring::element used = queue->used.ring[i % vq::size];
       
@@ -271,12 +272,12 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   vq::desc &d1 = next_descriptor();
   vq::desc &d2 = next_descriptor();
   vq::desc &d3 = next_descriptor();
-  d1.addr = to_pa(&req);
+  d1.addr = req;
   d1.len = sizeof(request_legacy);
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = indexof(d2);
 
-  d2.addr = to_pa(&buf);
+  d2.addr = buf;
   d2.len = 512;
   d2.flags = vq::descflags::HAS_NEXT;
   d2.next = indexof(d3);
@@ -293,7 +294,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   queue->avail.idx++;
 
   // Tell device that a new request has come.
-  __asm__ volatile("fence" ::: "memory");
+  WFENCE;
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   pfree(buf);
   pfree(req);
