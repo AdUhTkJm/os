@@ -200,7 +200,7 @@ HANDLE(mknodat, dirfd, _path, mode, dev) {
     : pcb->open_file(dir, O_RDONLY);
   
   auto file = pcb->ftbl->at(fd);
-  auto inodety = ext2_inode::totype((ext2_inode::ftypeflags) (mode & ~0777));
+  auto inodety = ext_inode::totype((ext_inode::ftypeflags) (mode & ~0777));
   if (inodety == inode::Bad)
     return -EINVAL;
   if (inodety == inode::BlockDevice || inodety == inode::CharDevice) {
@@ -324,7 +324,7 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   stat stat {
     .st_dev = 0,
     .st_ino = (unsigned long) node->inum(),
-    .st_mode = (unsigned) (node->mode | ext2_inode::fromtype(node->type)),
+    .st_mode = (unsigned) (node->mode | ext_inode::fromtype(node->type)),
     .st_nlink = node->nlink(),
     .st_uid = (unsigned) node->uid,
     .st_gid = (unsigned) node->gid,
@@ -350,7 +350,7 @@ HANDLE(fstat, fd, buf) {
   stat stat {
     .st_dev = 0,
     .st_ino = (unsigned long) node->inum(),
-    .st_mode = (unsigned) (node->mode | ext2_inode::fromtype(node->type)),
+    .st_mode = (unsigned) (node->mode | ext_inode::fromtype(node->type)),
     .st_nlink = node->nlink(),
     .st_uid = (unsigned) node->uid,
     .st_gid = (unsigned) node->gid,

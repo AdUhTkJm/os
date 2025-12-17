@@ -6,6 +6,7 @@ qemu.log
 testsuite
 busybox
 scripts/rootfs
+scripts/debian
 mnt
 docker
 .vscode

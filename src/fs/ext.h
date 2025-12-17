@@ -3,22 +3,25 @@
 
 #include "vfs.h"
 #include "../driver/virtio/virtio.h"
+#include "../utils/stl/crc.h"
 
 /*
 For ext2 format, see:
 https://wiki.osdev.org/Ext2
 */
 
+#define EXT4_INODE_EXTENTS  0x00080000
+
 namespace os {
 
-class ext2_inode : public os::inode_impl<ext2_inode> {
+class ext_inode : public os::inode_impl<ext_inode> {
   struct meta {
-    uint16_t type; // file type + permission
+    uint16_t type;  // file type + permission
     uint16_t uid;
     uint32_t sz;
     uint32_t atime; // atime
-    uint32_t ctime;      // ctime
-    uint32_t mtime;  // mtime
+    uint32_t ctime; // ctime
+    uint32_t mtime; // mtime
     uint32_t delete_time;
     uint16_t gid;
     uint16_t lnkcnt;
@@ -30,7 +33,7 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
     uint32_t indirect2;
     uint32_t indirect3;
     uint32_t generation; // NFS only
-    uint32_t acl;
+    uint32_t acl; // When 64-bit is enabled, this is higher 32 bits of file size.
     uint32_t upper_sz;
     uint32_t fragpos;
     uint8_t fragnum;
@@ -46,20 +49,52 @@ class ext2_inode : public os::inode_impl<ext2_inode> {
     char name[];
   };
 
-  friend class ext2;
+  struct extent_header {
+    uint16_t magic;
+    uint16_t entries;
+    uint16_t max;
+    uint16_t depth;
+    uint32_t gen;
+  };
+
+  struct extent {
+    uint32_t logical;
+    uint16_t len;
+    uint16_t phys_hi;
+    uint32_t phys_lo;
+  };
+
+  struct extent_idx {
+    uint32_t logical;
+    uint32_t leaf_lo;
+    uint16_t leaf_hi;
+    uint16_t __pad;
+  };
+
+  friend class ext;
   // Finds the block number of this byte.
   // There might be some sparse holes, which would mean zero.
+  size_t locate_ext2(size_t byte, int flags);
+  size_t locate_ext4(size_t byte, int flags);
+
   size_t locate(size_t byte, int flags);
 
   // Set the index'th block in the pointer table to value `block`.
-  int set_pointer(unsigned index, unsigned value, int flags);
+  int set_pointer_ext2(unsigned index, size_t value, int flags);
+  int set_pointer_ext4(unsigned index, size_t value, int flags);
+
+  int set_pointer(unsigned index, size_t value, int flags);
+
+  vector<extent_header*> find_path(unsigned index, int flags);
 
   // Adds a directory entry.
   int add_dirent(const string &name, unsigned inum, unsigned char type);
+
+  unsigned crc(const extent_header *extent_block) const;
 public:
   using inode_impl::inode_impl;
-  ext2_inode(class fs *fs, const struct meta &meta, long inum);
-  ext2_inode(class fs *fs, long inum);
+  ext_inode(class fs *fs, const struct meta &meta, long inum);
+  ext_inode(class fs *fs, long inum);
 
   enum ftypeflags : uint16_t {
     FIFO = 0x1000, CharDevice = 0x2000, Directory = 0x4000,
@@ -83,7 +118,7 @@ public:
   long inum() const override { return _inum; }
 };
 
-class ext2 : public fs {
+class ext : public fs {
   struct superblock {
     uint32_t total_inodes;
     uint32_t total_blocks;
@@ -122,6 +157,25 @@ class ext2 : public fs {
     uint32_t compress_alg;
     uint8_t  file_prealloc_cnt;
     uint8_t  dir_prealloc_cnt;
+    uint16_t gdt_resv;
+    char journal_uuid[16];
+    uint32_t journal_inode;
+    uint32_t journal_devnum;
+    uint32_t orphan;
+    char hashseed[16];
+    uint8_t  hashalg;
+    uint8_t  journal;
+    uint16_t gd_size;
+    uint32_t mount_opts;
+    uint32_t metagroup;
+    uint32_t fs_ctime;
+    char backup[68];
+    char __64bit_start[0];
+    uint32_t total_blocks_hi;
+    uint32_t block_su_hi;
+    uint32_t free_blocks_hi;
+    uint16_t min_inode_sz;
+    uint16_t min_inode_resv_sz;
   } superblock;
   
   struct block_group {
@@ -131,36 +185,67 @@ class ext2 : public fs {
     uint16_t free_blocks_count;
     uint16_t free_inodes_count;
     uint16_t used_dirs_count;
-    uint16_t _resv0;
-    uint32_t _resv1[3];
+    uint16_t flags;
+    uint32_t snapshot;
+    uint16_t block_bitmap_crc;
+    uint16_t inode_bitmap_crc;
+    uint16_t never_used_inodes; // A hint, only for speed.
+    uint16_t crc;
+
+    char __64bit_start[0];
+    uint32_t block_bitmap_hi;
+    uint32_t inode_bitmap_hi;
+    uint32_t inode_table_hi;
+    uint16_t free_blocks_count_hi;
+    uint16_t free_inodes_count_hi;
+    uint16_t used_dirs_count_hi;
+    uint16_t never_used_inodes_hi;
+    uint32_t snapshot_hi;
+    uint16_t block_bitmap_crc_hi;
+    uint16_t inode_bitmap_crc_hi;
+    uint32_t _resv;
   };
 
   // The size of each block, in bytes.
   unsigned blksz;
+  // The size of group descriptor, in bytes. When 64-bit mode is not enabled, this is 32.
+  unsigned gdsz = 32;
   // The group descriptor table.
   os::vector<block_group> gdt;
   inode *device;
+  os::crc32c<0x1edc6f41> crc;
+
+  // Configuration.
+  bool extent;
+  bool fs_64;
+  bool size_64;
+  bool do_crc;
 
   void update_superblock();
   void update_block_group(int group_id);
-  void update_meta(ext2_inode *node);
+  void update_meta(ext_inode *node);
 
   // Create an inode in memory from an existing file, located at `inum`.
-  ext2_inode *read_from_inum(size_t inum);
+  ext_inode *read_from_inum(size_t inum);
 
   // Calculate byte offset from beginning, given a block number.
   size_t offset(size_t blk);
 
   // Search for an unoccupied inode/block.
-  ext2_inode *search_inode(int id, block_group &gd);
-  unsigned search_block(int id, block_group &gd);
+  ext_inode *search_inode(int id, block_group &gd);
+  size_t search_block(int id, block_group &gd);
+
+  size_t read_64(uint32_t lo, uint32_t hi);
+  int write_64(size_t v, uint32_t &lo, uint32_t &hi);
+  size_t read_32(uint16_t lo, uint16_t hi);
+  int write_32(size_t v, uint16_t &lo, uint16_t &hi);
   
   // Allocate a new block.
-  unsigned balloc();
-  friend class ext2_inode;
+  size_t balloc();
+  friend class ext_inode;
 public:
-  ext2(inode *device);
-  ext2_inode *get() override;
+  ext(inode *device);
+  ext_inode *get() override;
   void erase(inode*) override;
   bool has_backup() override { return true; }
   void sync() override;
@@ -168,7 +253,7 @@ public:
   bool valid() { return superblock.magic == 0xef53; }
 };
 
-expected<fs*> ext2_creator(const char *src);
+expected<fs*> ext_creator(const char *src);
 
 }
 

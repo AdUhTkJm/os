@@ -142,7 +142,7 @@ void main_high() {
   os::virtio::probe();
 
   // Register known, mountable fs'es.
-  vfs::record("ext2", ext2_creator);
+  vfs::record("ext2", ext_creator);
   vfs::record("tmpfs", tmp_creator);
   vfs::record("procfs", procfs_creator);
   

@@ -25,7 +25,7 @@ public:
   struct entry {
     K key;
     V value;
-    node_state state;
+    node_state state = Empty;
   };
 private:
   // We're using a hash table with linear probing.
@@ -167,8 +167,6 @@ void hashmap<K, V, Hash, Eq>::reserve(size_t len) {
   auto oldcap = cap;
   cap = len;
   auto new_table = new (safe) entry[cap];
-  for (size_t i = 0; i < cap; ++i)
-    new_table[i].state = Empty;
 
   entry *old_table = table;
   table = new_table;
@@ -241,8 +239,6 @@ template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 void hashmap<K, V, Hash, Eq>::clear() {
   delete[] table;
   table = new (safe) entry[cap = 16];
-  for (size_t i = 0; i < cap; i++)
-    table[i].state = Empty;
   sz = 0;
 }
 

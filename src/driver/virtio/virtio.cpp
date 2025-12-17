@@ -239,10 +239,11 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
     if (suspend() != 0)
       return -EINTR;
     for (uint16_t last = queue->used.idx; i != last; i++) {
-      // TODO: free the chain descriptors? (see next_descriptor)
       vq::used_ring::element used = queue->used.ring[i % vq::size];
       
       if (used.id == head) {
+        if (status == 255)
+          printk("used.idx = %ld, avail.idx = %ld, head = %ld, used.id = %ld\n", queue->used.idx, queue->avail.idx, head, used.id);
         if (status == 0)
           memcpy(buffer, (void *) as_va(buf), 512);
 

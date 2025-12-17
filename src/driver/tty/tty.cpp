@@ -16,11 +16,21 @@ tty::tty(console_inode *console): flags({
 }
 
 void tty::echo(char c) {
+  if (!(flags.c_lflag & TTY_ECHO))
+    return;
   console->write(0, &c, 1, 0);
 }
 
 void tty::echo(const char *s) {
+  if (!(flags.c_lflag & TTY_ECHO))
+    return;
   console->write(0, s, strlen(s), 0);
+}
+
+void tty::echo(const char *s, size_t len) {
+  if (!(flags.c_lflag & TTY_ECHO))
+    return;
+  console->write(0, s, len, 0);
 }
 
 void tty::send(int sig) {
@@ -30,9 +40,32 @@ void tty::send(int sig) {
   }
 }
 
+void tty::backspace() {
+  if (cursor > 0) {
+    cursor--;
+    line.erase(line.begin() + cursor);
+    
+    // Move everything one character backwards.
+    echo('\b');
+    echo(line.data() + cursor, line.size() - cursor);
+    // Erase the last character.
+    echo(' ');
+    // Get to the correct cursor in terminal.
+    for (size_t i = cursor; i <= line.size(); i++)
+      echo('\b');
+  }
+}
+
 string tty::readline() {
-  pos = 0;
-  for (char c; pos < sizeof(buf);) {
+  cursor = 0;
+  line.clear();
+  enum {
+    escape0, // Normal
+    escape1, // Received esc
+    escape2, // Received esc + [
+    escape3, // In a multi-byte escape sequence that we don't understand
+  } state = escape0;
+  for (char c;;) {
     for (int len = 0; len != 1;)
       len = console->read(0, &c, 1, 0);
     if (c == ctrl + 'C') {
@@ -45,36 +78,85 @@ string tty::readline() {
       break;
     }
 
-    if (!(flags.c_lflag & TTY_ICANON))
+    if (state == escape3) {
+      // We don't understand it. Just output as-is.
+      // Note the terminating character also doesn't belong to input.
+      echo(c);
+      if (c < 0x20 || c > 0x3f)
+        state = escape0;
       continue;
+    }
 
-    bool do_echo = flags.c_lflag & TTY_ECHO;
+    if (state == escape2) {
+      // Handle escape characters.
+      state = escape0;
+      switch (c) {
+      case 'D':
+        if (cursor > 0) {
+          cursor--;
+          echo("\b");
+        }
+        break;
+
+      case 'C':
+        if (cursor < line.size())
+          echo(line[cursor++]);
+        break;
+
+      default:
+        // We don't know the sequence; just print them as-is.
+        echo("\x1b[");
+        echo(c);
+        // We're still inside this escape sequence.
+        if (c >= 0x20 && c <= 0x3f)
+          state = escape3;
+      }
+      continue;
+    }
+
+    if (state == escape1) {
+      if (c == '[') {
+        state = escape2;
+        continue;
+      } else state = escape0;
+    }
+
     switch (c) {
     case '\r':
       if (!(flags.c_iflag & ICRNL))
         break;
       [[fallthrough]];
     case '\n':
-      // Line end. Return.
+      // Line end. Return. (This ignores cursor position.)
       echo("\r\n");
-      buf[pos++] = '\n';
-      return string(buf, pos);
+      line.push_back('\n');
+      return string(line.data(), line.size());
     
     case '\b':
-    case 0x7f: // Delete
-      if (pos > 0) {
-        pos--;
-        echo("\b \b");
+    case 0x7f:
+      backspace();
+      break;
+
+    case 0x1b: // ESC
+      state = escape1;
+      break;
+
+    case '[':
+      if (state == escape1) {
+        state = escape2;
         continue;
       }
       break;
-    }
 
-    buf[pos++] = c;
-    if (do_echo)
-      echo(c);
+    default:
+      if (state == escape0) {
+        line.insert(line.begin() + cursor, c);
+        cursor++;
+        echo(c);
+      }
+    }
   }
-  return string(buf, pos);
+  return string(line.data(), line.size());
 }
 
 void tty::write(const char *s, size_t len) {

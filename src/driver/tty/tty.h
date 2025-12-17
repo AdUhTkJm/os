@@ -175,17 +175,19 @@ struct tty {
   unsigned short width, height;
   
   // This is buffer of current line.
-  char buf[256];
-  unsigned pos;
+  vector<char> line;
+  unsigned cursor;
 
   console_inode *console;
 
   tty(console_inode *console);
   string readline();
+  void backspace();
   void write(const char *s, size_t len);
 private:
   void echo(char c);
   void echo(const char *s);
+  void echo(const char *s, size_t len);
   void send(int sig);
 };
 
