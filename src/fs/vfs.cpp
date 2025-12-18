@@ -68,7 +68,7 @@ bool readable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
-    if (!(flags & (1 << bit + 2)))
+    if (!(flags & (1 << (bit + 2))))
       return false;
   }
   return true;
@@ -78,7 +78,7 @@ bool writable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
-    if (!(flags & (1 << bit + 1)))
+    if (!(flags & (1 << (bit + 1))))
       return false;
   }
   return true;
@@ -88,7 +88,7 @@ bool executable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
-    if (!(flags & (1 << bit + 0)))
+    if (!(flags & (1 << (bit + 0))))
       return false;
   }
   return true;

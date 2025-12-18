@@ -72,6 +72,9 @@ string tty::readline() {
       send(SIGINT);
       break;
     }
+
+    if (c == ctrl + 'D')
+      return ""; // EOF
     
     if (c == ctrl + 'Z') {
       send(SIGTSTP);

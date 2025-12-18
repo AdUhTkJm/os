@@ -77,10 +77,6 @@ enum block_features {
 };
 #define SIZE_MAX 18446744073709551615
 
-// See Section 5.1.3.
-enum net_device_features {
-  MAC = 1 << 5,
-};
 
 enum features : unsigned long {
   VERSION_1 = 1ul << 32,
@@ -205,10 +201,12 @@ class net_device : public os::net_device {
   bool legacy;
   spinlock lock;
   os::vector<tcb_t*> txwait;
+  unsigned txid = 0;
 
+  unsigned next_tx_descriptor();
   static constexpr size_t PACKET_BUF_SIZE = 2048;
-  char rxbuf[vq::size][PACKET_BUF_SIZE];
-  char txbuf[vq::size][PACKET_BUF_SIZE];
+  pa_t rxbuf[vq::size];
+  pa_t txbuf[vq::size];
 
   struct header {
     uint8_t  flags;
@@ -218,6 +216,29 @@ class net_device : public os::net_device {
     uint16_t csum_start;
     uint16_t csum_offset;
   };
+
+  // See Section 5.1.3.
+  enum features {
+    MAC = 1 << 5,
+    FSTATUS = 1 << 16,
+  };
+
+  enum headers {
+    NEEDS_CSUM = 1,
+    DATA_VALID = 2,
+    RSC_INFO = 4
+  };
+
+  enum gso {
+    NONE = 0,
+    TCPV4 = 1,
+    UDP = 3,
+    TCPV6 = 4,
+    UDP_L4 = 5,
+    ECN = 0x80
+  };
+
+  static constexpr int RXID = 0, TXID = 1;
   friend void net_device_handler(int irq);
 public:
   net_device(const device &, bool legacy);
@@ -227,7 +248,10 @@ public:
   int read();
   int write(const void *buf, int len, bool block) override;
   bool write_full() override;
+  void wake_write() override;
 };
+
+net_device *netdev(int i = 0);
 
 void probe();
 

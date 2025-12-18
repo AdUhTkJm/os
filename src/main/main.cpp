@@ -89,6 +89,7 @@ void get_real_time() {
       auto base = pa_t((fdt::detail::read_int(property) * 1ul << 32) + fdt::detail::read_int((char*) property + 4));
       realtime = mmrd<unsigned>(base);
       realtime |= size_t(mmrd<unsigned>(base + 4)) << 32;
+      srand(realtime);
       return WalkResult::Interrupt;
     }
     
@@ -181,6 +182,11 @@ void main_high() {
   os::init(tcb);
   scheduler.add(tcb);
   pcb->vfs->close(init);
+
+  // Create a DHCP daemon that updates IP address.
+  // We must create it after `init`, so that `init` will have PID 1.
+  auto dhcp = make_kprocess(dhcp::daemon);
+  scheduler.add(dhcp);
 
   // Enable timer.
   sbi_set_timer(rdtime() + 10_ms / timer_tick);

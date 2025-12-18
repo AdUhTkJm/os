@@ -21,6 +21,7 @@ namespace os::virtio {
 
 static_storage<os::hashmap<int, block_device*>> blk_intr;
 static_storage<os::hashmap<int, net_device*>> net_intr;
+static_storage<os::hashmap<int, net_device*>> net_devs;
 
 [[gnu::no_instrument_function]] void block_device_handler(int irq) {
   if (!blk_intr->count(irq))
@@ -94,13 +95,16 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
   mmwr(base + DRIVER_FEATURESEL, 0);
   mmwr<uint32_t>(base + DRIVER_FEATURE, supported);
 
-  mmwr(base + DEVICE_FEATURESEL, 1);
-  auto features_high = mmrd<uint32_t>(base + DEVICE_FEATURE);
-  // Legacy should be indicated by `VERSION_1` not offered.
-  assert(bool(features_high & (((uint64_t) features::VERSION_1) >> 32)) ^ legacy);
+  // In legacy mode, there is no such selection.
+  if (!legacy) {
+    mmwr(base + DEVICE_FEATURESEL, 1);
+    auto features_high = mmrd<uint32_t>(base + DEVICE_FEATURE);
+    // Legacy should be indicated by `VERSION_1` not offered.
+    assert(bool(features_high & (((uint64_t) features::VERSION_1) >> 32)) ^ legacy);
 
-  mmwr(base + DRIVER_FEATURESEL, 1);
-  mmwr<uint32_t>(base + DRIVER_FEATURE, supported >> 32);
+    mmwr(base + DRIVER_FEATURESEL, 1);
+    mmwr<uint32_t>(base + DRIVER_FEATURE, supported >> 32);
+  }
 
   // Mark out intent as "complete".
   // This is only done in v1.0 standard.
@@ -178,7 +182,6 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
 vq::desc &block_device::next_descriptor() {
   // The non-legacy part is NYI.
   // TODO: Test whether queue is full?
-  assert(legacy);
   auto queue = (vq::queue_legacy*) this->queue;
   auto &desc = queue->desc[descid];
   descid = (descid + 1) % vq::size;
@@ -186,9 +189,14 @@ vq::desc &block_device::next_descriptor() {
 }
 
 uint16_t block_device::indexof(const vq::desc &desc) {
-  assert(legacy);
   auto queue = (vq::queue_legacy*) this->queue;
   return &desc - queue->desc;
+}
+
+unsigned net_device::next_tx_descriptor() {
+  auto desc = txid;
+  txid = (txid + 1) % vq::size;
+  return desc;
 }
 
 // The lba is the logical block address.
@@ -338,19 +346,24 @@ net_device::net_device(const device &dev, bool legacy): legacy(legacy) {
   uint64_t supported = 0;
   if (features_low & legacy_features::ANY_LAYOUT)
     supported |= legacy_features::ANY_LAYOUT;
-  if (features_low & net_device_features::MAC)
-    supported |= net_device_features::MAC;
+  if (features_low & features::MAC)
+    supported |= features::MAC;
+  if (features_low & features::FSTATUS)
+    supported |= features::FSTATUS;
 
   mmwr(base + DRIVER_FEATURESEL, 0);
   mmwr<uint32_t>(base + DRIVER_FEATURE, supported);
 
-  mmwr(base + DEVICE_FEATURESEL, 1);
-  auto features_high = mmrd<uint32_t>(base + DEVICE_FEATURE);
-  // Legacy should be indicated by `VERSION_1` not offered.
-  assert(bool(features_high & (((uint64_t) features::VERSION_1) >> 32)) ^ legacy);
+  // In legacy mode, there is no such selection.
+  if (!legacy) {
+    mmwr(base + DEVICE_FEATURESEL, 1);
+    auto features_high = mmrd<uint32_t>(base + DEVICE_FEATURE);
+    // Legacy should be indicated by `VERSION_1` not offered.
+    assert(bool(features_high & (((uint64_t) virtio::features::VERSION_1) >> 32)) ^ legacy);
 
-  mmwr(base + DRIVER_FEATURESEL, 1);
-  mmwr<uint32_t>(base + DRIVER_FEATURE, supported >> 32);
+    mmwr(base + DRIVER_FEATURESEL, 1);
+    mmwr<uint32_t>(base + DRIVER_FEATURE, supported >> 32);
+  }
 
   mmwr(base + DRIVER_PAGE_SIZE, PAGE_SIZE);
 
@@ -385,10 +398,22 @@ net_device::net_device(const device &dev, bool legacy): legacy(legacy) {
   // Read configuration to know the MAC address of the device.
   // We must loop until the configuration gets stable.
   unsigned generation;
-  unsigned mac1;
-  unsigned short mac2;
-  do {
-    // 1Read the generation counter before reading the data
+  unsigned mac1 = -1;
+  unsigned short mac2 = -1;
+  if (!(supported & features::MAC))
+    panic("net device: do not know host mac");
+
+  // By section 2.5.4, legacy interface does not have a "generation" field.
+  if (legacy) {
+    unsigned old_mac1;
+    unsigned short old_mac2;
+    do {
+      old_mac1 = mac1;
+      old_mac2 = mac2;
+      mac1 = mmrd<unsigned>(base + CONFIG_BASE);
+      mac2 = mmrd<unsigned short>(base + CONFIG_BASE + 4);
+    } while (mac1 != old_mac1 || mac2 != old_mac2);
+  } else do {
     generation = mmrd<unsigned>(base + CONFIG_GENERATION);
 
     // See section 5.1.4, device configuration layout.
@@ -399,13 +424,34 @@ net_device::net_device(const device &dev, bool legacy): legacy(legacy) {
 
   // Remember that VirtIO (legacy) uses host endian, not net endian.
   // So we're ok here.
-  memcpy(mac, &mac1, 4);
-  memcpy(mac + 4, &mac2, 2);
+  memcpy(eth::src, &mac1, 4);
+  memcpy(eth::src + 4, &mac2, 2);
+
+  if (supported & features::FSTATUS) {
+    // By section 2.5.4, we probably don't need to read this multiple times.
+    unsigned short status = mmrd<unsigned short>(base + CONFIG_BASE + 6);
+    bool active = status & 1;
+    if (!active)
+      panic("net device: link not active");
+  }
+
+  // Allocate space for transmit/receive queue.
+  // Each buffer is 2048 byte long and occupies half a page.
+  for (int i = 0; i < vq::size; i += 2) {
+    pa_t page = pframe();
+    rxbuf[i] = page;
+    rxbuf[i + 1] = page + PAGE_SIZE / 2;
+
+    page = pframe();
+    txbuf[i] = page;
+    txbuf[i + 1] = page + PAGE_SIZE / 2;
+  }
 
   // Fill receive queue with buffers before starting.
   // The device needs empty buckets to pour incoming packets into.
+  // Don't do it for the transmit queue; write() will fill it in.
   for (int i = 0; i < vq::size; i++) {
-    rx->desc[i].addr = to_pa(rxbuf[i]);
+    rx->desc[i].addr = rxbuf[i];
     rx->desc[i].len = PACKET_BUF_SIZE;
     rx->desc[i].flags = vq::descflags::WRITEONLY;
     rx->desc[i].next = 0;
@@ -420,7 +466,7 @@ net_device::net_device(const device &dev, bool legacy): legacy(legacy) {
   
   // Send the available ring change to device.
   FENCE;
-  mmwr(base + QUEUE_NOTIFY, 0);
+  mmwr(base + QUEUE_NOTIFY, RXID);
 }
 
 int net_device::read() {
@@ -428,12 +474,12 @@ int net_device::read() {
   auto elem = rx->used.ring[rxnext++ % vq::size];
   RFENCE;
 
-  // Read the packet.
+  // Read the packet, and skip the header.
   unsigned lpacket = elem.len - sizeof(header);
   if (lpacket > 0) {
     // Send this to the demultiplexer. It owns the pointer.
     auto buf = new char[lpacket];
-    memcpy(buf, rxbuf[elem.id] + sizeof(header), lpacket);
+    memcpy(buf, (char*) as_va(rxbuf[elem.id]) + sizeof(header), lpacket);
     demux->push(buf, lpacket);
   }
 
@@ -442,12 +488,16 @@ int net_device::read() {
   rx->avail.idx++;
   
   WFENCE;
-  mmwr(base + QUEUE_NOTIFY, 0);
+  mmwr(base + QUEUE_NOTIFY, RXID);
   return lpacket;
 }
 
+void net_device::wake_write() {
+  scheduler.wakeup_all(lock, txwait);
+}
+
 int net_device::write(const void *buf, int len, bool block) {
-  if (unsigned(len += sizeof(header)) >= PACKET_BUF_SIZE)
+  if (unsigned(len + sizeof(header)) >= PACKET_BUF_SIZE)
     return -E2BIG;
 
   for (;;) {
@@ -466,29 +516,31 @@ int net_device::write(const void *buf, int len, bool block) {
       continue;
     }
     
-    auto id = tx->avail.idx % vq::size;
-    char *tbuf = txbuf[id];
+    auto index = next_tx_descriptor();
+    auto &desc = tx->desc[index];
 
-    *(header *) tbuf = {
-      .flags = 3,
-      .gso_type = 0,
+    // QEMU hopes the header and data are placed in two separate buffers.
+    header *hbuf = (header *) as_va(txbuf[index]);
+    *hbuf = {
+      .flags = 0,
+      .gso_type = gso::NONE,
       .hdr_len = sizeof(header),
       .gso_size = 0,
       .csum_start = 0, /* No checksum for now. */
       .csum_offset = 0,
     };
-    memcpy(tbuf + sizeof(header), buf, len); 
+    memcpy(hbuf + 1, buf, len);
 
     // Transmit a request.
-    tx->desc[id].addr = to_pa(txbuf[id]);
-    tx->desc[id].len = len;
-    tx->desc[id].flags = 0;
-    tx->desc[id].next = 0;
+    desc.addr = txbuf[index];
+    desc.len = sizeof(header) + len;
+    desc.flags = 0;
+    desc.next = 0;
 
-    tx->avail.ring[tx->avail.idx % vq::size] = id;
+    tx->avail.ring[tx->avail.idx % vq::size] = index;
     tx->avail.idx++;
     WFENCE;
-    mmwr(base + QUEUE_NOTIFY, 1);
+    mmwr(base + QUEUE_NOTIFY, TXID);
     return len;
   }
 }
@@ -535,6 +587,7 @@ void probe() {
   // See section 4.2.2 of the spec.
   blk_intr.construct();
   net_intr.construct();
+  net_devs.construct();
   demux.construct();
 
   for (const auto &[name, device] : devs) {
@@ -556,6 +609,7 @@ void probe() {
       plic::record(device.interrupt, net_device_handler);
 
       (*net_intr)[device.interrupt] = net;
+      net_devs->insert(net_device_cnt++, net);
       continue;
     }
 
@@ -576,6 +630,12 @@ void probe() {
       continue;
     }
   }
+}
+
+net_device *netdev(int i) {
+  [[unlikely]] if (!net_devs->size())
+    panic("cannot find net device");
+  return net_devs->at(i);
 }
 
 }

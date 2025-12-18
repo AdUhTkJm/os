@@ -22,7 +22,7 @@ namespace os {
 // Near the highest address in the lower-half space.
 constexpr va_t stack_top = 0xf'f000'0000ul;
 constexpr size_t user_stack_size = 8_mb;
-constexpr size_t kstack_size = 8_kb;
+constexpr size_t kstack_size = 8_kb - 16;
 
 enum thread_state {
   Init, Running, Sleeping, Ready, Zombie, Dead
@@ -211,7 +211,6 @@ tcb_t *make_kprocess(T fptr) {
   pcb->gid = pcb->uid = 0; // root
   pcb->parent = nullptr;
   
-  // We aren't lazy-allocating here.
   pcb->vfs = new vfs;
   pcb->vfs->base = initramfs->root;
   pcb->vfs->ref();
@@ -221,8 +220,12 @@ tcb_t *make_kprocess(T fptr) {
 
   tcb->status = Init;
   tcb->pc = (va_t) fptr;
-  tcb->usp = (va_t) vmalloc<16>(16_kb);
+  // We aren't lazy-allocating here.
+  // Also don't forget that stack grows downwards.
+  constexpr auto usp_size = 16_kb - 16;
+  tcb->usp = (va_t) vmalloc<16>(usp_size) + usp_size;
   tcb->pcb = pcb;
+  tcb->tid = pcb->nexttid();
   pcb->threads.push_back(tcb);
   pidmap->insert(pcb->pid, pcb);
   init(tcb);

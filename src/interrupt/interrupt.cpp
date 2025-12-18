@@ -9,6 +9,7 @@
 #include "../fs/ext.h"
 #include "../fs/pipe.h"
 #include "../utils/log.h"
+#include "../fs/net.h"
 
 // In nanosecond.
 extern int timer_tick;
@@ -659,12 +660,14 @@ HANDLE(getcwd, buf, size) {
 
 HANDLE(uname, buf) {
   utsname name {
-    .sysname = "Linux",
+    .sysname = "Pristine",
     .nodename = "",
     .release = "0.1",
     .version = "0.1",
     .machine = "RISC-V64",
   };
+  auto host = hostname();
+  memcpy(name.nodename, host, strlen(host));
   copy_to_user((void *) buf, &name, sizeof(utsname));
   return 0;
 }
@@ -843,8 +846,8 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
     return -EBADF;
   if (!anon) {
     backup = pcb->ftbl->at(fd);
-    bool readable = backup->flags & 3 != O_WRONLY;
-    bool writable = backup->flags & 3 != O_RDONLY;
+    bool readable = (backup->flags & 3) != O_WRONLY;
+    bool writable = (backup->flags & 3) != O_RDONLY;
     if (!readable || (shared && !writable))
       return -EACCES;
   }

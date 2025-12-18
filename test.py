@@ -39,13 +39,13 @@ AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
-  "-ffreestanding", "-nostdlib", "-Wno-parentheses",
+  "-ffreestanding", "-nostdlib", # "-Wno-parentheses",
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", "-Wno-parentheses",
+  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", # "-Wno-parentheses",
 ]
 # Note this is included in https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html.
 SFLAGS = [
@@ -345,7 +345,8 @@ if __name__ == "__main__":
 
   if args.run:
     # -d in_asm -D qemu.log
-    asm = "-d in_asm -D qemu.log" if args.assembly else ""
+    asm = "-d in_asm" if args.assembly else ""
+    syscall = "-d strace" if args.log_syscall else ""
     gdb = "-S -s" if args.gdb else ""
     proc.run(
 f"""
@@ -360,7 +361,8 @@ f"""
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
 \
 -device virtio-net-device,netdev=net -netdev user,id=net \
+-d guest_errors -D qemu.log \
 -rtc base=utc \
-{asm} {gdb}
+{asm} {syscall} {gdb}
 """
   ,shell=True)

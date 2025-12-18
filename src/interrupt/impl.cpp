@@ -4,6 +4,7 @@
 #include "../fs/net.h"
 #include "../proc/schedule.h"
 #include "../driver/tty/tty.h"
+#include "../driver/virtio/virtio.h"
 #include "../utils/log.h"
 
 namespace os::detail {
@@ -290,7 +291,7 @@ int socket(int domain, int type, int protocol) {
     if (protocol != 0 && protocol != UDP)
       return -EINVAL;
 
-    auto node = new udp_socket_inode(nullptr, ip::src, 0);
+    auto node = new udp_socket_inode(virtio::netdev(), ip::src, 0);
     auto f = new file(new dentry("<sock>", node, nullptr), O_RDWR);
     return pcb->ftbl->allocate(f);
   }

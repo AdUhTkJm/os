@@ -182,8 +182,12 @@ tty_inode::tty_inode(console_inode *console): inode_impl(devfs.get(), 0, 0, 0666
 // for terminals, we should return whenever a newline occurs.
 size_t tty_inode::read(size_t, void *buf, size_t len, int) {
   // TODO: noblock?
-  if (line.size() == 0)
+  if (line.size() == 0) {
     line = tty.readline();
+    // We read an EOF.
+    if (line.size() == 0)
+      return 0;
+  }
 
   auto l = min(len, line.size());
   memcpy(buf, line.c_str(), l);

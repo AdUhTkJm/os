@@ -209,7 +209,7 @@ constexpr unsigned short htons(unsigned short x) {
 extern "C" void _start() {
   constexpr int stdin = 0, stdout = 1, stderr = 2;
 
-  // Mount ext2
+  // Mount ext2.
   syscall((reg_t) "/dev/sda", (reg_t) "/mnt", (reg_t) "ext2", mount);
 
   // Move mount.

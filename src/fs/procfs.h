@@ -3,7 +3,13 @@
 
 #include "vfs.h"
 
+#define READONLY_DIRECTORY \
+  int create(const string &, filetype, int) override { return -EACCES; } \
+  int unlink(const string &) override { return -EACCES; }
+
 namespace os {
+
+class net_device;
 
 // All pseudo-files.
 namespace proc {
@@ -27,11 +33,9 @@ class procroot : public inode_impl<procroot> {
 public:
   DIR_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
+  READONLY_DIRECTORY;
 
   procroot(class fs *fs);
-  // It is not allowed to create/unlink.
-  int create(const string &, filetype, int) override { return -EACCES; }
-  int unlink(const string &) override { return -EACCES; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
 };

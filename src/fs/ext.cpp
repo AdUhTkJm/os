@@ -114,7 +114,7 @@ size_t ext_inode::locate_ext4(size_t byte) {
     // Target falls in the range of this extent.
     // Note that if length >= 0x8000, then this is an "uninitialized" fragment;
     // we should retrieve the real length by extracting the lower 15 bits.
-    if (tgt >= ext[i].logical && tgt < (ext[i].logical + ext[i].len & 0x7fff))
+    if (tgt >= ext[i].logical && tgt < (ext[i].logical + (ext[i].len & 0x7fff)))
       return ((unsigned long) ext[i].phys_hi << 32) + ext[i].phys_lo + tgt - ext[i].logical;
   }
 
