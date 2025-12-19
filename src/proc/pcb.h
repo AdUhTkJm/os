@@ -46,6 +46,9 @@ struct ctxframe {
   reg_t sp;       // Kernel sp.
   reg_t sepc;
   reg_t sstatus;
+  int locktype;   // 0 for spinlock, 1 for mutex.
+  int __pad;      // Explicit padding.
+  void *lock;
 };
 
 #ifdef __cplusplus
@@ -196,10 +199,12 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
 // Even though it does not return for now, it will eventually look as if it "returned".
 // Return value marks whether this is interrupted by a signal (-EINTR) or a normal return (0).
-extern "C" int context_save(void *ctx, bool *ctx_valid);
+class mutex;
+int context_save(void *ctx, bool *ctx_valid, spinlock *lock);
+int context_save(void *ctx, bool *ctx_valid, mutex *lock);
 extern "C" [[noreturn]] void context_restore(void *ctx, bool from_signal);
 
-#define suspend() context_save(&active()->ctx, &active()->ctx_valid)
+#define suspend(lock) context_save(&active()->ctx, &active()->ctx_valid, &lock)
 
 // Creates a kernel process.
 template<class T> requires (is_function_v<remove_pointer_t<T>>)

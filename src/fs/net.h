@@ -2,6 +2,9 @@
 #define NET_H
 
 #include "vfs.h"
+#include "../lock/mutex.h"
+#define __little
+#define __big
 
 // From <socket.h>
 #define SOL_SOCKET	1
@@ -57,7 +60,7 @@ enum protocol : unsigned char {
   IPv6 = 41,
 };
 
-class tcb_t;
+struct tcb_t;
 class udp_socket_inode;
 struct net_device;
 
@@ -103,7 +106,9 @@ extern spinlock lock;
 
 // IPv4 address. Note this is big-endian.
 using address = unsigned;
-extern address src;
+extern __big address src;
+extern __big address subnet_mask;
+extern static_storage<os::vector<__big address>> routers, dns;
 
 struct header {
   // Version (4 bit) and length (4 bit).
@@ -142,6 +147,9 @@ constexpr size_t MTU = 1500;
 //      |---------------- `data`
 int write(net_device *dev, const void *data, size_t len, address src, address dst, protocol prot, int flags, option options);
 void read(const char *p, size_t len);
+
+string format(__big ip::address addr);
+optional<ip::address> format(const string &addr);
 
 }
 
@@ -200,14 +208,15 @@ struct /*interface*/ net_device {
 
 class udp_socket_inode : public inode_impl<udp_socket_inode> {
   net_device *dev;
-  spinlock lock;
+  spinlock rxlock;
+  class mutex mutex;
+  condvar readwait;
 
   // We just need a byte stream with length.
   // Moreover, string gives us move semantics, so better than a plain struct.
   using datagram = string;
 
   os::list<datagram> rx;
-  os::vector<tcb_t*> wait;
 
   void on_receive(datagram &&dat);
 

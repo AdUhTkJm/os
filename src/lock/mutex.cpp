@@ -4,57 +4,61 @@
 namespace os {
 
 void mutex::acquire() {
+  auto tcb = active();
+
   lock.acquire();
-  if (pid == -1) {
-    pid = active()->pcb->pid;
-    lock.release();
-    return;
+  while (owner) {
+    wait.push_back(tcb);
+    suspend(lock);
   }
+  owner = tcb;
   lock.release();
-  scheduler.yield();
 }
 
 void mutex::release() {
   lock.acquire();
+  assert(owner == active());
+  owner = nullptr;
   if (!wait.empty()) {
-    scheduler.wakeup(wait.back());
-    wait.pop_back();
+    auto next = wait.front();
+    wait.pop_front();
+    scheduler.wakeup(owner, /*can_preempt=*/ false);
   }
-  pid = -1;
+    
   lock.release();
+  // If the woken up thread has higher priority, let it run first.
+  scheduler.maybe_preempt();
 }
 
-void condvar::wait() {
+void condvar::wait(mutex &lock) {
   spin.acquire();
   queue.push_back(active());
   spin.release();
 
-  // sie bit 1: disables all interrupt.
-  {
-    nopreempt _;
-    lock.release();
-    scheduler.yield();
-  }
-
+  interrupt = (suspend(lock) != 0);
   lock.acquire();
 }
 
 void condvar::notify() {
   spin.acquire();
   if (!queue.empty()) {
-    scheduler.wakeup(queue.back());
-    queue.pop_back();
+    auto next = queue.front();
+    queue.pop_front();
+    scheduler.wakeup(next, /*can_preempt=*/ false);
   }
   spin.release();
+  scheduler.maybe_preempt();
 }
 
 void condvar::notifyAll() {
   spin.acquire();
   while (!queue.empty()) {
-    scheduler.wakeup(queue.back());
-    queue.pop_back();
+    auto next = queue.front();
+    queue.pop_front();
+    scheduler.wakeup(next, /*can_preempt=*/ false);
   }
   spin.release();
+  scheduler.maybe_preempt();
 }
 
 }

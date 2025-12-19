@@ -156,11 +156,7 @@ public:
   };
 
   ~list() {
-    for (node *p = head; p != tail;) {
-      auto next = p->next;
-      delete p;
-      p = next;
-    }
+    clear();
   }
 
   void push_back(const T &item) {
@@ -198,8 +194,18 @@ public:
       t->next->prev = t->prev;
   }
 
-  T front() { return head->data; }
-  T back() { return tail->data; }
+  T &front() { return head->data; }
+  T &back() { return tail->data; }
+
+  void clear() {
+    for (node *p = head; p != tail;) {
+      auto next = p->next;
+      delete p;
+      p = next;
+    }
+    head = tail = nullptr;
+    sz = 0;
+  }
 
   iterator begin() { return head; }
   iterator end() { return nullptr; }

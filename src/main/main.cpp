@@ -18,6 +18,17 @@ using namespace os;
 static_assert(is_same_v<int64_t, long>);
 static_assert(is_same_v<size_t, unsigned long>);
 
+#ifdef LA
+[[always_inline, gnu::no_instrument_function]]
+static void map_1g(pa_t pa, va_t va) {
+  CSRW(tlbehi, LA_TLBEHI_VPPA(va));
+  CSRW(tlblo0, LA_TLBLO_PPN(pa) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0);
+  CSRW(tlblo1, 0);
+  CSRW(tlbidx, IDX_1G_PAGE);
+  __asm__ volatile("tlbwr");
+}
+#endif
+
 /*
 Init layout:
 .begin = 0x8020'0000
@@ -28,8 +39,9 @@ a1 = 0x8020'2010
 .text = 0x8020'3000, starting with _start_high
 ...
 */
-[[noreturn, gnu::no_instrument_function]] __attribute__((section(".text.low")))
+[[noreturn, gnu::no_instrument_function, gnu::section(".text.low")]]
 void kernel_main() {
+#ifdef RV
   // Map 16GB memory.
   pte_t *root = (pte_t *) 0x80201000ul;
   for (unsigned long i = 0; i < 16; i++) {
@@ -38,7 +50,7 @@ void kernel_main() {
     root[VA_LVL2(va)] = pte;
   }
   // Temporarily identity-map.
-  root[VA_LVL2(0x80000000ul)] = (PA_LVL2(0x80000000ul) << PTE_PPN2_OFFSET) | PTE_RWX | PTE_G | PTE_V;
+  root[VA_LVL2(0x8000'0000ul)] = (PA_LVL2(0x8000'0000ul) << PTE_PPN2_OFFSET) | PTE_RWX | PTE_G | PTE_V;
 
   // Move the root address into satp, and tell it we're using virtual addresses now.
   pa_t satp_val = SATP_MODE_SV39 | ((pa_t) root >> 12);
@@ -48,7 +60,20 @@ void kernel_main() {
     "jr %1\n"
     :: "r"(satp_val), "r"(as_va(0x80203000)) : "memory"
   );
-  for (;;) ;
+  __builtin_unreachable();
+#endif
+
+#ifdef LA
+  for (unsigned long i = 0; i < 16; i++)
+    map_1g(i << 30, as_va(i << 30));
+  map_1g(0x9000'0000ul, 0x9000'0000ul)
+  unsigned long crmd; CSRR(crmd, crmd);
+  crmd &= ~LA_CRMD_DA;
+  crmd |= LA_CRMD_PG;
+  CSRW(crmd, crmd);
+  __asm__ volatile("jirl $zero, %0, 0\n" :: "r"(as_va(0x9000'2000)));
+  __builtin_unreachable();
+#endif
 }
 
 void idle() {

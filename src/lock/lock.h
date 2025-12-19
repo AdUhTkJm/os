@@ -3,7 +3,27 @@
 
 #include "../utils/stl/vector.h"
 
+#ifdef DEADLOCK
+extern "C" [[noreturn]] void panic(const char *);
+extern "C" int printk(const char *, ...);
+#include "../instr/stack.h"
+#endif
+
 namespace os {
+
+// sie bit 1: disables all interrupt.
+struct nopreempt {
+  nopreempt() { __asm__ volatile("csrc sie, 2"); }
+  ~nopreempt() { __asm__ volatile("csrs sie, 2"); }
+};
+
+inline void disable_preempt() {
+  __asm__ volatile("csrc sie, 2");
+}
+
+inline void enable_preempt() {
+  __asm__ volatile("csrs sie, 2");
+}
 
 template<class T>
 concept locklike = requires(T t) {
@@ -12,13 +32,78 @@ concept locklike = requires(T t) {
   t.acquire();
 };
 
+#ifdef DEADLOCK
+struct tcb_t;
+tcb_t *active();
+#endif
+
 class spinlock {
   int v = 0;
   [[gnu::no_instrument_function]] static void release_impl(int *v);
   [[gnu::no_instrument_function]] static void acquire_impl(int *v);
+
+#ifdef DEADLOCK
+  tcb_t *owner = nullptr;
+#  ifdef FUNC_INSTRUMENT
+  stack::shadow_stack stack;
+#  endif
+#endif
 public:
-  [[gnu::no_instrument_function]] void release() { release_impl(&v); }
-  [[gnu::no_instrument_function]] void acquire() { acquire_impl(&v); }
+  spinlock() = default;
+  spinlock(const spinlock &other) = delete;
+  spinlock &operator=(const spinlock &other) = delete;
+
+#ifdef DEADLOCK
+  [[gnu::noinline]] 
+#endif
+  [[gnu::no_instrument_function]] void release() {
+#ifdef DEADLOCK
+    if (!owner) {
+#  ifdef FUNC_INSTRUMENT
+      printk("lock: last released:");
+      stack::dump(stack);
+      printk("lock: now:");
+      stack::dump();
+#  endif
+      panic("lock: release: double release");
+    }
+    // We shouldn't check whether owner == active().
+    // The lock in scheduler will change active process.
+    owner = nullptr;
+#  ifdef FUNC_INSTRUMENT
+    stack::copy(&stack);
+#  endif
+#endif
+#ifndef UNIPROCESSOR
+    release_impl(&v);
+#endif
+    enable_preempt();
+  }
+
+#ifdef DEADLOCK
+  [[gnu::noinline]] 
+#endif
+  [[gnu::no_instrument_function]] void acquire() {
+#ifdef DEADLOCK
+    if (owner == active()) {
+#  ifdef FUNC_INSTRUMENT
+      printk("lock: last acquired:\n");
+      stack::dump(stack);
+      printk("lock: now:\n");
+      stack::dump();
+#  endif
+      panic("lock: acquire: already owned");
+    }
+    owner = active();
+#  ifdef FUNC_INSTRUMENT
+    stack::copy(&stack);
+#  endif
+#endif
+    disable_preempt();
+#ifndef UNIPROCESSOR
+    acquire_impl(&v);
+#endif
+  }
 };
 
 template<locklike T>
@@ -27,11 +112,6 @@ class synchronized {
 public:
   synchronized(T &lock): lock(lock) { lock.acquire(); }
   ~synchronized() { lock.release(); }
-};
-
-struct nopreempt {
-  nopreempt() { __asm__ volatile("csrc sie, 2"); }
-  ~nopreempt() { __asm__ volatile("csrs sie, 2"); }
 };
 
 }

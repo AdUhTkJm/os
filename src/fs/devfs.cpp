@@ -18,8 +18,10 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
     while (!c) {
       if (!block)
         return i == 0 ? -EAGAIN : i;
+
+      lock.acquire();
       wait.push_back(active());
-      if (suspend() != 0)
+      if (suspend(lock) != 0)
         return i == 0 ? -EINTR : i;
       c = console_input_buf->pop_front();
     }

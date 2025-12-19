@@ -5,8 +5,9 @@
 namespace {
 
 // strcpy() that modifies dst.
-void strcpy_r(char *&dst, const char *src) {
+void copy(char *&dst, const char *src) {
   while ((*dst++ = *src++));
+  dst--; // We don't want the '\0' at the end.
 }
 
 }
@@ -22,7 +23,8 @@ C int printk(const char *fmt, ...) {
   int len = os::vsprintf(buf, fmt, args);
 
   va_end(args);
-  sbi_console_write(len, os::to_pa(buf));
+  // Exclude the '\0' at the end.
+  sbi_console_write(len - 1, os::to_pa(buf));
   return len;
 }
 
@@ -48,13 +50,13 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
     case 'd': {
       int val = va_arg(args, int);
       itoa(val, buf, 10);
-      strcpy_r(dst, buf);
+      copy(dst, buf);
       break;
     }
     case 'u': {
       unsigned val = va_arg(args, unsigned);
       ultoa(val, buf, 10);
-      strcpy_r(dst, buf);
+      copy(dst, buf);
       break;
     }
     case 'x': {
@@ -67,12 +69,12 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
           *dst++ = '0';
       }
 
-      strcpy_r(dst, buf);
+      copy(dst, buf);
       break;
     }
     case 'p': {
       uintptr_t val = va_arg(args, uintptr_t);
-      strcpy_r(dst, "0x");
+      copy(dst, "0x");
       ultoa(val, buf, 16);
       int len = strlen(buf);
 
@@ -81,7 +83,7 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
           *dst++ = '0';
       }
 
-      strcpy_r(dst, buf);
+      copy(dst, buf);
       break;
     }
     case 'c': {
@@ -91,7 +93,7 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
     }
     case 's': {
       char *val = va_arg(args, char*);
-      strcpy_r(dst, val);
+      copy(dst, val);
       break;
     }
     case 'l':
@@ -99,17 +101,17 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
       case 'd': {
         int64_t val = va_arg(args, int64_t);
         ltoa(val, buf, 10);
-        strcpy_r(dst, buf);
+        copy(dst, buf);
         break;
       }
       case 'x': {
         int64_t val = va_arg(args, int64_t);
         ltoa(val, buf, 16);
-        strcpy_r(dst, buf);
+        copy(dst, buf);
         break;
       }
       default:
-        strcpy_r(dst, "%l");
+        copy(dst, "%l");
         break;
       }
       break;
@@ -119,6 +121,7 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
     }
     }
   }
+  *dst++ = '\0';
   return dst - start;
 }
 
@@ -138,7 +141,7 @@ void klog(const char *fmt, ...) {
   unsigned len = vsprintf(tmp, fmt, args);
   va_end(args);
 
-  log.write(tmp, len);
+  log.write(tmp, len - 1);
 }
 
 void log_buffer::write(const char *data, unsigned len) {

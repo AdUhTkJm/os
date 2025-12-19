@@ -243,8 +243,9 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
 
   for (int i = 0;;) {
+    lock.acquire();
     wait.push_back(active());
-    if (suspend() != 0)
+    if (suspend(lock) != 0)
       return -EINTR;
     RFENCE;
     for (uint16_t last = queue->used.idx; i != last; i++) {
@@ -501,16 +502,17 @@ int net_device::write(const void *buf, int len, bool block) {
     return -E2BIG;
 
   for (;;) {
-    synchronized _(lock);
+    lock.acquire();
     
     // The queue is full. Suspend.
     if (tx->avail.idx - txlast >= vq::size) {
-      if (!block)
+      if (!block) {
+        lock.release();
         return -ENOSPC;
+      }
 
       txwait.push_back(active());
-      lock.release(); 
-      if (suspend() != 0)
+      if (suspend(lock) != 0)
         return -EINTR;
       
       continue;
@@ -541,6 +543,7 @@ int net_device::write(const void *buf, int len, bool block) {
     tx->avail.idx++;
     WFENCE;
     mmwr(base + QUEUE_NOTIFY, TXID);
+    lock.release();
     return len;
   }
 }

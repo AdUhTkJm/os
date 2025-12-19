@@ -77,8 +77,46 @@ C constexpr uint64_t to_big_endian64(uint64_t x) {
 }
 #endif
 
+#ifdef LA
+typedef enum {
+  crmd   = 0x00,
+  eentry = 0x0c,
+  tlbidx = 0x10,
+  tlbehi = 0x11,
+  tlblo0 = 0x12,
+  tlblo1 = 0x13,
+  asid   = 0x18,
+  pgdl   = 0x19,
+  pgdh   = 0x20,
+} loongarch_csrs_t;
+
+#define CRMD_DA (1 << 3) /* Direct access */
+#define CRMD_PG (1 << 4) /* Paging */
+
+#define TLBEHI_VPPA_SHIFT 13
+/* Note this doesn't shift-out the final zeroes, unlike ptable.h. */
+#define TLBEHI_VPPA(x) ((x) & (~((1ul << TLBEHI_VPPN_SHIFT) - 1)))
+
+#define TLBLO_PPN_SHIFT 12
+#define TLBLO_PPN(x) ((x) & (~((1UL << TLBLO_PPN_SHIFT) - 1)))
+
+#define TLBLO_V      (1UL << 0)   /* Valid */ 
+#define TLBLO_D      (1UL << 1)   /* Dirty (writable) */ 
+#define TLBLO_PLV0   (1UL << 2)   /* OS access */ 
+#define TLBLO_PLV3   (1UL << 3)   /* User access */ 
+#define TLBLO_G      (1UL << 6)   /* Global */
+
+#define TLBIDX_PS_SHIFT 24
+#define TLBIDX_PS(x)  (((x) >> TLBIDX_PS_SHIFT) & 0x3ful)
+
+#define TLB_PS_1G (0x1eul << TLBIDX_PS_SHIFT)
+#define TLB_PS_2M (0x15ul << TLBIDX_PS_SHIFT)
+#define TLB_PS_4K (0x0cul << TLBIDX_PS_SHIFT)
+#endif
+
 C void hexdump(const void *ptr, size_t len);
 
+#ifdef RV
 #define CSRW(reg, value) __asm__ volatile("csrw " #reg ", %0" :: "r"(value))
 #define CSRR(reg, value) __asm__ volatile("csrr %0, " #reg : "=r"(value))
 #define CSRS(reg, value) __asm__ volatile("csrs " #reg ", %0" :: "r"(value))
@@ -90,6 +128,12 @@ C void hexdump(const void *ptr, size_t len);
 #define FENCE __asm__ volatile("fence" ::: "memory")
 #define RFENCE __asm__ volatile("fence r, r" ::: "memory")
 #define WFENCE __asm__ volatile("fence w, w" ::: "memory")
+#endif
+
+#ifdef LA
+#define CSRW(reg, value) __asm__ volatile("csrwr %0, %1" :: "r"(value), "i"(loongarch_csrs_t::reg))
+#define CSRR(reg, value) __asm__ volatile("csrrd %0, %1" : "=r"(value) : "i"(loongarch_csrs_t::reg))
+#endif
 
 extern char __text_begin[], __text_end[];
 extern char __rodata_begin[], __rodata_end[];

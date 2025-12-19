@@ -75,14 +75,14 @@ class ring_buffer<T, Size, block> {
 public:
   ring_buffer(const ring_buffer&) = delete;
   ring_buffer &operator=(const ring_buffer&) = delete;
-  ring_buffer(): onempty(lock), onfull(lock) {}
+  ring_buffer() {}
 
   constexpr static size_t capacity = Size;
 
   void push_back(const T &item) {
     synchronized syn(lock);
     while (count == Size)
-      onfull.wait();
+      onfull.wait(lock);
     ring[tail] = item;
     tail = (tail + 1) % Size;
     count++;
@@ -92,7 +92,7 @@ public:
   T pop_front() {
     synchronized syn(lock);
     while (count == 0)
-      onempty.wait();
+      onempty.wait(lock);
     auto item = ring[head];
     head = (head + 1) % Size;
     count--;

@@ -8,20 +8,24 @@ namespace os {
 
 class mutex {
   spinlock lock;
-  int pid = -1;            // The pid of current lock owner.
-  os::vector<tcb_t*> wait; // All pids that wait on this lock.
+  tcb_t *owner;
+  os::list<tcb_t*> wait;
+
+  friend class condvar;
 public:
   void acquire();
   void release();
 };
 
 class condvar {
-  mutex &lock;
   spinlock spin;
-  os::vector<tcb_t*> queue;
+  os::list<tcb_t*> queue;
+  bool interrupt;
 public:
-  condvar(mutex &lock): lock(lock) {}
-  void wait();
+  bool interrupted() { return interrupt; }
+  
+  // Atomically enqueues the thread, and releases the lock.
+  void wait(mutex &lock);
   void notify();
   void notifyAll();
 };

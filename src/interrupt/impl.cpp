@@ -207,6 +207,7 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   bool untraced = options & WUNTRACED;
   // TODO
   (void) untraced;
+  spinlock lock;
 
   [[unlikely]] if (pid == int(0x8000'0000))
     return -ESRCH;
@@ -242,8 +243,9 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
     if (nohang)
       return 0;
 
+    lock.acquire();
     pcb->wait.push_back(tcb);
-    if (suspend() != 0)
+    if (suspend(lock) != 0)
       return -EINTR;
   }
 }

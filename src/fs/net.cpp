@@ -9,7 +9,8 @@ spinlock eth::lock;
 eth::address eth::src;
 
 spinlock ip::lock;
-ip::address ip::src;
+ip::address ip::src, ip::subnet_mask;
+static_storage<os::vector<ip::address>> ip::routers, ip::dns;
 
 static_storage<class demux> demux;
 socketfs sockfs;
@@ -85,6 +86,10 @@ int arp::write(net_device *dev, const void *data, size_t len, ip::address dst, i
 
 void ip::read(const char *p, size_t len) {
   auto header = (ip::header *) p;
+  // Verify checksum.
+  if (checksum(header) != 0)
+    printk("kernel warning: bad ip checksum, dropped\n");
+
   switch (header->protocol) {
   case UDP:
     udp::read(p + sizeof(ip::header), len - sizeof(ip::header));
@@ -92,6 +97,39 @@ void ip::read(const char *p, size_t len) {
   default:
     printk("kernel warning: unknown protocol %d, dropped\n", header->protocol);
   }
+}
+
+string ip::format(__big ip::address addr) {
+  __little ip::address ip = htonl(addr);
+  char buf[20];
+  sprintf(buf, "%d.%d.%d.%d", (ip >> 24) & 0xff, (ip >> 16) & 0xff, (ip >> 8) & 0xff, ip & 0xff);
+  return buf;
+}
+
+optional<ip::address> ip::format(const string &addr) {
+  ip::address ip = 0;
+  unsigned comp = 0;
+  int dots = 0;
+
+  for (const char *p = addr.c_str(); *p; p++) {
+    if (*p >= '0' && *p <= '9') {
+      comp = comp * 10 + (*p - '0');
+      if (comp > 255)
+        return nullopt;
+    } else if (*p == '.') {
+      if (dots >= 3)
+        return 0;
+
+      ip = (ip << 8) | comp;
+      comp = 0;
+      dots++;
+    } else return nullopt;
+  }
+
+  if (dots != 3)
+    return nullopt;
+
+  return (ip << 8) | comp;
 }
 
 void ip::fill_header(char *p, address dst, address src, unsigned short len, protocol prot) {
@@ -153,7 +191,6 @@ unsigned short ip::checksum(const void *h, unsigned len) {
 void udp::read(const char *p, size_t len) {
   auto header = (udp::header *) p;
   auto port = header->dstport;
-  printk("udp read\n");
   // Inform user program.
   if (!demux->udps.count(port)) {
     printk("kernel warning: unknown port %d, dropped\n", port);
@@ -203,36 +240,40 @@ udp_socket_inode::udp_socket_inode(net_device *dev, ip::address src, unsigned sh
 }
 
 void udp_socket_inode::on_receive(datagram &&data) {
-  synchronized _(lock);
-  rx.push_back(os::move(data));
-  if (wait.size()) {
-    lock.release();
-    scheduler.wakeup_all(lock, wait);
+  {
+    synchronized _(rxlock);
+    rx.push_back(os::move(data));
   }
+  readwait.notifyAll();
 }
 
 size_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
   bool block = !(flags & O_NONBLOCK);
-  tcb_t *tcb = active();
 
+  mutex.acquire();
   for (;;) {
-    synchronized _(lock);
+    rxlock.acquire();
 
-    if (rx.empty()) {
-      if (!block)
-        return -EAGAIN;
-      wait.push_back(tcb);
-      if (suspend() != 0)
-        return -EINTR;
-    
-      continue;
+    if (!rx.empty()) {
+      datagram dg = os::move(rx.front());
+      rx.pop_front();
+      rxlock.release();
+
+      mutex.release();
+      auto l = min(len, (unsigned long) dg.size());
+      memcpy(buf, dg.c_str(), l);
+      return l;
     }
 
-    const datagram &dg = rx.front();
-    auto l = min(len, (unsigned long) dg.size());
-    memcpy(buf, dg.c_str(), l);
-    rx.pop_front();
-    return l;
+    rxlock.release();
+    if (!block) {
+      mutex.release();
+      return -EAGAIN;
+    }
+
+    readwait.wait(mutex);
+    if (readwait.interrupted())
+      return -EINTR;
   }
 }
 
@@ -257,7 +298,6 @@ size_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
 }
 
 short udp_socket_inode::poll(unsigned short events) {
-  synchronized _(lock);
   short result = 0;
   if (events & POLLIN && rx.size())
     result |= POLLIN;
@@ -284,7 +324,7 @@ int udp_socket_inode::connect(ip::address addr, udp::port port) {
 }
 
 void udp_socket_inode::wake_read() {
-  scheduler.wakeup_all(lock, wait);
+  readwait.notifyAll();
 }
 
 void udp_socket_inode::wake_write() {
@@ -299,10 +339,13 @@ void dhcp::fill_option(unsigned char *&dst, unsigned char type, const char *src,
 }
 
 void dhcp::daemon() {
+  ip::routers.construct();
+  ip::dns.construct();
+
   // The IP addresses stay the same after conversion to big-endian, so we omit the conversion here.
   auto sock = new udp_socket_inode(virtio::netdev(), 0, htons(68));
   sock->connect(0xffffffff, htons(67));
-
+discover:
   alignas(4) unsigned char payload[300] = { 0x01, 0x01, 0x06, 0x00 };
   unsigned xid = rand(), netxid = htonl(xid), cookie = htonl(0x63825363);
   
@@ -319,7 +362,7 @@ void dhcp::daemon() {
 
   // Queries for the DHCP server.
   // For meanings, see https://en.wikipedia.org/wiki/Dynamic_Host_Configuration_Protocol#Options
-  char buf[] = { /*subnet mask*/ 1, /*router*/ 3, /*dns server*/ 6, /*ntp server*/ 42 };
+  char buf[] = { /*subnet mask*/ 1, /*router*/ 3, /*dns server*/ 6 };
   fill_option(opt, 55, buf, sizeof(buf));
 
   // Notify server about our ethernet address.
@@ -335,11 +378,120 @@ void dhcp::daemon() {
   // Write it.
   sock->options.broadcast = true;
   sock->write(0, payload, opt - payload, 0);
+
   // Read.
-  unsigned char recv[300];
+  unsigned char recv[400];
   unsigned len = sock->read(0, recv, sizeof(recv), 0);
-  hexdump(recv, len);
-  for (;;) __asm__ volatile("wfi");
+
+  // Extract information from it.
+  unsigned recvcookie;
+  memcpy(&recvcookie, recv + 236, 4);
+  bool valid = len >= 240 && recvcookie == htonl(0x63825363);
+  if (!valid)
+    goto discover;
+
+  ip::address src, subnet_mask, siaddr;
+  os::vector<ip::address> routers, dns;
+  memcpy(&src, recv + 16, 4);
+  memcpy(&siaddr, recv + 20, 4);
+
+  for (auto opt = recv + 240; opt - recv < 400 && *opt != 0xff; ) {
+    auto type = *opt++;
+    // This is just padding.
+    if (type == 0)
+      continue;
+
+    auto len = *opt++;
+    switch (type) {
+    case 1:
+      memcpy(&subnet_mask, opt, 4);
+      break;
+
+    case 3:
+      for (unsigned i = 0; i < len; i += 4) {
+        ip::address router;
+        memcpy(&router, opt, 4);
+        routers.push_back(router);
+      }
+      break;
+
+    case 6:
+      for (unsigned i = 0; i < len; i += 4) {
+        ip::address addr;
+        memcpy(&addr, opt, 4);
+        dns.push_back(addr);
+      }
+      break;
+    
+    case 53:
+      if (*opt != 2)
+        valid = false;
+      break;
+    
+    default:
+      printk("dhcp: warning: unknown option %d\n", type);
+      break;
+    }
+    opt += len;
+  }
+
+  if (valid) {
+    synchronized _(ip::lock);
+    ip::src = src;
+    ip::subnet_mask = subnet_mask;
+    *ip::routers = os::move(routers);
+    *ip::dns = os::move(dns);
+  } else goto discover;
+
+  // Now send a request message, still broadcast.
+  // The front part of payload is largely reusable, so we don't clear it.
+request:
+  memset(payload + 240, 0, sizeof(payload) - 240);
+  memset(recv, 0, sizeof(recv));
+
+  memcpy(payload + 20, &siaddr, 4);
+
+  // Fill in options and send it. The broadcast flag is already true.
+  char request = 3;
+  opt = payload + 240;
+  fill_option(opt, 53, &request, 1);
+  fill_option(opt, 50, (const char*) &src, sizeof(ip::address));
+  fill_option(opt, 54, (const char*) &siaddr, sizeof(ip::address));
+  *opt++ = 0xff;
+  sock->write(0, payload, opt - payload, 0);
+
+  // Look at the final acknowledge packet.
+  len = sock->read(0, recv, sizeof(recv), 0);
+  memcpy(&recvcookie, recv + 236, 4);
+  valid = len >= 240 && recvcookie == htonl(0x63825363);
+  if (!valid)
+    goto request;
+  
+  unsigned lease_time = 0;
+  for (auto opt = recv + 240; opt - recv < 400 && *opt != 0xff; ) {
+    auto type = *opt++;
+    auto len = *opt++;
+    switch (type) {
+    case 53:
+      if (*opt != 4)
+        valid = false;
+      break;
+
+    case 51:
+      memcpy(&lease_time, opt, 4);
+      lease_time = htonl(lease_time);
+
+    default: 
+      ; // Ignored. The information is already included.
+    }
+    opt += len;
+  }
+
+  printk("lease time: %u\n", lease_time);
+  
+  auto tcb = active();
+  tcb->sleep(lease_time * 500'000'000 /*ns*/);
+  goto discover;
 }
 
 }

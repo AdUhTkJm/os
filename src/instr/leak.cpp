@@ -101,6 +101,10 @@ void copy(shadow_stack *stack) {
   memcpy(stack, &::stack, sizeof(shadow_stack));
 }
 
+void clear(shadow_stack *stack) {
+  stack->top = 0;
+}
+
 const char* lookup_symbol(unsigned long pc) {
   if (symcnt == 0 || pc >= symbols[symcnt - 1].addr)
     return "<unknown>";

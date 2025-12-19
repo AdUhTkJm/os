@@ -23,10 +23,12 @@ parser.add_argument("-m", "--mount", action="store_true")
 parser.add_argument("--docs", action="store_true")
 parser.add_argument("--log-refcnt", action="store_true")
 parser.add_argument("--log-syscall", action="store_true")
+parser.add_argument("--detect-deadlock", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
 parser.add_argument("--gdb", action="store_true")
+parser.add_argument("--smp", action="store_true")
 
 args = parser.parse_args()
 
@@ -73,11 +75,17 @@ if args.log_refcnt:
 
 if not args.log_syscall:
   flags += ["-DNO_SYSCALL_LOG"]
+
+if args.detect_deadlock:
+  flags += ["-DDEADLOCK"]
   
 if args.no_debug:
   flags += ["-DNDEBUG"]
 else:
   flags += ["-g"]
+
+if not args.smp:
+  flags += ["-DUNIPROCESSOR"]
 
 if args.la:
   # Loongarch.

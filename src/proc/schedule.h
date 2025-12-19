@@ -25,17 +25,22 @@ struct scheduler_t {
   // Puts the current active process to sleep.
   // When sleepy = false, puts it to ready state instead.
   [[noreturn]] void yield(bool sleepy = true);
+  void yield(spinlock *lock);
 
   // Note that even if `can_preempt` is true, it doesn't mean preemption will always happen.
   void wakeup(tcb_t *tcb, bool can_preempt = true);
 
   // Wakes up everything in this container, and clears it.
   // We need the lock to protect the write to tcb.
-  template<locklike Lock>
-  void wakeup_all(Lock &lock, os::vector<tcb_t*> &tcbs, bool can_preempt = true) {
-    synchronized syn(this->lock);
+  template<locklike Lock, typename Vector> requires requires(Vector v) {
+    v.clear();
+    v.end(); v.begin();
+  }
+  void wakeup_all(Lock &vlock, Vector &tcbs, bool can_preempt = true) {
+    lock.acquire();
     {
-      synchronized s2(lock);
+      synchronized __(vlock);
+
       for (auto tcb : tcbs) {
         tcb->status = Ready;
         sleep.erase(tcb);
@@ -44,10 +49,15 @@ struct scheduler_t {
       tcbs.clear();
     }
     if (can_preempt)
-      maybe_preempt();
+      maybe_preempt_impl();
+    else
+      lock.release();
   }
-  
-  void maybe_preempt();
+
+  void maybe_preempt() {
+    lock.acquire();
+    maybe_preempt_impl();
+  }
 
   // Remove tcb from the napping list.
   void unnap(tcb_t *tcb, bool wake = true);
@@ -56,6 +66,8 @@ struct scheduler_t {
   void tick();
 private:
   [[noreturn]] void dispatch_impl();
+  
+  void maybe_preempt_impl();
 };
 
 static_assert(offsetof(scheduler_t, active) == 48);

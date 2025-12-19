@@ -19,6 +19,7 @@ struct shadow_stack {
 [[gnu::no_instrument_function]] void dump();
 [[gnu::no_instrument_function]] void dump(const shadow_stack &stack);
 [[gnu::no_instrument_function]] void reset();
+[[gnu::no_instrument_function]] void clear(shadow_stack *stack);
 [[gnu::no_instrument_function]] void copy(shadow_stack *stack);
 [[gnu::no_instrument_function]] const char *lookup_symbol(unsigned long pc);
 

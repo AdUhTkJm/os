@@ -9,20 +9,23 @@ pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0
 size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
   // Offset is not supported on pipes.
   (void) offset;
-  synchronized _(lock);
+  lock.acquire();
 
   auto tcb = active();
   while (rpos == buffer.size()) {
     // No more writers. EOF.
-    if (writers == 0)
+    if (writers == 0) {
+      lock.release();
       return 0;
+    }
 
-    if (flags & O_NONBLOCK)
+    if (flags & O_NONBLOCK) {
+      lock.release();
       return -EAGAIN;
+    }
 
     read_wait.push_back(tcb);
-    lock.release();
-    if (suspend() != 0)
+    if (suspend(lock) != 0)
       return -EINTR;
     lock.acquire();
   }
@@ -39,26 +42,30 @@ size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
     buffer = os::move(v);
     rpos = 0;
   }
+  lock.release();
   return l;
 }
 
 size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   (void) offset;
   
-  synchronized _(lock);
+  lock.acquire();
 
   auto tcb = active();
   while (buffer.size() == maxbuf) {
     // No more readers. Don't write.
-    if (readers == 0)
+    if (readers == 0) {
+      lock.release();
       return -EPIPE;
+    }
 
-    if (flags & O_NONBLOCK)
+    if (flags & O_NONBLOCK) {
+      lock.release();
       return -EAGAIN;
+    }
 
     write_wait.push_back(tcb);
-    lock.release();
-    if (suspend() != 0)
+    if (suspend(lock) != 0)
       return -EINTR;
     lock.acquire();
   }

@@ -79,22 +79,25 @@ void scheduler_t::yield(bool sleepy) {
   dispatch_impl();
 }
 
-void scheduler_t::maybe_preempt() {
+void scheduler_t::maybe_preempt_impl() {
   // Preempt the idle pcb immediately. Don't wait till timer fire.
   if (active->pcb->pid == 0) {
     ready.push_back(active);
     active->status = Ready;
     dispatch_impl();
-  }
+  } else
+    lock.release();
 }
 
 void scheduler_t::wakeup(tcb_t *tcb, bool can_preempt) {
-  synchronized syn(lock);
+  lock.acquire();
   tcb->status = Ready;
   sleep.erase(tcb);
   ready.push_back(tcb);
   if (can_preempt)
-    maybe_preempt();
+    maybe_preempt_impl();
+  else
+    lock.release();
 }
 
 void scheduler_t::unnap(tcb_t *tcb, bool wake) {

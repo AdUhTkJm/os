@@ -195,9 +195,10 @@ void pcb_t::send_signal(int sig) {
 
 int tcb_t::sleep(size_t nano) {
   timeout = nano == -1ul ? (1l << 63) : (nano + tick_length - 1) / tick_length;
+  
+  napping.lock.acquire();
   napping->push_back(this);
-  auto ret = suspend();
-  if (ret == -EINTR)
+  if (suspend(napping.lock) == -EINTR)
     return -EINTR;
   if (timeout != 0)
     return 1;
