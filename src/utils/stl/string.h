@@ -123,6 +123,10 @@ public:
     return s;
   }
 
+  void push_back(char v) {
+    *this += string(&v, 1);
+  }
+
   string join(const vector<string> &v) const {
     string result;
     for (size_t i = 0; i < v.size(); i++) {

@@ -12,6 +12,7 @@ extern "C" int printk(const char *, ...);
 namespace os {
 
 // sie bit 1: disables all interrupt.
+#if defined(__riscv) || IN_VSCODE
 struct nopreempt {
   nopreempt() { __asm__ volatile("csrc sie, 2"); }
   ~nopreempt() { __asm__ volatile("csrs sie, 2"); }
@@ -24,6 +25,27 @@ inline void disable_preempt() {
 inline void enable_preempt() {
   __asm__ volatile("csrs sie, 2");
 }
+#endif
+#if defined(__loongarch__)
+inline void disable_preempt() {
+  unsigned crmd;
+  CSRR(crmd, crmd);
+  crmd &= ~CRMD_IE;
+  CSRW(crmd, crmd);
+}
+
+inline void enable_preempt() {
+  unsigned crmd;
+  CSRR(crmd, crmd);
+  crmd |= CRMD_IE;
+  CSRW(crmd, crmd);
+}
+
+struct nopreempt {
+  nopreempt() { enable_preempt(); }
+  ~nopreempt() { disable_preempt(); }
+};
+#endif
 
 template<class T>
 concept locklike = requires(T t) {

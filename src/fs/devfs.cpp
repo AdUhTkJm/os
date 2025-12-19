@@ -227,6 +227,20 @@ null_inode::null_inode(): inode_impl(&*devfs, 0, 0, 0666, File) {}
 
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0, 0755, Dir) {}
 
+inode *devroot::lookup(const string &name) {
+  if (!children.count(name))
+    return nullptr;
+  return children[name];
+}
+
+vector<inode::item> devroot::list() {
+  vector<item> result;
+  result.reserve(children.size());
+  for (auto [name, inode] : children)
+    result.push_back({ .inum = (long) inode, .name = name, .ty = inode->type });
+  return result;
+}
+
 devfs::devfs() {
   auto node = new devroot(this);
   root = new dentry("dev", node, nullptr);

@@ -15,6 +15,8 @@
 extern int timer_tick;
 // In nanosecond, from Unix epoch.
 extern size_t realtime;
+// Default to zero (UTC).
+timezone zone;
 
 // Returns current timestamp.
 size_t os::now() {
@@ -57,12 +59,13 @@ long syshandle(trapframe *ksp) { \
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #define PRINT_FORMAT(x) #x " (%d): "
-#define PRINT1(x, a) klog(PRINT_FORMAT(x) #a " = %p", syscall::x, a0);
-#define PRINT2(x, a, b) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p", syscall::x, a0, a1);
-#define PRINT3(x, a, b, c) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p", syscall::x, a0, a1, a2);
-#define PRINT4(x, a, b, c, d) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p", syscall::x, a0, a1, a2, a3);
-#define PRINT5(x, a, b, c, d, e) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p", syscall::x, a0, a1, a2, a3, a4);
-#define PRINT6(x, a, b, c, d, e, f) klog(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p", syscall::x, a0, a1, a2, a3, a4, a5);
+#define LOG_METHOD printk
+#define PRINT1(x, a) LOG_METHOD(PRINT_FORMAT(x) #a " = %p", syscall::x, a0);
+#define PRINT2(x, a, b) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p", syscall::x, a0, a1);
+#define PRINT3(x, a, b, c) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p", syscall::x, a0, a1, a2);
+#define PRINT4(x, a, b, c, d) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p", syscall::x, a0, a1, a2, a3);
+#define PRINT5(x, a, b, c, d, e) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p", syscall::x, a0, a1, a2, a3, a4);
+#define PRINT6(x, a, b, c, d, e, f) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p", syscall::x, a0, a1, a2, a3, a4, a5);
 
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
@@ -275,8 +278,9 @@ HANDLE(sendfile, out, in, offptr, len) {
 
 HANDLE(openat, dirfd, _path, flags, mode) {
   auto path = copy_from_user((char *) _path);
-  if (!path)
+  if (!path || !*path)
     return -EFAULT;
+
   bool relative = (*path)[0] != '/';
   int fd = relative
     ? pcb->open_file_from(path->get(), dirfd, flags)
@@ -673,6 +677,7 @@ HANDLE(uname, buf) {
 }
 
 HANDLE(get_robust_list, pid, headptr, size) {
+  printk("get_robust_list: no robust list now\n");
   auto queried = pid == 0 ? pcb : (*pidmap)[pid];
   // TODO: this is actually user memory.
   copy_to_user((void *) headptr, queried->robust_list, sizeof(robust_list_head));
@@ -682,10 +687,11 @@ HANDLE(get_robust_list, pid, headptr, size) {
 }
 
 HANDLE(set_robust_list, headptr, size) {
+  printk("set_robust_list: no robust list now\n");
   if (size != sizeof(robust_list_head))
     return -EINVAL;
   pcb->robust_list = (void*) headptr;
-  return 0;
+  return -ENOSYS;
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
@@ -763,14 +769,14 @@ HANDLE(mount, _src, _tgt, _fsty, flags, data) {
   return ret;
 }
 
-HANDLE(chroot, apath) {
+HANDLE(chroot, _path) {
   // Only root can chroot.
   if (pcb->euid != 0)
     return -EACCES;
 
-  auto path = copy_from_user((char *) apath);
-  if (!path)
-    return path;
+  auto path = copy_from_user((char *) _path);
+  if (!path || !*path)
+    return -EFAULT;
 
   auto dentry = pcb->vfs->lookup(path->get());
   if (!dentry)
@@ -782,11 +788,12 @@ HANDLE(chroot, apath) {
 }
 
 HANDLE(prlimit64, pid, resource, new_rlim, old_rlim) {
-  printk("pid = %d, pcb->pid = %d\n", pid, pcb->pid);
-  if (pcb->pid != 0 && pid != pcb->pid)
+  if (pid != 0 && pid != pcb->pid && pcb->uid != 0)
     return -EPERM; // TODO: better checks
+  if (pid == 0)
+    pid = pcb->pid;
 
-  printk("resource = %d\n", resource);
+  printk("prlimit: resource = %d\n", resource);
   // TODO
   return -1;
 }
@@ -812,6 +819,40 @@ HANDLE(clock_gettime, id, tp) {
   spec.tv_sec = time / 1'000'000'000;
   spec.tv_nsec = time % 1'000'000'000;
   copy_to_user((void *) tp, &spec, sizeof(timespec));
+  return 0;
+}
+
+HANDLE(gettimeofday, tv, tz) {
+  if (tz)
+    copy_to_user((void*) tz, &zone, sizeof(timezone));
+  
+  if (tv) {
+    auto cur = now();
+    timeval ts {
+      .tv_sec = long(cur / 1_s),
+      .tv_usec = long(cur % 1_s) / 1000,
+    };
+    copy_to_user((void*) tv, &ts, sizeof(timeval));
+  }
+  return 0;
+}
+
+HANDLE(settimeofday, tv, tz) {
+  if (tz)
+    // TODO: What is a valid timezone anyway?
+    return -EINVAL;
+  if (tv) {
+    // Note this is a timeval!
+    auto val = copy_from_user((void*) tv, sizeof(timeval));
+    if (!val)
+      return val;
+    auto ts = (timeval*) val->get();
+    unsigned long time = ts->tv_usec * 1_us + ts->tv_sec * 1_s;
+    unsigned long tick = rdtime() * (unsigned long) timer_tick;
+    if (time < tick)
+      return -EINVAL;
+    realtime = time - tick;
+  }
   return 0;
 }
 
@@ -865,6 +906,11 @@ HANDLE(mprotect, start, len, prot) {
 
 HANDLE(munmap, addr, len) {
   return detail::munmap(addr, len);
+}
+
+HANDLE(sched_yield, _) {
+  // There is no system call context when we directly call yield().
+  scheduler.yield(/*sleepy=*/false);
 }
 
 HANDLE(rt_sigprocmask, how, set, oldset, size) {
@@ -1179,7 +1225,7 @@ namespace os {
       auto trap = (trapframe *) pcb->ksp;
       trap->regs[8] = syshandle(trap); // a0
 #ifndef NO_SYSCALL_LOG
-      klog(" -> (%p)\n", trap->regs[8]);
+      LOG_METHOD(" -> (%p)\n", trap->regs[8]);
 #endif
       break;
     }

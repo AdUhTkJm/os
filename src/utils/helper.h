@@ -90,8 +90,10 @@ typedef enum {
   pgdh   = 0x20,
 } loongarch_csrs_t;
 
-#define CRMD_DA (1 << 3) /* Direct access */
-#define CRMD_PG (1 << 4) /* Paging */
+#define CRMD_PLV (1 << 0) /* Privilege level */
+#define CRMD_IE  (1 << 2) /* Interrupt enable */
+#define CRMD_DA  (1 << 3) /* Direct access */
+#define CRMD_PG  (1 << 4) /* Paging */
 
 #define TLBEHI_VPPA_SHIFT 13
 /* Note this doesn't shift-out the final zeroes, unlike ptable.h. */

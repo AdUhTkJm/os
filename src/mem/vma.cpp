@@ -112,7 +112,7 @@ void map_current(void *va, pte_t *root) {
 
 void map_current(void *from, void *to, bool write) {
   char *p = (char *) from, *q = (char *) to;
-  for (; p < q; p += PAGE_SIZE) {
+  for (p = rounddown<PAGE_SIZE>(p); p < q; p += PAGE_SIZE) {
     int flags = pte_flags(p);
     if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write))
       map_single(p, pt_root());
@@ -212,16 +212,32 @@ void vmas::push(const vma_t &vma) {
   //    In this case, we can simply erase the VMA, since it's completely covered.
   while (i < vmas.size() && vmas[i].begin < end) {
     const auto &cur = vmas[i];
-    if (cur.end > end) {
+    if (cur.end >= end) {
       split_at(i, end);
+
+      // Now there is an overlapping part.
+      // There are also two cases:
+      //
+      // Case 1.
+      //        [========]
+      // |----------| end
+      //    We can erase the overlapping part.
+      //
+      // Case 2.
+      //  [=============]
+      //       |----| end
+      //    We shrink the first part, and should insert after that.
+      if (vmas[i].begin < begin)
+        vmas[i++].end = begin;
+      else
+        vmas.erase(vmas.begin() + i);
       break;
     }
-    if (cur.begin >= begin)
-      vmas.erase(vmas.begin() + i);
+    assert(cur.begin >= begin);
+    vmas.erase(vmas.begin() + i);
   }
 
   // Finally record the new VMA.
-  // Note that we don't allow overwriting PT_LOAD or STACK, so we only check for heap here.
   vmas.insert(vmas.begin() + i, vma);
 }
 

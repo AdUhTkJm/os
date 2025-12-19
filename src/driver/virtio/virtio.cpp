@@ -625,8 +625,8 @@ void probe() {
       plic::record(device.interrupt, block_device_handler);
 
       // Create a node in devfs.
-      char buf[4] = "sda";
-      buf[2] += block_device_cnt++; // sda, sdb, sdc ...
+      char buf[4] = "vda";
+      buf[2] += block_device_cnt++; // vda, vdb, vdc ...
       devnode->record(buf, new (os::permanent) block_inode(dev));
 
       (*blk_intr)[device.interrupt] = dev;

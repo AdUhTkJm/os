@@ -45,6 +45,16 @@ struct timespec {
   long tv_nsec;
 };
 
+struct timeval {
+  long tv_sec;
+  long tv_usec;
+};
+
+struct timezone {
+  int tz_minuteswest;     /* minutes west of Greenwich */
+  int tz_dsttime;         /* type of DST correction */
+};
+
 // From <dirent.h>
 struct linux_dirent64 {
   unsigned long inum;

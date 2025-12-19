@@ -354,7 +354,6 @@ if __name__ == "__main__":
   if args.run:
     # -d in_asm -D qemu.log
     asm = "-d in_asm" if args.assembly else ""
-    syscall = "-d strace" if args.log_syscall else ""
     gdb = "-S -s" if args.gdb else ""
     proc.run(
 f"""
@@ -363,14 +362,17 @@ f"""
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
 -drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 \
--device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
+-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.2 \
 \
 -drive file=testsuite/sdcard-rv.img,if=none,format=raw,id=x1 \
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
 \
+-drive file=scripts/rootfs.ext2,if=none,format=raw,id=x2 \
+-device virtio-blk-device,drive=x2,bus=virtio-mmio-bus.0 \
+\
 -device virtio-net-device,netdev=net -netdev user,id=net \
 -d guest_errors -D qemu.log \
 -rtc base=utc \
-{asm} {syscall} {gdb}
+{asm} {gdb}
 """
   ,shell=True)

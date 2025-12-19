@@ -487,7 +487,36 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   int fd = pcb->open_file(path, O_RDONLY);
   auto oldvma = pcb->vma;
   pcb->vma.clear();
-  auto auxv = load_elf(pcb->ftbl->at(fd), tcb);
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -ENOENT;
+
+  // Try parse the shebang.
+  char begin[2] {};
+  file->read(&begin, 2);
+  if (begin[0] == '#' && begin[1] == '!') {
+    string interp; char v;
+    for (int len = 1; len != 0; ) {
+      len = file->read(&v, 1);
+      if (len == 1) {
+        if (v == '\n')
+          break;
+        interp.push_back(v);
+      }
+    }
+    printk("interpreter: %s\n", interp.c_str());
+    
+    vector<string> newargv;
+    newargv.reserve(argv.size() + 1);
+    newargv.push_back(interp);
+    for (auto arg : argv)
+      newargv.push_back(arg);
+
+    return exec(interp, newargv, envp);
+  }
+
+  file->seek(0, file::begin);
+  auto auxv = load_elf(file, tcb);
   if (!auxv) {
     // Do the rollback.
     pcb->vma = oldvma;

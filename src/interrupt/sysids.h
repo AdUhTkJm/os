@@ -246,6 +246,7 @@ enum syscall {
   accept4 = 242,
   recvmmsg = 243,
   arch_specific_syscall = 244,
+  riscv_hwprobe = 258,
   wait4 = 260,
   prlimit64 = 261,
   fanotify_init = 262,

@@ -51,16 +51,8 @@ public:
   devroot(class fs *fs);
   int create(const string &, inode::filetype, int) override { return -EROFS; }
   int unlink(const string &) override { return -EROFS; }
-  inode *lookup(const string &name) override {
-    return children[name];
-  }
-  vector<item> list() override {
-    vector<item> result;
-    result.reserve(children.size());
-    for (auto [name, inode] : children)
-      result.push_back({ .inum = (long) inode, .name = name, .ty = inode->type });
-    return result;
-  }
+  inode *lookup(const string &name) override;
+  vector<item> list() override;
 
   // Special registration function.
   void record(const string &name, inode *node) {
