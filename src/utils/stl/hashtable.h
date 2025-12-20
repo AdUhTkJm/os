@@ -112,7 +112,7 @@ typename hashmap<K, V, Hash, Eq>::entry* hashmap<K, V, Hash, Eq>::find_slot(cons
   size_t start = hash(key), i = start;
 
   do {
-    entry& current = table[i];
+    entry &current = table[i];
     if (current.state == Occupied && eq(current.key, key))
       return &current;
     if (current.state == Empty) {

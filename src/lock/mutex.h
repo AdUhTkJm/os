@@ -15,6 +15,10 @@ class mutex {
 
   friend class condvar;
 public:
+  mutex() = default;
+  mutex(const mutex &other) = delete;
+  mutex &operator=(const mutex &other) = delete;
+
   void acquire();
   void release();
 };
@@ -24,12 +28,16 @@ class condvar {
   os::list<tcb_t*> queue;
   bool interrupt = false;
 public:
+  condvar() = default;
+  condvar(const condvar &other) = delete;
+  condvar &operator=(const condvar &other) = delete;
+
   bool interrupted() { return interrupt; }
   
   // Atomically enqueues the thread, and releases the lock.
   void wait(mutex &lock);
-  void notify();
-  void notifyAll();
+  int notify(int max = 1);
+  int notifyAll();
 };
 
 }

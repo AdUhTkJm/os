@@ -143,7 +143,8 @@ struct pcb_t {
   sigset pending = 0;     // Pending signals.
   sigaction sigact[32];   // Signal actions.
   os::tty::tty *tty;      // Terminal typewriter.
-  os::vector<tcb_t*> wait;// Threads suspended in wait() system call.
+  condvar wait;           // Threads suspended in wait() system call.
+  mutex waitlock;         // Used with the previous condvar.
   tms times {};
   long last_schedule;
 

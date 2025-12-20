@@ -35,30 +35,36 @@ void condvar::wait(mutex &lock) {
   queue.push_back(active());
   spin.release();
 
+  // Note that suspend() automatically re-acquires the lock on return.
   interrupt = (suspend(lock) != 0);
-  lock.acquire();
 }
 
-void condvar::notify() {
+int condvar::notify(int max) {
   spin.acquire();
-  if (!queue.empty()) {
+  int woken = 0;
+  for (int i = 0; !queue.empty() && i < max; i++) {
     auto next = queue.front();
     queue.pop_front();
     scheduler.wakeup(next, /*can_preempt=*/ false);
+    woken++;
   }
   spin.release();
   scheduler.maybe_preempt();
+  return woken;
 }
 
-void condvar::notifyAll() {
+int condvar::notifyAll() {
   spin.acquire();
+  int woken = 0;
   while (!queue.empty()) {
     auto next = queue.front();
     queue.pop_front();
     scheduler.wakeup(next, /*can_preempt=*/ false);
+    woken++;
   }
   spin.release();
   scheduler.maybe_preempt();
+  return woken;
 }
 
 }

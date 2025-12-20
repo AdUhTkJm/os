@@ -12,6 +12,7 @@
 #include "../proc/schedule.h"
 #include "../driver/plic/plic.h"
 #include "../driver/virtio/virtio.h"
+#include "../lock/futex.h"
 
 using namespace os;
 
@@ -212,6 +213,9 @@ void main_high() {
   // We must create it after `init`, so that `init` will have PID 1.
   auto dhcp = make_kprocess(dhcp::daemon);
   scheduler.add(dhcp);
+
+  // Enable futexes.
+  futexes.construct();
 
   // Enable timer.
   sbi_set_timer(rdtime() + 10_ms / timer_tick);

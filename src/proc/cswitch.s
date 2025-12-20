@@ -45,9 +45,9 @@ _ZN2os12context_saveEPvPbPNS_8spinlockE:
 #ifndef UNIPROCESSOR
   mv a0, a2
   call _ZN2os8spinlock12release_implEPi
-#endif
   # Enable interrupts.
   csrs sie, 2
+#endif
 #endif
 
   # Call scheduler_t::yield() to select and switch to the next process.
@@ -93,8 +93,40 @@ _ZN2os12context_saveEPvPbPNS_5mutexE:
 
 # extern "C" [[noreturn]] void context_save(void *ctx, bool from_signal)
 context_restore:
+  # We must preserve this across function call.
+  addi sp, sp, -16
+  sd a0, 0(sp)
+  sd a1, 8(sp)
+
+  # Restore the lock.
+  lw a2, 128(a0)
+  ld a3, 136(a0)
+  bnez a2, 1f
+  # This is a spinlock.
+#ifdef DEADLOCK
+  # The acquire() is not inlined.
+  mv a0, a3
+  call _ZN2os8spinlock7acquireEv
+#else
+  # The acquire() might be inlined.
+#ifndef UNIPROCESSOR
+  mv a0, a3
+  call _ZN2os8spinlock12acquire_implEPi
+  # Disable interrupts.
+  csrc sie, 2
+#endif
+#endif
+  j 2f
+1:
+  # This is a mutex.
+  mv a0, a3
+  call _ZN2os5mutex7acquireEv
+2:
   # Read the registers from ctx.
   # The ctx_valid is handled outside this function.
+  ld a0, 0(sp)
+  ld a1, 8(sp)
+  
   ld s0, 0(a0)
   ld s1, 8(a0)
   ld s2, 16(a0)
@@ -113,30 +145,6 @@ context_restore:
   csrw sepc, a2
   ld a2, 120(a0)
   csrw sstatus, a2
-  # Restore the lock.
-  lw a2, 128(a0)
-  ld a3, 136(a0)
-  bnez a2, 1f
-
-  # This is a spinlock.
-#ifdef DEADLOCK
-  # The acquire() is not inlined.
-  mv a0, a3
-  call _ZN2os8spinlock7acquireEv
-#else
-  # The acquire() might be inlined.
-#ifndef UNIPROCESSOR
-  mv a0, a3
-  call _ZN2os8spinlock12acquire_implEPi
-#endif
-  # Disable interrupts.
-  csrc sie, 2
-#endif
-  j 2f
-1:
-  # This is a mutex.
-  mv a0, a3
-  call _ZN2os5mutex7acquireEv
 2:
   # a0 = a1 ? -EINTR : 0
   bnez a1, 3f

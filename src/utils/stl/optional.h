@@ -101,7 +101,7 @@ public:
       ptr()->~T();
   }
 
-  expected(expected&& other): errcode(other.errcode), has_value(other.has_value) {
+  expected(expected &&other): errcode(other.errcode), has_value(other.has_value) {
     if (other.has_value) {
       new (data) T((T &&) *other.ptr());
       other.ptr()->~T();
@@ -110,7 +110,7 @@ public:
   }
 
   // Move assignment
-  expected& operator=(expected&& other) {
+  expected &operator=(expected &&other) {
     if (this == &other)
       return *this;
     if (has_value)

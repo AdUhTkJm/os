@@ -1116,6 +1116,10 @@ HANDLE(rt_sigaction, sig, act, oldact) {
   return 0;
 }
 
+HANDLE(futex, uaddr, op, val, timeout) {
+  return detail::futex((void *) uaddr, op, val, (void *) timeout);
+}
+
 HANDLE(wait4, pid, wstatus, options, rusage) {
   return detail::wait(pid, (void *) wstatus, options, (void *) rusage);
 }

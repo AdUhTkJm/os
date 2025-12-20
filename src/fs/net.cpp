@@ -272,8 +272,10 @@ size_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
     }
 
     readwait.wait(mutex);
-    if (readwait.interrupted())
+    if (readwait.interrupted()) {
+      mutex.release();
       return -EINTR;
+    }
   }
 }
 

@@ -277,13 +277,14 @@ void terminate(pcb_t *pcb, int ret) {
   }
   pcb->children.clear();
   pcb->ret = ret;
-  pcb->zombie = true;
 
   // Wake up parent for wait() system call.
   if (pcb->parent) {
-    for (auto thread : pcb->parent->wait)
-      scheduler.wakeup(thread, /*can_preempt=*/ false);
-  }
+    synchronized _(pcb->parent->waitlock);
+    pcb->zombie = true;
+    pcb->parent->wait.notifyAll();
+  } else pcb->zombie = true; // Without lock.
+
   pcb->clear();
   pidmap->erase(pcb->pid);
 
@@ -378,8 +379,6 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
   // We can reference to the same PCB.
   if (share_vm) {
     cp = pp;
-    // We do not copy the wait queue.
-    cp->wait.clear();
   } else {
     // When not sharing, we're copying the PCB as well.
     cp = new pcb_t;

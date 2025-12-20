@@ -18,6 +18,7 @@ int faccessat(int dirfd, const char *path, int mode);
 int socket(int domain, int type, int protocol);
 int bind(int fd, void *sockaddr, unsigned len);
 int syslog(int type, char *buf, unsigned long size);
+int futex(void *uaddr, int op, int val, void *timeout);
 
 int fromtype(inode::filetype ty);
 

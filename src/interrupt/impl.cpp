@@ -6,6 +6,81 @@
 #include "../driver/tty/tty.h"
 #include "../driver/virtio/virtio.h"
 #include "../utils/log.h"
+#include "../lock/futex.h"
+
+namespace {
+
+using namespace os;
+
+int futex_wait(void *addr, int expected, void *timeout) {
+  if (timeout)
+    printk("futex_wait: no timeout now\n");
+  
+  auto p = copy_from_user(addr, 4);
+  if (!p)
+    return -EFAULT;
+
+  int u = *(int *) p->get();
+  if (u != expected)
+    return -EAGAIN;
+
+  futex_key key((va_t) addr);
+  if (key.type == futex_key::BAD)
+    return -EFAULT;
+
+  futexes.lock.acquire();
+  futex_queue *&q = (*futexes)[key];
+  if (!q)
+    q = new futex_queue;
+  futexes.lock.release();
+
+  q->lock.acquire();
+
+  auto p2 = copy_from_user(addr, 4);
+  u = *(int *) p2->get();
+  if (u != expected) {
+    q->lock.release();
+    return -EAGAIN;
+  }
+
+  for (;;) {
+    q->wait.wait(q->lock);
+    
+    auto p = copy_from_user(addr, 4);
+    if (!p) {
+      q->lock.release();
+      return -EFAULT;
+    }
+    u = *(int *) p->get();
+    if (u != expected)
+      break;
+  }
+
+  q->lock.release();
+  return 0;
+}
+
+int futex_wake(void *addr, int count) {
+  futex_key key((va_t) addr);
+  if (key.type == futex_key::BAD)
+    return -EFAULT;
+
+  futexes.lock.acquire();
+  if (!futexes->count(key)) {
+    futexes.lock.release();
+    return -EINVAL;
+  }
+
+  futex_queue *q = (*futexes)[key];
+  futexes.lock.release();
+
+  q->lock.acquire();
+  int woken = q->wait.notify(count);
+  q->lock.release();
+  return woken;
+}
+
+}
 
 namespace os::detail {
 
@@ -206,7 +281,6 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   bool untraced = options & WUNTRACED;
   // TODO
   (void) untraced;
-  spinlock lock;
 
   [[unlikely]] if (pid == int(0x8000'0000))
     return -ESRCH;
@@ -216,6 +290,7 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   if (!pcb->children.size())
     return -ECHILD;
 
+  pcb->waitlock.acquire();
   for (;;) {
     // Check whether a child has changed.
     // We must change first before we wait.
@@ -230,22 +305,25 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
         int p = child->pid;
         // This is not the one we're looking for.
         if (p != pid && pid != -1)
-          break;
+          continue;
 
         pcb->children.erase(child);
-        pcb->wait.erase(tcb);
         delete child;
+        pcb->waitlock.release();
         return p;
       }
     }
 
-    if (nohang)
+    if (nohang) {
+      pcb->waitlock.release();
       return 0;
+    }
 
-    lock.acquire();
-    pcb->wait.push_back(tcb);
-    if (suspend(lock) != 0)
+    pcb->wait.wait(pcb->waitlock);
+    if (pcb->wait.interrupted()) {
+      pcb->waitlock.release();
       return -EINTR;
+    }
   }
 }
 
@@ -371,6 +449,31 @@ int syslog(int type, char *buf, unsigned long len) {
     printk("syslog: unknown functionality: %d\n", type);
     return -EINVAL;
   }
+}
+
+int futex(void *addr, int op, int val, void *timeout) {
+  // We can ignore this - it's for optimization.
+  if (op & FUTEX_PRIVATE_FLAG)
+    op &= ~FUTEX_PRIVATE_FLAG;
+
+  if ((va_t) addr % 4 != 0)
+    return -EINVAL;
+  auto p = copy_from_user(addr, 4);
+  if (!p)
+    return -EFAULT;
+  int u = *(int *) p->get();
+
+  switch (op) {
+  case FUTEX_WAIT:
+    return futex_wait(addr, val, timeout);
+
+  case FUTEX_WAKE:
+    return futex_wake(addr, val);
+
+  default:
+    printk("unknown futex op: %d\n", op);
+  }
+  return 0;
 }
 
 }
