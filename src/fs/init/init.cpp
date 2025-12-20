@@ -242,7 +242,11 @@ extern "C" void _start() {
     syscall(stdin, /*TIOCSPGRP=*/ 0x5410, (reg_t) &pgid, ioctl);
     
     // Execute the shell.
+#ifdef TEST
+    const char *argv[] = { "/bin/sh", "-c", "mount /dev/vdb /mnt && cd /mnt/glibc/basic && ./run-all.sh", nullptr };
+#else
     const char *argv[] = { "/bin/sh", nullptr };
+#endif
     const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "HOME=/root", nullptr }; 
     syscall((reg_t) "/bin/sh", (reg_t) argv, (reg_t) envp, execve);
 

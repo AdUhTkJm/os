@@ -2,6 +2,7 @@
 #define TTY_H
 
 #include "../../utils/stl/ring_buffer.h"
+#include "../../utils/stl/string.h"
 #include "../../interrupt/sysret.h"
 
 #define TTY_ECHO     0x0001

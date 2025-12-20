@@ -24,8 +24,8 @@ void map_single(void *va, pte_t *root) {
     os::terminate(tcb, -127);
     return;
   }
-  auto pa = os::pframe();
   const auto &vma = pcb->vma.at(addr);
+  pa_t pa = (vma.flags & MAP_SHARED) ? to_pa((*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data) : os::pframe();
   int flags = PTE_V | PTE_U;
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
@@ -131,8 +131,8 @@ bool vma_t::mergeable(const vma_t &other) const {
   return true;
 }
 
-void vmas::split_at(size_t i, uintptr_t addr) {
-  vma_t vma = vmas[i];
+void addrspace::split_at(size_t i, uintptr_t addr) {
+  const vma_t &vma = vmas[i];
   if (!(vma.begin < addr && addr < vma.end))
     return;
 
@@ -151,11 +151,11 @@ void vmas::split_at(size_t i, uintptr_t addr) {
   }
 
   // Replace orig with `left` and insert `right` after it.
-  vmas[i] = left;
+  vmas[i] = os::move(left);
   vmas.insert(vmas.begin() + i + 1, right);
 }
 
-result vmas::merge_at(size_t i) {
+result addrspace::merge_at(size_t i) {
   if (i + 1 >= vmas.size())
     return result::failure;
   if (!vmas[i].mergeable(vmas[i + 1]))
@@ -169,7 +169,7 @@ result vmas::merge_at(size_t i) {
   return result::success;
 }
 
-size_t vmas::find(va_t addr) const {
+size_t addrspace::find(va_t addr) const {
   size_t low = 0, high = vmas.size();
   while (low < high) {
     size_t mid = (low + high) / 2;
@@ -185,7 +185,7 @@ size_t vmas::find(va_t addr) const {
 }
 
 // Keep `vmas` sorted.
-void vmas::push(const vma_t &vma) {
+void addrspace::push(const vma_t &vma) {
   auto begin = vma.begin, end = vma.end;
   size_t i = find(begin);
 
@@ -241,7 +241,7 @@ void vmas::push(const vma_t &vma) {
   vmas.insert(vmas.begin() + i, vma);
 }
 
-bool vmas::has(va_t addr) const {
+bool addrspace::has(va_t addr) const {
   auto point = find(addr);
   if (point == vmas.size())
     return false;
@@ -266,6 +266,10 @@ vma_t::vma_t(uintptr_t begin, uintptr_t end, int prot, int flags, file *backup, 
 vma_t::vma_t(const vma_t &other): begin(other.begin), end(other.end), prot(other.prot), flags(other.flags), backup(other.backup), offset(other.offset), maxread(other.maxread) {
   if (backup)
     backup->ref();
+}
+
+vma_t::vma_t(vma_t &&other): begin(other.begin), end(other.end), prot(other.prot), flags(other.flags), backup(other.backup), offset(other.offset), maxread(other.maxread) {
+  other.backup = nullptr;
 }
 
 vma_t &vma_t::operator=(const vma_t &other) {

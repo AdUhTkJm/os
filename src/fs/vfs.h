@@ -4,6 +4,8 @@
 #include "../utils/helper.h"
 #include "../utils/stl/atomic.h"
 #include "../utils/stl/optional.h"
+#include "../mem/ptable.h"
+#include "../lock/mutex.h"
 
 #define O_RDONLY    0x00000000 /* Open for reading only */
 #define O_WRONLY    0x00000001 /* Open for writing only */
@@ -136,6 +138,38 @@ public:
 #endif
 };
 
+class page_cache {
+public:
+  mutex lock;
+
+  class page : public shared {
+  public:
+    page_cache *parent;
+    char* data;
+    size_t index;
+    bool dirty = false;
+  private:
+    friend class page_cache;
+    page(page_cache *parent, size_t index);
+    ~page();
+  };
+
+  page_cache(inode *node): node(node) {}
+
+  page &operator[](size_t i);
+  ~page_cache();
+
+  void flush();
+  void drop(size_t i);
+  // Force-erase, by truncate() or munmap.
+  void erase(size_t i);
+
+private:
+  os::hashmap<size_t, class page*> pages;
+  inode *node;
+  friend class page_cache::page;
+};
+
 class inode {
   atomic<unsigned> refcnt;
 protected:
@@ -157,7 +191,7 @@ public:
   
   static unsigned char as_dt(filetype ty);
 
-  virtual ~inode() = default;
+  virtual ~inode();
   virtual size_t read(size_t offset, void* buf, size_t len, int flags) = 0;
   virtual size_t write(size_t offset, const void* buf, size_t len, int flags) = 0;
 
@@ -212,6 +246,7 @@ public:
   class fs *fs;
   int mode; // Access mode.
   int uid, gid;
+  page_cache *cache = nullptr;
 
   inode(class fs *fs, int uid, int gid, int mode, filetype type, uint64_t rtti):
     rtti(rtti), type(type), fs(fs), mode(mode), uid(uid), gid(gid) { refcnt = 1; /* lnkcnt implicitly zeroed. */ }

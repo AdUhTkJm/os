@@ -17,25 +17,65 @@ inode *file::node() {
   return entry->node;
 }
 
-size_t file::read(void *buf, size_t len) {
-  auto ret = node()->read(offset, buf, len, flags);
-  if ((ssize_t) ret < 0)
-    return ret;
+inode::~inode() {
+  if (cache)
+    delete cache;
+}
 
-  offset += ret;
-  return ret;
+size_t file::read(void *buf, size_t len) {
+  [[likely]] if (!node()->cache) {
+    auto ret = node()->read(offset, buf, len, flags);
+    if ((ssize_t) ret < 0)
+      return ret;
+
+    offset += ret;
+    return ret;
+  }
+
+  // We have a page cache and have to read from it.
+  size_t read = 0;
+  while (read < len && offset < len) {
+    size_t poff = offset % PAGE_SIZE;
+    page_cache::page &page = (*node()->cache)[offset / PAGE_SIZE];
+
+    auto chunk = min(len - read, PAGE_SIZE - poff);
+    memcpy((char*) buf + read, page.data + poff, chunk);
+
+    read += chunk;
+    offset += chunk;
+  }
+  return read;
 }
 
 size_t file::write(const void *buf, size_t len) {
   if (flags & O_APPEND)
     offset = node()->size();
-  
-  auto ret = node()->write(offset, buf, len, flags);
-  if ((ssize_t) ret < 0)
-    return ret;
 
-  offset += ret;
-  return ret;
+  [[likely]] if (!node()->cache) {
+    auto ret = node()->write(offset, buf, len, flags);
+    if ((ssize_t) ret < 0)
+      return ret;
+
+    offset += ret;
+    return ret;
+  }
+
+  size_t written = 0;
+  while (written < len) {
+    size_t poff = offset % PAGE_SIZE;
+    auto &page = (*node()->cache)[offset / PAGE_SIZE];
+
+    size_t chunk = min(len - written, PAGE_SIZE - poff);
+    memcpy(page.data + poff, (char*) buf + written, chunk);
+
+    page.dirty = true;
+    written += chunk;
+    offset += chunk;
+  }
+  // We must update file size.
+  if (offset >= node()->size())
+    node()->cache->flush();
+  return written;
 }
 
 size_t file::seek(long pos, whence whence) {
@@ -374,7 +414,6 @@ file::~file() {
 }
 
 file::file(dentry *entry, int flags): entry(entry), offset(0), flags(flags) {
-  refcnt = 0;
   node()->ref();
 }
 
@@ -454,6 +493,45 @@ void vfs::init() {
   dcache.construct();
   creators.construct();
   tosync.construct();
+}
+
+page_cache::page::page(page_cache *parent, size_t index) : parent(parent), data((char*) as_va(pframe())), index(index), dirty(false) {
+  refcnt = 1;
+  parent->node->read(index * PAGE_SIZE, data, PAGE_SIZE, 0);
+}
+
+page_cache::page::~page() {
+  if (dirty)
+    parent->node->write(index * PAGE_SIZE, data, PAGE_SIZE, 0);
+  pfree(to_pa(data));
+}
+
+page_cache::page &page_cache::operator[](size_t i) {
+  synchronized _(lock);
+  if (pages.count(i))
+    return *pages[i];
+
+  return *(pages[i] = new page(this, i));
+}
+
+void page_cache::erase(size_t i) {
+  synchronized _(lock);
+  if (!pages.count(i))
+    return;
+
+  delete pages[i];
+  pages.erase(i);
+}
+
+void page_cache::flush() {
+  synchronized _(lock);
+  for (auto [_, page] : pages)
+    delete page;
+  pages.clear();
+}
+
+page_cache::~page_cache() {
+  flush();
 }
 
 }

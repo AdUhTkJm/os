@@ -18,27 +18,27 @@
 // From <time.h>
 
 /* Identifier for system-wide realtime clock.  */
-# define CLOCK_REALTIME			0
+#define CLOCK_REALTIME			0
 /* Monotonic system-wide clock.  */
-# define CLOCK_MONOTONIC		1
+#define CLOCK_MONOTONIC		1
 /* High-resolution timer from the CPU.  */
-# define CLOCK_PROCESS_CPUTIME_ID	2
+#define CLOCK_PROCESS_CPUTIME_ID	2
 /* Thread-specific CPU-time clock.  */
-# define CLOCK_THREAD_CPUTIME_ID	3
+#define CLOCK_THREAD_CPUTIME_ID	3
 /* Monotonic system-wide clock, not adjusted for frequency scaling.  */
-# define CLOCK_MONOTONIC_RAW		4
+#define CLOCK_MONOTONIC_RAW		4
 /* Identifier for system-wide realtime clock, updated only on ticks.  */
-# define CLOCK_REALTIME_COARSE		5
+#define CLOCK_REALTIME_COARSE		5
 /* Monotonic system-wide clock, updated only on ticks.  */
-# define CLOCK_MONOTONIC_COARSE		6
+#define CLOCK_MONOTONIC_COARSE		6
 /* Monotonic system-wide clock that includes time spent in suspension.  */
-# define CLOCK_BOOTTIME			7
+#define CLOCK_BOOTTIME			7
 /* Like CLOCK_REALTIME but also wakes suspended system.  */
-# define CLOCK_REALTIME_ALARM		8
+#define CLOCK_REALTIME_ALARM		8
 /* Like CLOCK_BOOTTIME but also wakes suspended system.  */
-# define CLOCK_BOOTTIME_ALARM		9
+#define CLOCK_BOOTTIME_ALARM		9
 /* Like CLOCK_REALTIME but in International Atomic Time.  */
-# define CLOCK_TAI			11
+#define CLOCK_TAI			11
 
 struct timespec {
   long tv_sec;
@@ -54,6 +54,14 @@ struct timezone {
   int tz_minuteswest;     /* minutes west of Greenwich */
   int tz_dsttime;         /* type of DST correction */
 };
+
+struct tms {
+  long tms_utime;  /* user time */
+  long tms_stime;  /* system time */
+  long tms_cutime; /* user time of children */
+  long tms_cstime; /* system time of children */
+};
+
 
 // From <dirent.h>
 struct linux_dirent64 {

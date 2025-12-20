@@ -8,6 +8,7 @@
 #include "../mem/kalloc.h"
 #include "../utils/stl/optional.h"
 #include "../fs/initramfs.h"
+#include "../interrupt/sysret.h"
 
 namespace os::tty {
 
@@ -97,6 +98,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   va_t pc;                // Initial program counter (entry point) of this thread.
   bool ctx_valid = false; // Whether the syscall/trap context is valid.
   bool kthread = false;   // Whether this is a kernel thread.
+  bool kmode = false;     // Whether this executed in kernel mode.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
   void __user *tls;       // Thread-local storage pointer.
@@ -120,7 +122,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
 
 struct pcb_t {
   pa_t pt_root;           // Root page table entry.
-  vma::vmas vma;          // Virtual memory areas.
+  vma::addrspace vma;          // Virtual memory areas.
   pcb_t *parent;          // Parent.
   process_file_table*ftbl;// Process file table.
   int uid, euid, suid;
@@ -142,6 +144,8 @@ struct pcb_t {
   sigaction sigact[32];   // Signal actions.
   os::tty::tty *tty;      // Terminal typewriter.
   os::vector<tcb_t*> wait;// Threads suspended in wait() system call.
+  tms times {};
+  long last_schedule;
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.

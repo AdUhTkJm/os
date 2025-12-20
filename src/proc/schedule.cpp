@@ -42,7 +42,6 @@ void scheduler_t::dispatch_impl() {
   trap_return_setup(next);
   
   // Now we switch to it.
-  // The destructor is never run, so we manually unlock it.
   if (next->ctx_valid) {
     next->ctx_valid = false;
     lock.release();
@@ -51,7 +50,8 @@ void scheduler_t::dispatch_impl() {
     context_restore(&next->ctx, /*from_signal=*/ next->pending.sig != 0); // noreturn
   }
 
-  // If there's no ongoing syscall, then just directly jump to end.
+  // If there's no ongoing syscall, then just directly jump to end,
+  // and return from this interrupt.
   lock.release();
   __asm__ volatile("j __handler_end");
   __builtin_unreachable();

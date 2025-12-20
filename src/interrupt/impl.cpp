@@ -68,7 +68,6 @@ int fcntl(int fd, int ty, int arg) {
 
 int mprotect(unsigned long start, unsigned long len, int prot) {
   auto tcb = active();
-
   if (len == 0)
     return -EINVAL;
   start = rounddown<PAGE_SIZE>(start);
@@ -212,10 +211,6 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   [[unlikely]] if (pid == int(0x8000'0000))
     return -ESRCH;
   
-  if (pid != -1) {
-    printk("wait4: unimplemented: pid = %d\n", pid);
-    return -EINVAL;
-  }
   if (rusage)
     printk("wait4: unimplemented: rusage\n");
   if (!pcb->children.size())
@@ -232,11 +227,15 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
           copy_to_user(wstatus, &status, sizeof(int));
         }
 
-        int pid = child->pid;
+        int p = child->pid;
+        // This is not the one we're looking for.
+        if (p != pid && pid != -1)
+          break;
+
         pcb->children.erase(child);
         pcb->wait.erase(tcb);
         delete child;
-        return pid;
+        return p;
       }
     }
 

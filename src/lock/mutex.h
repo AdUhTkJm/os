@@ -2,13 +2,15 @@
 #define MUTEX_H
 
 #include "lock.h"
-#include "../proc/pcb.h"
+#include "../utils/stl/list.h"
 
 namespace os {
 
+struct tcb_t;
+
 class mutex {
   spinlock lock;
-  tcb_t *owner;
+  tcb_t *owner = nullptr;
   os::list<tcb_t*> wait;
 
   friend class condvar;
@@ -20,7 +22,7 @@ public:
 class condvar {
   spinlock spin;
   os::list<tcb_t*> queue;
-  bool interrupt;
+  bool interrupt = false;
 public:
   bool interrupted() { return interrupt; }
   

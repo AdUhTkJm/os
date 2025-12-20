@@ -7,9 +7,10 @@
 #include "../mem/kalloc.h"
 #include "../proc/schedule.h"
 #include "../fs/ext.h"
+#include "../fs/net.h"
+#include "../fs/tmpfs.h"
 #include "../fs/pipe.h"
 #include "../utils/log.h"
-#include "../fs/net.h"
 
 // In nanosecond.
 extern int timer_tick;
@@ -596,7 +597,7 @@ HANDLE(set_tid_address, _) {
 }
 
 HANDLE(getrandom, _) {
-  return 0; // TODO
+  return -ENOSYS; // TODO
 }
 
 HANDLE(setpgid, pid, pgid) {
@@ -677,21 +678,24 @@ HANDLE(uname, buf) {
 }
 
 HANDLE(get_robust_list, pid, headptr, size) {
-  printk("get_robust_list: no robust list now\n");
-  auto queried = pid == 0 ? pcb : (*pidmap)[pid];
-  // TODO: this is actually user memory.
-  copy_to_user((void *) headptr, queried->robust_list, sizeof(robust_list_head));
-  size_t v = sizeof(robust_list_head);
-  copy_to_user((void *) size, &v, sizeof(size_t));
-  return 0;
+  return -ENOSYS;
 }
 
 HANDLE(set_robust_list, headptr, size) {
-  printk("set_robust_list: no robust list now\n");
-  if (size != sizeof(robust_list_head))
-    return -EINVAL;
-  pcb->robust_list = (void*) headptr;
   return -ENOSYS;
+}
+
+HANDLE(rseq, _) {
+  return -ENOSYS;
+}
+
+HANDLE(riscv_hwprobe, _) {
+  return -ENOSYS;
+}
+
+HANDLE(times, buf) {
+  copy_to_user((void *) buf, &pcb->times, sizeof(tms));
+  return timer_tick;
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
@@ -864,10 +868,6 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
 
   bool fixed = flags & MAP_FIXED;
   bool anon = flags & MAP_ANONYMOUS;
-  if (shared) {
-    printk("no shared mmap yet\n");
-    return -EINVAL;
-  }
 
   va_t start;
   if (!fixed) {
@@ -891,7 +891,11 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
     bool writable = (backup->flags & 3) != O_RDONLY;
     if (!readable || (shared && !writable))
       return -EACCES;
-  }
+  } else if (shared)
+    backup = new file(new dentry("<anon>", tmpfs->get(), nullptr), O_RDWR);
+  
+  if (shared)
+    backup->node()->cache = new page_cache(backup->node());
 
   // Now allocate near this cap. Note that this has to be page-aligned.
   vma::vma_t vma(start, end, prot, flags, backup, offset, len);
@@ -911,6 +915,7 @@ HANDLE(munmap, addr, len) {
 HANDLE(sched_yield, _) {
   // There is no system call context when we directly call yield().
   scheduler.yield(/*sleepy=*/false);
+  // noreturn
 }
 
 HANDLE(rt_sigprocmask, how, set, oldset, size) {
@@ -1164,6 +1169,14 @@ namespace os {
   reg_t sstatus;
   CSRR(sstatus, sstatus);
   bool from_kernel = sstatus & (1 << 8);
+
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  // Switch from user mode to kernel mode.
+  // We update kmode.
+  if (!tcb->kmode)
+    tcb->kmode = true;
+
   if (scause < 0) {
     int kind = scause & 0xff;
     switch (kind) {

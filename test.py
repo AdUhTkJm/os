@@ -29,6 +29,7 @@ parser.add_argument("--no-debug-memory", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
 parser.add_argument("--gdb", action="store_true")
 parser.add_argument("--smp", action="store_true")
+parser.add_argument("--test", action="store_true")
 
 args = parser.parse_args()
 
@@ -213,7 +214,10 @@ def compile_file(src_path: Path, obj_path: Path):
 
 def compile_initramfs(src_path: Path, obj_path: Path):
   obj_path.parent.mkdir(parents=True, exist_ok=True)
-  proc.check_call([COMPILER, "-ffreestanding", "-nostdlib", "-O2", *MACHINESPEC, "-o", str(obj_path),  str(src_path)])
+  flags = ["-ffreestanding", "-nostdlib", "-O2", *MACHINESPEC]
+  if args.test:
+    flags += ["-DTEST"]
+  proc.check_call([COMPILER, *flags, "-o", str(obj_path),  str(src_path)])
 
 def archive_objects(obj_files, lib_path: Path):
   if lib_path.exists():

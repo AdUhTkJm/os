@@ -11,19 +11,22 @@ extern "C" int printk(const char *, ...);
 
 namespace os {
 
-// sie bit 1: disables all interrupt.
+// Note we can't write to sstatus.SIE bit.
 #if defined(__riscv) || IN_VSCODE
-struct nopreempt {
-  nopreempt() { __asm__ volatile("csrc sie, 2"); }
-  ~nopreempt() { __asm__ volatile("csrs sie, 2"); }
-};
-
 inline void disable_preempt() {
-  __asm__ volatile("csrc sie, 2");
+  __asm__ volatile(
+    "csrc sie, 2\n"   // software interrupts
+    "csrc sie, 32\n"  // timer interrupts
+    "csrc sie, 512\n" // external interrupts 
+  );
 }
 
 inline void enable_preempt() {
-  __asm__ volatile("csrs sie, 2");
+  __asm__ volatile(
+    "csrs sie, 2\n"
+    "csrs sie, 32\n"
+    "csrs sie, 512\n"
+  );
 }
 #endif
 #if defined(__loongarch__)
@@ -41,10 +44,18 @@ inline void enable_preempt() {
   CSRW(crmd, crmd);
 }
 
+#endif
+
+#ifndef UNIPROCESSOR
 struct nopreempt {
-  nopreempt() { enable_preempt(); }
-  ~nopreempt() { disable_preempt(); }
+  nopreempt() { disable_preempt(); }
+  ~nopreempt() { enable_preempt(); }
 };
+#else
+// Does entirely nothing.
+// sstatus.SIE is automatically disabled on interrupt handler,
+// so no other interrupts can ever fire.
+struct nopreempt {};
 #endif
 
 template<class T>
@@ -59,6 +70,7 @@ struct tcb_t;
 tcb_t *active();
 #endif
 
+// Similarly, a spinlock just does nothing in uniprocessor kernel.
 class spinlock {
   int v = 0;
   [[gnu::no_instrument_function]] static void release_impl(int *v);
@@ -98,8 +110,8 @@ public:
 #endif
 #ifndef UNIPROCESSOR
     release_impl(&v);
-#endif
     enable_preempt();
+#endif
   }
 
 #ifdef DEADLOCK
@@ -121,8 +133,8 @@ public:
     stack::copy(&stack);
 #  endif
 #endif
-    disable_preempt();
 #ifndef UNIPROCESSOR
+    disable_preempt();
     acquire_impl(&v);
 #endif
   }

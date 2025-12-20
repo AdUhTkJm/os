@@ -70,7 +70,7 @@ T *dyn_cast(U *t) {
 
 class shared {
 protected:
-  atomic<int> refcnt;
+  atomic<int> refcnt = 0;
 public:
   void drop() {
 #if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)

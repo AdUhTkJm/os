@@ -238,7 +238,6 @@ struct fnv_1a<string> {
   }
 };
 
-
 }
 
 #endif

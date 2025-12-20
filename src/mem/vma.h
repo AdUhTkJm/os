@@ -30,6 +30,7 @@ struct vma_t {
   vma_t(uintptr_t begin, uintptr_t end, int prot, int flags);
   vma_t(uintptr_t begin, uintptr_t end, int prot, int flags, file *backup, size_t offset, size_t maxread);
   vma_t(const vma_t &other);
+  vma_t(vma_t &&other);
   ~vma_t();
 
   vma_t &operator=(const vma_t &other);
@@ -46,7 +47,7 @@ void map_current(void *va, pte_t *pte);
 // If `write` is set to true, also maps COW pages in the range.
 void map_current(void *from, void *to, bool write = false);
 
-struct vmas {
+struct addrspace {
   vector<vma_t> vmas;
 
   void split_at(size_t i, va_t addr);
