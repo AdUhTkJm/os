@@ -22,9 +22,10 @@ struct scheduler_t {
   [[noreturn]] void dispatch();
   void erase(tcb_t *tcb);
 
-  // Puts the current active process to sleep.
-  // When sleepy = false, puts it to ready state instead.
-  [[noreturn]] void yield(bool sleepy = true);
+  // Puts the current active process to the ready queue, and immediately dispatch.
+  [[noreturn]] void yield();
+  // Puts the current active process to the sleep queue, but does not dispatch.
+  // This is idempotent.
   void prepare_to_sleep();
 
   // Note that even if `can_preempt` is true, it doesn't mean preemption will always happen.

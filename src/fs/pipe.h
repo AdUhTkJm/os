@@ -25,6 +25,12 @@ public:
   void set_meta(const inode::meta &) override {}
   void onclose(int flags) override;
 
+  void prepare_read_wait(wait_entry &) override;
+  void prepare_write_wait(wait_entry &) override;
+
+  void finish_read_wait(wait_entry &) override;
+  void finish_write_wait(wait_entry &) override;
+
   void incread() { readers++; }
   void incwrite() { writers++; }
   void incf(const file *f);

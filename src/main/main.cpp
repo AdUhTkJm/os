@@ -139,6 +139,7 @@ void main_high() {
   boot_pcb.construct();
   boot_tcb.construct();
   RD(sp, boot_tcb->ksp);
+  boot_tcb->status = Running;
   boot_pcb->pid = -1; // This is not a valid process.
   boot_pcb->pt_root = 0x80201000;
   boot_tcb->pcb = boot_pcb.get();
@@ -194,7 +195,7 @@ void main_high() {
   
   // Initialize the basic PCB structure.
   pcb->pid = pcb->pgid = pcb->sid = nextpid();
-  tcb->tid = pcb->nexttid();
+  tcb->tid = pcb->pid;
   (*pidmap)[pcb->pid] = pcb;
   pcb->uid = pcb->euid = pcb->suid = 0;
   pcb->gid = pcb->egid = pcb->sgid = 0;

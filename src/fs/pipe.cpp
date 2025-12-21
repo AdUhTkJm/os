@@ -86,14 +86,31 @@ short pipe_inode::poll(unsigned short event) {
   auto result = 0;
   if (in && !buffer.empty())
     result |= POLLIN;
-  if (out)
+  if (out && buffer.size() < maxbuf)
     result |= POLLOUT;
   return result;
+}
+
+void pipe_inode::prepare_read_wait(wait_entry &entry) {
+  read_wait.prepare(entry);
+}
+
+void pipe_inode::prepare_write_wait(wait_entry &entry) {
+  write_wait.prepare(entry);
+}
+
+void pipe_inode::finish_read_wait(wait_entry &entry) {
+  read_wait.finish(entry);
+}
+
+void pipe_inode::finish_write_wait(wait_entry &entry) {
+  write_wait.finish(entry);
 }
 
 void pipe_inode::onclose(int flags) {
   bool read = (flags & 0x3) == O_RDONLY || (flags & 0x3) == O_RDWR;
   bool write = (flags & 0x3) == O_WRONLY || (flags & 0x3) == O_RDWR;
+  printk("before close: %d %d\n", readers, writers);
 
   {
     synchronized _(lock);
@@ -102,6 +119,7 @@ void pipe_inode::onclose(int flags) {
     if (write)
       writers--;
   }
+  printk("after  close: %d %d\n", readers, writers);
 
   if (!readers)
     write_wait.wake_all();
@@ -110,10 +128,12 @@ void pipe_inode::onclose(int flags) {
 }
 
 void pipe_inode::incf(const file *file) {
+  printk("before incf: %d %d\n", readers, writers);
   if (can_read(file->flags))
     incread();
   if (can_write(file->flags))
     incwrite();
+  printk("after  incf: %d %d\n", readers, writers);
 }
 
 }

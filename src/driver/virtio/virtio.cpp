@@ -243,8 +243,8 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
 
   wait_entry entry;
+  lock.acquire();
   for (int i = 0;;) {
-    lock.acquire();
     wait.prepare(entry);
     lock.release();
     if (suspend() != 0)

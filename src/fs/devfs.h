@@ -37,7 +37,8 @@ public:
   short poll(unsigned short) override;
 
   void wake_read() override;
-  void wait_on_read() override;
+  void prepare_read_wait(wait_entry &) override;
+  void finish_read_wait(wait_entry &) override;
 };
 
 class devroot : public inode_impl<devroot> {
@@ -118,7 +119,8 @@ public:
   short poll(unsigned short) override;
   
   void wake_read() override;
-  void wait_on_read() override;
+  void prepare_read_wait(wait_entry &) override;
+  void finish_read_wait(wait_entry &) override;
 };
 
 class null_inode : public inode_impl<null_inode> {

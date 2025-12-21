@@ -62,7 +62,8 @@ public:
   bool empty() const { return !head; }
 
   // Note: this won't work if `node` is inside the list.
-  void push_back(T* node) {
+  void push_back(T *node) {
+    assert(!contains(node));
     intrusive_list_node<T> *link = into(node);
     link->prev = tail;
     link->next = nullptr;
@@ -93,7 +94,8 @@ public:
   }
 
   // This won't work if node is not inside the list.
-  void erase(T* node) {
+  void erase(T *node) {
+    assert(contains(node));
     intrusive_list_node<T> *link = into(node);
 
     if (link->prev)
@@ -114,6 +116,14 @@ public:
   T *&front() { return head; }
   T *back() const { return tail; }
   T *front() const { return head; }
+
+  bool contains(T *node) {
+    for (auto x : *this) {
+      if (x == node)
+        return true;
+    }
+    return false;
+  }
 
   iterator begin() { return iterator(*this, head); }
   iterator end() { return iterator(*this, nullptr); }

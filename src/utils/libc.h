@@ -5,9 +5,26 @@
 #include <stdarg.h>
 #include <stddef.h>
 
+#define __assert_dump_stack
 #ifdef __cplusplus
+#  ifdef FUNC_INSTRUMENT
+#  undef __assert_dump_stack
+namespace os::stack { void dump(); }
+#  define __assert_dump_stack stack::dump();
+#  endif
 extern "C" {
 #endif
+
+
+[[noreturn]] void panic(const char *s);
+#define __assert0(x, line) do { \
+  [[unlikely]] if (!(x)) { \
+    __assert_dump_stack; \
+    panic(__FILE__ ":" #line ": assertion failed: " #x); \
+  } \
+} while (0)
+#define __assert1(x, line) __assert0(x, line)
+#define assert(x) __assert1(x, __LINE__)
 
 unsigned strlen(const char *s);
 void *memset(void *p, int v, size_t size);

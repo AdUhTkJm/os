@@ -291,40 +291,43 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   if (!pcb->children.size())
     return -ECHILD;
 
-  pcb->waitlock.acquire();
+  wait_entry entry;
+  auto &lock = pcb->waitlock;
+  lock.acquire();
   for (;;) {
     // Check whether a child has changed.
     // We must change first before we wait.
     for (auto child : pcb->children) {
       if (child->zombie) {
+        int p = child->pid;
+        // This is not the one we're looking for.
+        if (p != pid && pid != -1)
+          continue;
+
+        lock.release();
         if (wstatus) {
           // See <wait.h> for the bits.
           int status = (child->ret & 0xff) << 8;
           copy_to_user(wstatus, &status, sizeof(int));
         }
 
-        int p = child->pid;
-        // This is not the one we're looking for.
-        if (p != pid && pid != -1)
-          continue;
-
         pcb->children.erase(child);
         delete child;
-        pcb->waitlock.release();
         return p;
       }
     }
 
     if (nohang) {
-      pcb->waitlock.release();
+      lock.release();
       return 0;
     }
 
-    pcb->wait.wait(pcb->waitlock);
-    if (pcb->wait.interrupted()) {
-      pcb->waitlock.release();
+    pcb->wait.prepare(entry);
+    lock.release();
+    if (suspend() != 0)
       return -EINTR;
-    }
+    lock.acquire();
+    pcb->wait.finish(entry);
   }
 }
 
@@ -592,7 +595,7 @@ int sendmsg(int fd, const msghdr &header, int flags) {
     return -EFAULT;
 
   iovec *iov = (iovec *) iovp->get();
-  printk("sendmsg: flags: %d\n", flags);
+  // printk("sendmsg: flags: %d\n", flags);
 
   // Note msg_name and msg_namelen are user-space pointers, as expected by sendto().
   int sent = 0;

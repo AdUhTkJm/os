@@ -26,7 +26,6 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
       wait.prepare(entry);
       lock.release();
-      assert(detail::nested_irq == 0);
       if (suspend() != 0)
         return i == 0 ? -EINTR : i;
       lock.acquire();
@@ -34,6 +33,7 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
       c = console_input_buf->pop_front();
     }
+    lock.release();
     p[i] = *c;
   }
   return len;
@@ -62,9 +62,12 @@ void console_inode::wake_read() {
   wait.wake_all();
 }
 
-void console_inode::wait_on_read() {
-  wait_entry entry;
+void console_inode::prepare_read_wait(wait_entry &entry) {
   wait.prepare(entry);
+}
+
+void console_inode::finish_read_wait(wait_entry &entry) {
+  wait.finish(entry);
 }
 
 block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force_reload) {
@@ -229,8 +232,12 @@ void tty_inode::wake_read() {
   tty.console->wake_read();
 }
 
-void tty_inode::wait_on_read() {
-  tty.console->wait_on_read();
+void tty_inode::prepare_read_wait(wait_entry &entry) {
+  tty.console->prepare_read_wait(entry);
+}
+
+void tty_inode::finish_read_wait(wait_entry &entry) {
+  tty.console->finish_read_wait(entry);
 }
 
 null_inode::null_inode(): inode_impl(&*devfs, 0, 0, 0666, File) {}

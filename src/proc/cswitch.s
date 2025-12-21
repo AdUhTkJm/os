@@ -29,6 +29,12 @@ _ZN2os12context_saveEPvPb:
   li t1, 1
   sb t1, 0(a1)
 
+  # Check deadlock - if we disabled preemption when we suspend(),
+  # then it's wrong.
+#ifdef DEADLOCK
+  call _ZN2os13check_suspendEv
+#endif
+
   # Call scheduler_t::dispatch() to switch to the next process.
   # Don't forget the implicit this.
   la a0, _ZN2os9schedulerE

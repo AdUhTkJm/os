@@ -25,8 +25,7 @@ int wait_queue::wake_all() {
   lock.acquire();
   int woken = 0;
   for (auto entry : q) {
-    if (!entry->queued)
-      continue;
+    assert(entry->queued);
     woken++, scheduler.wakeup(entry->tcb, /*can_preempt=*/ false);
   }
   lock.release();
@@ -39,8 +38,7 @@ int wait_queue::wake(int n) {
   lock.acquire();
   int woken = 0;
   for (auto it = q.begin(); it != q.end(); ++it) {
-    if (!(*it)->queued)
-      continue;
+    assert((*it)->queued);
     scheduler.wakeup((*it)->tcb, /*can_preempt=*/ false);
     woken++;
     if (!--n)
@@ -51,5 +49,15 @@ int wait_queue::wake(int n) {
   scheduler.maybe_preempt();
   return woken;
 }
+
+#ifdef DEADLOCK
+// Called by context_save.
+void check_suspend() {
+  if (detail::nested_irq > 0) {
+    stack::dump();
+    panic("check_suspend: deadlock");
+  }
+}
+#endif
 
 }

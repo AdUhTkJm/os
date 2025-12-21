@@ -201,7 +201,6 @@ int tcb_t::sleep(size_t nano) {
   napping->push_back(this);
   napping.lock.release();
 
-  // TODO: change into wait queue?
   scheduler.prepare_to_sleep();
   if (suspend() == -EINTR)
     return -EINTR;
@@ -284,11 +283,9 @@ void terminate(pcb_t *pcb, int ret) {
   pcb->ret = ret;
 
   // Wake up parent for wait() system call.
-  if (pcb->parent) {
-    synchronized _(pcb->parent->waitlock);
-    pcb->zombie = true;
-    pcb->parent->wait.notifyAll();
-  } else pcb->zombie = true; // Without lock.
+  pcb->zombie = true;
+  if (pcb->parent)
+    pcb->parent->wait.wake_all();
 
   pcb->clear();
   pidmap->erase(pcb->pid);
@@ -384,6 +381,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
   // We can reference to the same PCB.
   if (share_vm) {
     cp = pp;
+    ct->tid = nextpid();
   } else {
     // When not sharing, we're copying the PCB as well.
     cp = new pcb_t;
@@ -406,11 +404,11 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     // Deep-copy the page table.
     cp->pt_root = pt::copy(pt_root());
     cp->vma = pp->vma;
+    ct->tid = cp->pid;
   }
 
   ct->pcb = cp;
   cp->threads.push_back(ct);
-  ct->tid = cp->nexttid();
 
   // Allocate a new kernel stack.
   ct->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);

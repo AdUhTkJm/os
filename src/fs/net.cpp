@@ -16,15 +16,6 @@ static_storage<os::vector<ip::route>> ip::routes;
 static_storage<class demux> demux;
 socketfs sockfs;
 
-void demux::record(inode *node) {
-  if (auto udp = dyn_cast<udp_socket_inode>(node)) {
-    udps.insert(udp->srcport, udp);
-    return;
-  }
-
-  panic("demux::record: unknown node type");
-}
-
 const char *hostname() {
   static char buf[16] = "pristine-";
   sprintf(buf + 9 , "%02x", eth::src[3]);
@@ -315,7 +306,13 @@ void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, p
 
 udp_socket_inode::udp_socket_inode(net_device *dev, ip::address src, unsigned short port):
   inode_impl(&sockfs, 0, 0, 0666, Socket), dev(dev), src(src), srcport(port) {
-  demux->record(this);
+  if (srcport != 0)
+    demux->udps.insert(srcport, this);
+}
+
+udp_socket_inode::~udp_socket_inode() {
+  if (srcport != 0)
+    demux->udps.erase(srcport);
 }
 
 void udp_socket_inode::receive(datagram &&data) {
@@ -374,7 +371,7 @@ size_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
 size_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
   // Allocate a port when there's none.
   if (!srcport) {
-    auto port = allocate();
+    auto port = htons(allocate());
     if (!port)
       return -EADDRINUSE;
     if (auto ret = bind(src, port); ret < 0)

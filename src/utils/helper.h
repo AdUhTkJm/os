@@ -33,10 +33,6 @@
 #  define assume(...)
 #endif
 
-#define __assert0(x, line) do { [[unlikely]] if (!(x)) panic(__FILE__ ":" #line ": assertion failed: " #x); } while (0)
-#define __assert1(x, line) __assert0(x, line)
-#define assert(x) __assert1(x, __LINE__)
-
 /* I always don't remember the exact form of test macros, so redefine them here. */
 /* This also helps VSCode to highlight - just change position of IN_VSCODE. */
 #if defined(__riscv) || IN_VSCODE

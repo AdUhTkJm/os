@@ -210,8 +210,11 @@ public:
 
   virtual short poll(unsigned short event) { (void) event; return POLLIN | POLLOUT; }
 
-  virtual void wait_on_read() {}
-  virtual void wait_on_write() {}
+  virtual void prepare_read_wait(wait_entry &) {}
+  virtual void prepare_write_wait(wait_entry &) {}
+
+  virtual void finish_read_wait(wait_entry &) {}
+  virtual void finish_write_wait(wait_entry &) {}
   // Note that these functions might not return, as they would potentially preempt.
   virtual void wake_read() {}
   virtual void wake_write() {}

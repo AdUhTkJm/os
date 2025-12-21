@@ -918,7 +918,7 @@ HANDLE(munmap, addr, len) {
 
 HANDLE(sched_yield, _) {
   // There is no system call context when we directly call yield().
-  scheduler.yield(/*sleepy=*/false);
+  scheduler.yield();
   // noreturn
 }
 
@@ -1048,18 +1048,34 @@ retry:
   if (!timeout)
     return 0;
 
-  {
-    nopreempt _;
-    for (long i = 0; i < cnt; i++) {
-      pollfd fd = fds[i];
-      auto file = pcb->ftbl->at(fd.fd);
-      if (fd.events & POLLIN)
-        file->node()->wait_on_read();
-      if (fd.events & POLLOUT)
-        file->node()->wait_on_write();
-    }
+  spinlock lock;
+  lock.acquire();
+  wait_entry *entries = new wait_entry[cnt * 2];
+  for (long i = 0; i < cnt; i++) {
+    pollfd fd = fds[i];
+    auto file = pcb->ftbl->at(fd.fd);
+    if (fd.events & POLLIN)
+      file->node()->prepare_read_wait(entries[i * 2]);
+    if (fd.events & POLLOUT)
+      file->node()->prepare_write_wait(entries[i * 2 + 1]);
   }
+  lock.release();
+
+  // This calls suspend().
   auto ret = tcb->sleep(timeout);
+
+  lock.acquire();
+  for (long i = 0; i < cnt; i++) {
+    pollfd fd = fds[i];
+    auto file = pcb->ftbl->at(fd.fd);
+    if (fd.events & POLLIN)
+      file->node()->finish_read_wait(entries[i * 2]);
+    if (fd.events & POLLOUT)
+      file->node()->finish_write_wait(entries[i * 2 + 1]);
+  }
+  lock.release();
+  
+  delete[] entries;
   // Recovered from sleeping by timeout.
   if (ret == 0)
     return 0;
@@ -1225,7 +1241,7 @@ namespace os {
       // Tick every 100ms.
       sbi_set_timer(rdtime() + tick_length / timer_tick);
       scheduler.tick();
-      scheduler.yield(/*sleepy=*/false); // TODO: check time slice
+      scheduler.yield(); // TODO: check time slice
     }
     case 9: // PLIC interrupt
       os::plic::handle();

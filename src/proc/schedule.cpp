@@ -8,7 +8,7 @@ static_storage<pcb_t> boot_pcb;
 static_storage<os::list<tcb_t*>> napping;
 
 void scheduler_t::add(tcb_t *tcb) {
-  synchronized syn(lock);
+  synchronized _(lock);
   ready.push_back(tcb);
 }
 
@@ -57,30 +57,33 @@ void scheduler_t::dispatch_impl() {
   __builtin_unreachable();
 }
 
-void scheduler_t::erase(tcb_t *pcb) {
+void scheduler_t::erase(tcb_t *tcb) {
   lock.acquire();
-  if (active == pcb) {
-    // Now pcb is neither in ready nor in sleep.
-    pcb->status = Zombie;
+  if (tcb->status == Ready)
+    ready.erase(tcb);
+  if (tcb->status == Sleeping)
+    sleep.erase(tcb);
+  tcb->status = Zombie;
+  if (active == tcb)
     dispatch_impl(); // noreturn
-  }
-  if (pcb->status == Ready)
-    ready.erase(pcb);
-  if (pcb->status == Sleeping)
-    sleep.erase(pcb);
-  pcb->status = Zombie;
   lock.release();
 }
 
-void scheduler_t::yield(bool sleepy) {
+void scheduler_t::yield() {
   lock.acquire();
-  (sleepy ? sleep : ready).push_back(active);
-  active->status = sleepy ? Sleeping : Ready;
+  assert(active->status != Sleeping);
+  // A thread can be either in Init or Ready here.
+  if (active->status != Ready) {
+    ready.push_back(active);
+    active->status = Ready;
+  }
   dispatch_impl();
 }
 
 void scheduler_t::prepare_to_sleep() {
   synchronized _(lock);
+  if (active->status == Sleeping)
+    return;
   sleep.push_back(active);
   active->status = Sleeping;
 }

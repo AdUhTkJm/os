@@ -132,7 +132,6 @@ struct pcb_t {
   os::vector<pcb_t*> children;
   class vfs *vfs;
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
-  int tidn = 0;           // Next tid.
   int ret;                // Process return code.
   int umask = 022;        // Mask on mode when creating file.
   dentry *pwd;            // Process working directory.
@@ -140,8 +139,8 @@ struct pcb_t {
   sigset pending = 0;     // Pending signals.
   sigaction sigact[32];   // Signal actions.
   os::tty::tty *tty;      // Terminal typewriter.
-  condvar wait;           // Threads suspended in wait() system call.
-  mutex waitlock;         // Used with the previous condvar.
+  wait_queue wait;        // Threads suspended in wait() system call.
+  spinlock waitlock;      // Lock associated with `wait`.
   tms times {};
   long last_schedule;
 
@@ -158,12 +157,6 @@ struct pcb_t {
 
   // Sets heap end. Returns the new end on success, and old end on failure.
   va_t brk(va_t addr);
-  
-  int nexttid() {
-    static spinlock lock;
-    synchronized syn(lock);
-    return ++tidn;
-  }
 };
 /*
 Note for ksp:
@@ -232,7 +225,7 @@ tcb_t *make_kprocess(T fptr) {
   constexpr auto usp_size = 16_kb - 16;
   tcb->usp = (va_t) vmalloc<16>(usp_size) + usp_size;
   tcb->pcb = pcb;
-  tcb->tid = pcb->nexttid();
+  tcb->tid = pcb->pid;
   pcb->threads.push_back(tcb);
   pidmap->insert(pcb->pid, pcb);
   init(tcb);
