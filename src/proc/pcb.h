@@ -47,9 +47,6 @@ struct ctxframe {
   reg_t sp;       // Kernel sp.
   reg_t sepc;
   reg_t sstatus;
-  int locktype;   // 0 for spinlock, 1 for mutex.
-  int __pad;      // Explicit padding.
-  void *lock;
 };
 
 #ifdef __cplusplus
@@ -205,11 +202,10 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 // Even though it does not return for now, it will eventually look as if it "returned".
 // Return value marks whether this is interrupted by a signal (-EINTR) or a normal return (0).
 class mutex;
-int context_save(void *ctx, bool *ctx_valid, spinlock *lock);
-int context_save(void *ctx, bool *ctx_valid, mutex *lock);
+int context_save(void *ctx, bool *ctx_valid);
 extern "C" [[noreturn]] void context_restore(void *ctx, bool from_signal);
 
-#define suspend(lock) context_save(&active()->ctx, &active()->ctx_valid, &lock)
+#define suspend() context_save(&active()->ctx, &active()->ctx_valid)
 
 // Creates a kernel process.
 template<class T> requires (is_function_v<remove_pointer_t<T>>)
@@ -218,7 +214,8 @@ tcb_t *make_kprocess(T fptr) {
   tcb_t *tcb = new tcb_t;
   pcb->pid = pcb->pgid = pcb->sid = nextpid();
   pcb->kproc = true;
-  pcb->gid = pcb->uid = 0; // root
+  pcb->gid = pcb->uid = 0;
+  pcb->egid = pcb->euid = pcb->sgid = pcb->suid = 0;
   pcb->parent = nullptr;
   
   pcb->vfs = new vfs;

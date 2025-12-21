@@ -36,7 +36,8 @@
 namespace os {
 
 struct option {
-  bool broadcast;
+  bool broadcast = false;
+  bool checksum = true;
 };
 
 inline constexpr unsigned short htons(unsigned short x) {
@@ -67,7 +68,7 @@ struct net_device;
 class demux {
 public:
   // Maps port to inode.
-  os::hashmap<int, udp_socket_inode*> udps;
+  os::hashmap<unsigned short, udp_socket_inode*> udps;
   void push(char *buf, int len);
   void record(inode *node);
 };
@@ -146,10 +147,32 @@ constexpr size_t MTU = 1500;
 //  [-h-|--ip payload--]
 //      |---------------- `data`
 int write(net_device *dev, const void *data, size_t len, address src, address dst, protocol prot, int flags, option options);
-void read(const char *p, size_t len);
+void read(const char *p, size_t len, int error = 0);
 
 string format(__big ip::address addr);
 optional<ip::address> format(const string &addr);
+
+struct route {
+  ip::address network;
+  ip::address mask;
+  ip::address gateway;
+};
+
+extern static_storage<vector<route>> routes;
+route *lookup_route(ip::address dst);
+
+}
+
+namespace icmp {
+
+struct header {
+  unsigned char  type;
+  unsigned char  code;
+  unsigned short checksum;
+  unsigned       rest;
+};
+
+void read(const char *p, size_t len);
 
 }
 
@@ -187,7 +210,7 @@ constexpr size_t MTU = ip::MTU - sizeof(header);
 void fill_header(char *p, ip::address src, ip::address dst, port srcport, port dstport, size_t payload_len);
 
 unsigned short checksum(ip::address src, ip::address dst, const void *udp, unsigned payload_len);
-void read(const char *p, size_t len);
+void read(const char *p, size_t len, int error = 0);
 
 }
 
@@ -209,22 +232,26 @@ struct /*interface*/ net_device {
 class udp_socket_inode : public inode_impl<udp_socket_inode> {
   net_device *dev;
   spinlock rxlock;
-  class mutex mutex;
-  condvar readwait;
+  wait_queue readwait;
 
   // We just need a byte stream with length.
   // Moreover, string gives us move semantics, so better than a plain struct.
   using datagram = string;
 
   os::list<datagram> rx;
+  int rxerr = 0;
 
-  void on_receive(datagram &&dat);
+  void receive(datagram &&dat);
+  void receive(int error);
+
+  // Allocates an unused port. This is required behaviour when no bind() is called.
+  static udp::port allocate();
 
   friend class demux;
-  friend void udp::read(const char *p, size_t len);
+  friend void udp::read(const char *p, size_t len, int error);
 public:
   ip::address src, dst;
-  int srcport, dstport;
+  int srcport = 0, dstport;
   option options;
 
   FILE_INODE_DEFAULT_IMPL;
@@ -241,6 +268,14 @@ public:
 
   int bind(ip::address src, udp::port port);
   int connect(ip::address addr, udp::port port);
+};
+
+class unix_socket_inode : public inode_impl<unix_socket_inode> {
+  file *f;
+public:
+  unix_socket_inode();
+  int bind(const string &path);
+  int connect(const string &path);
 };
 
 // An empty filesystem that does nothing.

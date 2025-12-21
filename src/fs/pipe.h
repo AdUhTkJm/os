@@ -11,7 +11,7 @@ class pipe_inode : public inode_impl<pipe_inode> {
   size_t rpos = 0, maxbuf;
   int readers = 1, writers = 1;
 
-  os::vector<tcb_t*> read_wait, write_wait;
+  wait_queue read_wait, write_wait;
   spinlock lock;
 public:
   FILE_INODE_DEFAULT_IMPL;

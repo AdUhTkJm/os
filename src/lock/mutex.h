@@ -11,7 +11,7 @@ struct tcb_t;
 class mutex {
   spinlock lock;
   tcb_t *owner = nullptr;
-  os::list<tcb_t*> wait;
+  wait_queue wait;
 
   friend class condvar;
 public:
@@ -23,9 +23,11 @@ public:
   void release();
 };
 
+// To keep things synchronized:
+// the condition variable must be waited on using the same lock that protects the condition being tested.
 class condvar {
   spinlock spin;
-  os::list<tcb_t*> queue;
+  wait_queue queue;
   bool interrupt = false;
 public:
   condvar() = default;

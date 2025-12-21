@@ -276,9 +276,59 @@ struct stat {
 #define AF_FILE		AF_LOCAL /* Another non-standard name for PF_LOCAL.  */
 #define AF_INET		2	/* IP protocol family.  */
 
-#define SOCK_STREAM  1
-#define SOCK_DGRAM   2
-#define SOCK_RAW     3
+#define SOCK_STREAM   1
+#define SOCK_DGRAM    2
+#define SOCK_RAW      3
+#define SOCK_CLOEXEC  02000000
+#define SOCK_NONBLOCK 00004000
+#define SOL_SOCKET	1
+
+#define SO_DEBUG	1
+#define SO_REUSEADDR	2
+#define SO_TYPE		3
+#define SO_ERROR	4
+#define SO_DONTROUTE	5
+#define SO_BROADCAST	6
+#define SO_SNDBUF	7
+#define SO_RCVBUF	8
+#define SO_SNDBUFFORCE	32
+#define SO_RCVBUFFORCE	33
+#define SO_KEEPALIVE	9
+#define SO_OOBINLINE	10
+#define SO_NO_CHECK	11    /* No checksum */
+#define SO_PRIORITY	12
+#define SO_LINGER	13
+#define SO_BSDCOMPAT	14
+#define SO_REUSEPORT	15
+#define SO_PASSCRED	16
+#define SO_PEERCRED	17
+#define SO_RCVLOWAT	18
+#define SO_SNDLOWAT	19
+#define SO_RCVTIMEO_OLD	20
+#define SO_SNDTIMEO_OLD	21
+
+#define MSG_DONTROUTE 0x04
+#define MSG_DONTWAIT  0x40
+#define MSG_FIN       0x200
+#define MSG_SYN       0x400
+#define MSG_RST       0x1000
+#define MSG_NOSIGNAL  0x4000
+#define MSG_FASTOPEN  0x20000000
+
+struct msghdr {
+  void         *msg_name;       /* Optional address */
+  unsigned      msg_namelen;    /* Size of address */
+  struct iovec *msg_iov;        /* Scatter/gather array */
+  size_t        msg_iovlen;     /* Number of elements in msg_iov */
+  void         *msg_control;    /* Ancillary data, see below */
+  size_t        msg_controllen; /* Ancillary data buffer size */
+  int           msg_flags;      /* Flags (unused) */
+};
+
+struct mmsghdr {
+  msghdr   msg_hdr;
+  unsigned msg_len;
+};
 
 struct sockaddr {
   unsigned short sa_family;

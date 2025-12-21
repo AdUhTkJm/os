@@ -11,7 +11,7 @@ size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
   (void) offset;
   lock.acquire();
 
-  auto tcb = active();
+  wait_entry entry;
   while (rpos == buffer.size()) {
     // No more writers. EOF.
     if (writers == 0) {
@@ -24,10 +24,12 @@ size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
       return -EAGAIN;
     }
 
-    read_wait.push_back(tcb);
-    if (suspend(lock) != 0)
+    read_wait.prepare(entry);
+    lock.release();
+    if (suspend() != 0)
       return -EINTR;
     lock.acquire();
+    read_wait.finish(entry);
   }
 
   auto sz = buffer.size();
@@ -51,7 +53,7 @@ size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) 
   
   lock.acquire();
 
-  auto tcb = active();
+  wait_entry entry;
   while (buffer.size() == maxbuf) {
     // No more readers. Don't write.
     if (readers == 0) {
@@ -64,10 +66,12 @@ size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) 
       return -EAGAIN;
     }
 
-    write_wait.push_back(tcb);
-    if (suspend(lock) != 0)
+    write_wait.prepare(entry);
+    lock.release();
+    if (suspend() != 0)
       return -EINTR;
     lock.acquire();
+    write_wait.finish(entry);
   }
 
   auto sz = buffer.size();
@@ -100,9 +104,9 @@ void pipe_inode::onclose(int flags) {
   }
 
   if (!readers)
-    scheduler.wakeup_all(lock, write_wait);
+    write_wait.wake_all();
   if (!writers)
-    scheduler.wakeup_all(lock, read_wait);
+    read_wait.wake_all();
 }
 
 void pipe_inode::incf(const file *file) {

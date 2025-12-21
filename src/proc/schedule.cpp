@@ -13,7 +13,7 @@ void scheduler_t::add(tcb_t *tcb) {
 }
 
 void scheduler_t::dispatch() {
-  synchronized syn(lock);
+  lock.acquire();
   dispatch_impl();
 }
 
@@ -58,25 +58,31 @@ void scheduler_t::dispatch_impl() {
 }
 
 void scheduler_t::erase(tcb_t *pcb) {
-  synchronized syn(lock);
+  lock.acquire();
   if (active == pcb) {
     // Now pcb is neither in ready nor in sleep.
     pcb->status = Zombie;
-    dispatch_impl();
-    return;
+    dispatch_impl(); // noreturn
   }
   if (pcb->status == Ready)
     ready.erase(pcb);
   if (pcb->status == Sleeping)
     sleep.erase(pcb);
   pcb->status = Zombie;
+  lock.release();
 }
 
 void scheduler_t::yield(bool sleepy) {
-  synchronized syn(lock);
+  lock.acquire();
   (sleepy ? sleep : ready).push_back(active);
   active->status = sleepy ? Sleeping : Ready;
   dispatch_impl();
+}
+
+void scheduler_t::prepare_to_sleep() {
+  synchronized _(lock);
+  sleep.push_back(active);
+  active->status = Sleeping;
 }
 
 void scheduler_t::maybe_preempt_impl() {
@@ -91,6 +97,7 @@ void scheduler_t::maybe_preempt_impl() {
 
 void scheduler_t::wakeup(tcb_t *tcb, bool can_preempt) {
   lock.acquire();
+  assert(tcb->status == Sleeping);
   tcb->status = Ready;
   sleep.erase(tcb);
   ready.push_back(tcb);

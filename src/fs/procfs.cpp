@@ -23,6 +23,7 @@ inode *procroot::lookup(const string &name) {
   meta.atime = now();
   if (name == "filesystems")
     return filesystems;
+  printk("procroot: unknown name: %s\n", name.c_str());
   return nullptr;
 }
 

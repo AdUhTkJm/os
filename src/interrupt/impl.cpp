@@ -1,4 +1,5 @@
 #include "sysret.h"
+#include "impl.h"
 #include "../fs/vfs.h"
 #include "../fs/devfs.h"
 #include "../fs/net.h"
@@ -365,13 +366,21 @@ int socket(int domain, int type, int protocol) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
+  int flags = 0;
+  if (type & SOCK_CLOEXEC)
+    flags |= O_NONBLOCK;
+  if (type & SOCK_NONBLOCK)
+    flags |= O_NONBLOCK;
+  type &= ~SOCK_CLOEXEC;
+  type &= ~SOCK_NONBLOCK;
+
   switch (type) {
   case SOCK_DGRAM: {
     if (protocol != 0 && protocol != UDP)
       return -EINVAL;
 
     auto node = new udp_socket_inode(virtio::netdev(), ip::src, 0);
-    auto f = new file(new dentry("<sock>", node, nullptr), O_RDWR);
+    auto f = new file(new dentry("<sock>", node, nullptr), O_RDWR | flags);
     return pcb->ftbl->allocate(f);
   }
   default:
@@ -405,12 +414,44 @@ int bind(int fd, void *_addr, unsigned len) {
       return -EINVAL;
 
     auto info = *(sockaddr_in *) addr;
-    udp->src = info.sin_addr.s_addr;
-    udp->srcport = info.sin_port;
+    udp->bind(info.sin_addr.s_addr, info.sin_port);
     return 0;
   }
 
   printk("bind: not udp inode\n");
+  return -EINVAL;
+}
+
+int connect(int fd, void *_addr, unsigned len) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  auto addrp = copy_from_user(_addr, len);
+  if (!addrp)
+    return -addrp;
+  auto addr = addrp->get();
+
+  auto family = *(unsigned short *) addr;
+  if (family != AF_INET) {
+    printk("connect: unsupported family: %d\n", family);
+    return -EINVAL;
+  }
+
+  // Now this might be TCP inode or UDP inode.
+  // But we only have UDP now.
+  if (auto udp = dyn_cast<udp_socket_inode>(file->node())) {
+    if (len < sizeof(sockaddr_in))
+      return -EINVAL;
+
+    auto info = *(sockaddr_in *) addr;
+    udp->connect(info.sin_addr.s_addr, info.sin_port);
+    return 0;
+  }
+
+  printk("connect: not udp inode\n");
   return -EINVAL;
 }
 
@@ -474,6 +515,103 @@ int futex(void *addr, int op, int val, void *timeout) {
     printk("unknown futex op: %d\n", op);
   }
   return 0;
+}
+
+// See socket(7) for a list of options:
+//   https://man7.org/linux/man-pages/man7/socket.7.html
+int setsockopt(int fd, int level, int optname, void *optval, int optlen) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  if (level != 0)
+    printk("setsockopt: unknown level: %d\n", level);
+
+  switch (optname) {
+  case SO_NO_CHECK: {
+    // This has to be a UDP socket.
+    if (optlen != 4)
+      return -EINVAL;
+    
+    auto udp = dyn_cast<udp_socket_inode>(file->node());
+    if (!udp)
+      return -EBADF;
+
+    auto p = copy_from_user(optval, optlen);
+    if (!p)
+      return p;
+    int enable = *(int*) p->get();
+    udp->options.checksum = !enable;
+    return 0;
+  }
+
+  default:
+    printk("setsockopt: unknown optname %d\n", level, optname);
+    return -EINVAL;
+  }
+}
+
+// From man send(2), we know the only difference between `send` and `write` is the presence of flags.
+int sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsigned int addrlen) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  auto buf = copy_from_user(_buf, size);
+  if (!buf)
+    return -EFAULT;
+  
+  // Now let's see the inode type.
+  // TODO: if it's a connection type, then it shouldn't connect.
+  if (dest) {
+    if (auto ret = connect(fd, dest, addrlen); ret < 0)
+      return ret;
+  }
+
+  auto node = file->node();
+  int writeflags = 0;
+  if (flags & MSG_DONTWAIT)
+    writeflags |= O_NONBLOCK;
+
+  return node->write(0, buf->get(), size, writeflags);
+}
+
+int sendmsg(int fd, const msghdr &header, int flags) {
+  if (header.msg_controllen != 0) {
+    printk("sendmsg: no control message yet\n");
+    return -EINVAL;
+  }
+
+  auto iovp = copy_from_user(header.msg_iov, sizeof(iovec) * header.msg_iovlen);
+  if (!iovp)
+    return -EFAULT;
+
+  iovec *iov = (iovec *) iovp->get();
+  printk("sendmsg: flags: %d\n", flags);
+
+  // Note msg_name and msg_namelen are user-space pointers, as expected by sendto().
+  int sent = 0;
+  for (unsigned i = 0; i < header.msg_iovlen; i++) {
+    int ret = sendto(fd, iov[i].iov_base, iov[i].iov_len, flags, header.msg_name, header.msg_namelen);
+    if (ret < 0)
+      return sent;
+    sent += ret;
+  }
+  return sent;
+}
+
+int sendmsg(int fd, void *msg, int flags) {
+  auto p = copy_from_user((void *) msg, sizeof(msghdr));
+  if (!p)
+    return -EFAULT;
+
+  msghdr *header = (msghdr *) p->get();
+  return sendmsg(fd, *header, flags);
 }
 
 }

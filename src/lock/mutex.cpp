@@ -7,9 +7,13 @@ void mutex::acquire() {
   auto tcb = active();
 
   lock.acquire();
+  wait_entry entry;
   while (owner) {
-    wait.push_back(tcb);
-    suspend(lock);
+    wait.prepare(entry);
+    lock.release();
+    suspend();
+    lock.acquire();
+    wait.finish(entry);
   }
   owner = tcb;
   lock.release();
@@ -19,11 +23,7 @@ void mutex::release() {
   lock.acquire();
   assert(owner == active());
   owner = nullptr;
-  if (!wait.empty()) {
-    auto next = wait.front();
-    wait.pop_front();
-    scheduler.wakeup(owner, /*can_preempt=*/ false);
-  }
+  wait.wake();
     
   lock.release();
   // If the woken up thread has higher priority, let it run first.
@@ -31,38 +31,25 @@ void mutex::release() {
 }
 
 void condvar::wait(mutex &lock) {
-  spin.acquire();
-  queue.push_back(active());
-  spin.release();
+  wait_entry entry;
+  queue.prepare(entry);
 
   // Note that suspend() automatically re-acquires the lock on return.
-  interrupt = (suspend(lock) != 0);
+  lock.release();
+  suspend();
+  lock.acquire();
+
+  queue.finish(entry);
 }
 
 int condvar::notify(int max) {
-  spin.acquire();
-  int woken = 0;
-  for (int i = 0; !queue.empty() && i < max; i++) {
-    auto next = queue.front();
-    queue.pop_front();
-    scheduler.wakeup(next, /*can_preempt=*/ false);
-    woken++;
-  }
-  spin.release();
+  int woken = queue.wake(max);
   scheduler.maybe_preempt();
   return woken;
 }
 
 int condvar::notifyAll() {
-  spin.acquire();
-  int woken = 0;
-  while (!queue.empty()) {
-    auto next = queue.front();
-    queue.pop_front();
-    scheduler.wakeup(next, /*can_preempt=*/ false);
-    woken++;
-  }
-  spin.release();
+  int woken = queue.wake_all();
   scheduler.maybe_preempt();
   return woken;
 }

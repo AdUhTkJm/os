@@ -38,7 +38,7 @@ static_storage<os::hashmap<int, net_device*>> net_devs;
     return;
   mmwr(dev->base + INTERRUPT_ACK, status);
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
-  scheduler.wakeup_all(dev->lock, dev->wait);
+  dev->wait.wake_all();
 }
 
 [[gnu::no_instrument_function]] void net_device_handler(int irq) {
@@ -60,7 +60,7 @@ static_storage<os::hashmap<int, net_device*>> net_devs;
   // A write has occurred.
   if (dev->txlast != dev->tx->used.idx) {
     dev->txlast = dev->tx->used.idx;
-    scheduler.wakeup_all(dev->lock, dev->txwait, false);
+    dev->txwait.wake_all();
   }
 
   scheduler.maybe_preempt();
@@ -242,18 +242,22 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   FENCE;
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
 
+  wait_entry entry;
   for (int i = 0;;) {
     lock.acquire();
-    wait.push_back(active());
-    if (suspend(lock) != 0)
+    wait.prepare(entry);
+    lock.release();
+    if (suspend() != 0)
       return -EINTR;
+
+    lock.acquire();
+    wait.finish(entry);
     RFENCE;
     for (uint16_t last = queue->used.idx; i != last; i++) {
       vq::used_ring::element used = queue->used.ring[i % vq::size];
       
       if (used.id == head) {
-        if (status == 255)
-          printk("used.idx = %ld, avail.idx = %ld, head = %ld, used.id = %ld\n", queue->used.idx, queue->avail.idx, head, used.id);
+        lock.release();
         if (status == 0)
           memcpy(buffer, (void *) as_va(buf), 512);
 
@@ -494,16 +498,16 @@ int net_device::read() {
 }
 
 void net_device::wake_write() {
-  scheduler.wakeup_all(lock, txwait);
+  txwait.wake_all();
 }
 
 int net_device::write(const void *buf, int len, bool block) {
   if (unsigned(len + sizeof(header)) >= PACKET_BUF_SIZE)
     return -E2BIG;
 
+  wait_entry entry;
+  lock.acquire();
   for (;;) {
-    lock.acquire();
-    
     // The queue is full. Suspend.
     if (tx->avail.idx - txlast >= vq::size) {
       if (!block) {
@@ -511,10 +515,13 @@ int net_device::write(const void *buf, int len, bool block) {
         return -ENOSPC;
       }
 
-      txwait.push_back(active());
-      if (suspend(lock) != 0)
+      txwait.prepare(entry);
+      lock.release();
+      if (suspend() != 0)
         return -EINTR;
-      
+
+      lock.acquire();
+      txwait.finish(entry);
       continue;
     }
     

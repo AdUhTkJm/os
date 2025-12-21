@@ -19,9 +19,9 @@ class ext_inode : public os::inode_impl<ext_inode> {
     uint16_t type;  // file type + permission
     uint16_t uid;
     uint32_t sz;
-    uint32_t atime; // atime
-    uint32_t ctime; // ctime
-    uint32_t mtime; // mtime
+    uint32_t atime; // In seconds; different from inode::meta
+    uint32_t ctime;
+    uint32_t mtime;
     uint32_t delete_time;
     uint16_t gid;
     uint16_t lnkcnt;

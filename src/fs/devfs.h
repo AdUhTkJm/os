@@ -24,7 +24,7 @@ public:
 extern static_storage<class devfs> devfs;
 
 class console_inode : public inode_impl<console_inode> {
-  os::vector<tcb_t *> wait;
+  wait_queue wait;
   spinlock lock;
   inode::meta meta;
 public:

@@ -11,6 +11,7 @@ eth::address eth::src;
 spinlock ip::lock;
 ip::address ip::src, ip::subnet_mask;
 static_storage<os::vector<ip::address>> ip::routers, ip::dns;
+static_storage<os::vector<ip::route>> ip::routes;
 
 static_storage<class demux> demux;
 socketfs sockfs;
@@ -43,7 +44,7 @@ void demux::push(char *buf, int len) {
 }
 
 void eth::read(const char *p, size_t len) {
-  auto ethtype = htons(((eth::header *) p)->ethtype);
+  auto ethtype = htons(((const eth::header *) p)->ethtype);
   
   // Handle Ethernet frame.
   if (ethtype == 0x800) {
@@ -84,15 +85,29 @@ int arp::write(net_device *dev, const void *data, size_t len, ip::address dst, i
   return eth::write(dev, data, len, qemu_user_addr, eth::src, flags, options);
 }
 
-void ip::read(const char *p, size_t len) {
-  auto header = (ip::header *) p;
+void ip::read(const char *p, size_t len, int error) {
+  auto header = (const ip::header *) p;
   // Verify checksum.
-  if (checksum(header) != 0)
+  if (checksum(header) != 0) {
     printk("kernel warning: bad ip checksum, dropped\n");
+    return;
+  }
+
+  [[unlikely]] if (len < (header->ver_ihl & 0xf) * 4) {
+    printk("ip header too short, dropped\n");
+    return;
+  }
+
+  p += sizeof(ip::header);
+  len -= sizeof(ip::header);
 
   switch (header->protocol) {
+  case ICMP:
+    assert(error == 0);
+    icmp::read(p, len);
+    break;
   case UDP:
-    udp::read(p + sizeof(ip::header), len - sizeof(ip::header));
+    udp::read(p, len, error);
     break;
   default:
     printk("kernel warning: unknown protocol %d, dropped\n", header->protocol);
@@ -132,6 +147,32 @@ optional<ip::address> ip::format(const string &addr) {
   return (ip << 8) | comp;
 }
 
+static constexpr int popcount(unsigned x) {
+  int c = 0;
+  while (x) {
+    x &= x - 1;
+    c++;
+  }
+  return c;
+}
+
+ip::route *ip::lookup_route(ip::address dst) {
+  route *best = nullptr;
+  int maxbits = -1;
+  synchronized _(ip::routes.lock);
+
+  for (auto &r : *routes) {
+    if ((dst & r.mask) == r.network) {
+      int bits = popcount(r.mask);
+      if (bits > maxbits) {
+        best = &r;
+        maxbits = bits;
+      }
+    }
+  }
+  return best;
+}
+
 void ip::fill_header(char *p, address dst, address src, unsigned short len, protocol prot) {
   static unsigned short id = 0;
 
@@ -158,10 +199,14 @@ void ip::fill_header(char *p, address dst, address src, unsigned short len, prot
 int ip::write(net_device *dev, const void *data, size_t len, address src, address dst, protocol prot, int flags, option options) {
   char *p = ((char *) data) - sizeof(ip::header);
   ip::address arpdst;
-  if (!options.broadcast) {
-    // Always send to 10.0.2.2 for now. We might need to query route table.
-    arpdst = htonl(0x0a000202);
-  } else arpdst = 0xffffffff;
+  if (options.broadcast)
+    arpdst = 0xffffffff;
+  else {
+    auto route = lookup_route(dst);
+    if (!route)
+      return -ENETUNREACH;
+    arpdst = route->gateway ? route->gateway : dst;
+  }
   ip::fill_header(p, dst, src, len, prot);
   return arp::write(dev, p, len + sizeof(ip::header), arpdst, flags, options);
 }
@@ -188,17 +233,24 @@ unsigned short ip::checksum(const void *h, unsigned len) {
   return ~sum;
 }
 
-void udp::read(const char *p, size_t len) {
-  auto header = (udp::header *) p;
-  auto port = header->dstport;
+void udp::read(const char *p, size_t len, int error) {
+  if (len < sizeof(udp::header))
+    return;
+
+  auto header = (const udp::header *) p;
+  // If we're reading an error message from ICMP, then it's the source port that triggers the error;
+  // Otherwise, this is a real message for `dstport`.
+  auto port = error ? header->srcport : header->dstport;
   // Inform user program.
   if (!demux->udps.count(port)) {
-    printk("kernel warning: unknown port %d, dropped\n", port);
+    printk("kernel warning: unknown port %d, dropped\n", htons(port));
     return;
   }
   auto node = demux->udps[port];
+  if (error != 0)
+    node->receive(error);
   udp_socket_inode::datagram g(p + sizeof(udp::header), len - sizeof(udp::header));
-  node->on_receive(os::move(g));
+  node->receive(os::move(g));
 }
 
 unsigned short udp::checksum(ip::address src, ip::address dst, const void *udp, unsigned int payload_len) {
@@ -220,6 +272,36 @@ unsigned short udp::checksum(ip::address src, ip::address dst, const void *udp, 
   return sum ? sum : 0xffff;
 }
 
+void icmp::read(const char *p, size_t len) {
+  if (len < sizeof(icmp::header))
+    return;
+
+  auto header = (const icmp::header *) p;
+  p += sizeof(icmp::header);
+  len -= sizeof(icmp::header);
+  int error = 0;
+  switch (header->type) {
+  case 0:
+  case 8:
+    printk("icmp: echo headers, not implemented yet\n");
+    return;
+  case 3: // Destination unreachable.
+    switch (header->code) {
+    case 3: error = ECONNREFUSED; break;
+    case 1: error = EHOSTUNREACH; break;
+    default: error = ENETUNREACH;
+    }
+    break;
+  case 11: // Timeout.
+    error = ETIMEOUT;
+    break;
+  default:
+    printk("icmp: unknown header type %d, dropped\n", header->type);
+    return;
+  }
+  ip::read(p, len, error);
+}
+
 void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, port dstport, size_t payload_len) {
   auto *h = (udp::header *) p;
   h->dstport = dstport;
@@ -227,9 +309,6 @@ void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, p
   h->checksum = 0;
   h->len = htons(payload_len + sizeof(udp::header));
 
-  // We skip UDP checksum for now.
-  // It is still buggy, and skipping checksum is entirely standard-compliant.
-  // Hopefully it will also be faster.
   (void) src; (void) dst;
   // h->checksum = htons(udp::checksum(src, dst, h, payload_len));
 }
@@ -239,52 +318,75 @@ udp_socket_inode::udp_socket_inode(net_device *dev, ip::address src, unsigned sh
   demux->record(this);
 }
 
-void udp_socket_inode::on_receive(datagram &&data) {
-  {
-    synchronized _(rxlock);
-    rx.push_back(os::move(data));
-  }
-  readwait.notifyAll();
+void udp_socket_inode::receive(datagram &&data) {
+  rxlock.acquire();
+  rx.push_back(os::move(data));
+  rxlock.release();
+
+  readwait.wake_all();
+}
+
+void udp_socket_inode::receive(int error) {
+  rxlock.acquire();
+  rxerr = error;
+  rxlock.release();
+
+  readwait.wake_all();
 }
 
 size_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
   bool block = !(flags & O_NONBLOCK);
 
-  mutex.acquire();
+  wait_entry entry;
+  rxlock.acquire();
   for (;;) {
-    rxlock.acquire();
+    if (rxerr) {
+      int err = rxerr;
+      rxerr = 0;
+      rxlock.release();
+      return err;
+    }
 
     if (!rx.empty()) {
       datagram dg = os::move(rx.front());
       rx.pop_front();
       rxlock.release();
 
-      mutex.release();
       auto l = min(len, (unsigned long) dg.size());
       memcpy(buf, dg.c_str(), l);
       return l;
     }
 
-    rxlock.release();
     if (!block) {
-      mutex.release();
+      rxlock.release();
       return -EAGAIN;
     }
 
-    readwait.wait(mutex);
-    if (readwait.interrupted()) {
-      mutex.release();
+    readwait.prepare(entry);
+    rxlock.release();
+    if (suspend() != 0)
       return -EINTR;
-    }
+    rxlock.acquire();
+    readwait.finish(entry);
   }
 }
 
 size_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
+  // Allocate a port when there's none.
+  if (!srcport) {
+    auto port = allocate();
+    if (!port)
+      return -EADDRINUSE;
+    if (auto ret = bind(src, port); ret < 0)
+      return ret;
+  }
+
   size_t off = 0;
   const char *p = (const char *) buf;
   // Total header length.
   constexpr size_t total = sizeof(eth::header) + sizeof(ip::header) + sizeof(udp::header);
   char data[udp::MTU + total];
+  printk("udp: src %s:%d, dst %s:%d\n", ip::format(src).c_str(), htons(srcport), ip::format(dst).c_str(), htons(dstport));
 
   for (; off < len; off += udp::MTU) {
     auto l = min(len - off, udp::MTU);
@@ -299,6 +401,22 @@ size_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
   return off;
 }
 
+udp::port udp_socket_inode::allocate() {
+  constexpr int max = 61000, min = 32768;
+  static int port = min;
+  static spinlock lock;
+
+  synchronized _(lock);
+  int end = port;
+  do {
+    if (++port == max)
+      port = min;
+    if (!demux->udps.count(port))
+      return port;
+  } while (port != end);
+  return 0;
+}
+
 short udp_socket_inode::poll(unsigned short events) {
   short result = 0;
   if (events & POLLIN && rx.size())
@@ -309,12 +427,12 @@ short udp_socket_inode::poll(unsigned short events) {
 }
 
 int udp_socket_inode::bind(ip::address src, udp::port port) {
-  if (demux->udps.count(src)) {
-    // Failed.
+  if (demux->udps.count(port))
     return -EBUSY;
-  }
+  
   this->src = src;
-  srcport = port;
+  demux->udps.erase(port);
+  demux->udps.insert(srcport = port, this);
   return 0;
 }
 
@@ -326,7 +444,7 @@ int udp_socket_inode::connect(ip::address addr, udp::port port) {
 }
 
 void udp_socket_inode::wake_read() {
-  readwait.notifyAll();
+  readwait.wake_all();
 }
 
 void udp_socket_inode::wake_write() {
@@ -383,7 +501,11 @@ discover:
 
   // Read.
   unsigned char recv[400];
-  unsigned len = sock->read(0, recv, sizeof(recv), 0);
+  int len = sock->read(0, recv, sizeof(recv), 0);
+  if (len < 0) {
+    printk("dhcp: sock error: %d\n");
+    goto discover;
+  }
 
   // Extract information from it.
   unsigned recvcookie;
@@ -464,6 +586,11 @@ request:
 
   // Look at the final acknowledge packet.
   len = sock->read(0, recv, sizeof(recv), 0);
+  if (len < 0) {
+    printk("dhcp: sock error: %d\n");
+    goto discover;
+  }
+
   memcpy(&recvcookie, recv + 236, 4);
   valid = len >= 240 && recvcookie == htonl(0x63825363);
   if (!valid)
@@ -490,9 +617,55 @@ request:
   }
 
   printk("lease time: %u\n", lease_time);
-  
+
+  // Fill in route table.
+  {
+    assert(ip::routes.valid());
+    synchronized _(ip::routes.lock);
+
+    ip::routes->clear();
+    // 127.0.0.1/8
+    ip::routes->push_back({
+      .network = htonl(0x7f000001),
+      .mask = 0xffffff00,
+      .gateway = 0
+    });
+
+    // src/netmask (obtained from DHCP)
+    ip::routes->push_back({
+      .network = ip::src,
+      .mask = ip::subnet_mask,
+      .gateway = 0
+    });
+
+    // 0.0.0.0/0 -> routers[0]
+    ip::routes->push_back({
+      .network = 0,
+      .mask = 0,
+      .gateway = (*ip::routers)[0]
+    });
+  }
+
+  // Configure DNS. In the buildroot rootfs, we expect it to be at /tmp/resolv.conf.
   auto tcb = active();
-  tcb->sleep(lease_time * 500'000'000 /*ns*/);
+  auto pcb = tcb->pcb;
+  auto fd = pcb->open_file("/tmp/resolv.conf", O_RDWR | O_CREAT, 0644);
+  if (fd < 0)
+    printk("fd: %d\n", fd), panic("dhcp: cannot create /tmp/resolv.conf");
+
+  // Write the file like: `nameserver 10.0.2.2\n`
+  auto file = pcb->ftbl->at(fd);
+  string msg = "nameserver ";
+  assert(ip::dns->size());
+  msg += ip::format((*ip::dns)[0]);
+  msg += "\n";
+  file->write(msg.c_str(), msg.size());
+  char ff[30] {};
+  file->read(ff, 29);
+  printk("dhcp: %s\n", ff);
+  pcb->close_file(fd);
+  
+  tcb->sleep(lease_time * 500'000'000ul /*ns*/);
   goto discover;
 }
 

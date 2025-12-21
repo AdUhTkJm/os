@@ -181,6 +181,7 @@ public:
   const uint64_t rtti;
 
   enum filetype { File, Dir, Link, BlockDevice, CharDevice, Socket, FIFO, Bad };
+  // Note: this gives nanoseconds!
   struct meta {
     size_t atime; // Access time.
     size_t ctime; // Creation time.
@@ -271,12 +272,15 @@ private:
   struct path_comparator {
     bool operator()(const pair<dentry *, string> &l, const pair<dentry *, string> &r) const;
   };
+  struct path_hasher {
+    uint64_t operator()(const pair<dentry *, string> &l) const;
+  };
   // The way to create a new `fs` structure from the opaque `source`.
   // This is limited by the way of system call; we can't use templates.
   static static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> creators;
   static spinlock mountlock;
   // TODO: make it an LRU cache.
-  static static_storage<os::hashmap<pair<dentry*, string>, dentry*, detail::fnv_1a<pair<dentry *, string>>, path_comparator>> dcache;
+  static static_storage<os::hashmap<pair<dentry*, string>, dentry*, path_hasher, path_comparator>> dcache;
   // All mounted filesystems that must respond to sync().
   static static_storage<os::vector<fs*>> tosync;
 

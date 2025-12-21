@@ -6,6 +6,8 @@
 
 #include "../fs/vfs.h"
 
+struct msghdr;
+
 namespace os::detail {
 
 int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags);
@@ -17,8 +19,14 @@ int wait(int pid, void *wstatus, int options, void *rusage);
 int faccessat(int dirfd, const char *path, int mode);
 int socket(int domain, int type, int protocol);
 int bind(int fd, void *sockaddr, unsigned len);
+int connect(int fd, void *sockaddr, unsigned len);
 int syslog(int type, char *buf, unsigned long size);
 int futex(void *uaddr, int op, int val, void *timeout);
+int setsockopt(int fd, int level, int optname, void *optval, int optlen);
+int getsockopt(int fd, int level, int optname, void *optval, int *optlen);
+int sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigned addrlen);
+int sendmsg(int fd, void *msg, int flags);
+int sendmsg(int fd, const msghdr &msg, int flags);
 
 int fromtype(inode::filetype ty);
 

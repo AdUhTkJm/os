@@ -217,5 +217,8 @@ expected<vector<string>> copy_from_user(char **usr);
 
 void setroot(int asid, pa_t pt_root);
 
+// Make it page-aligned.
+constexpr size_t user_va_max = 0x3f'ffff'f000;
+
 }
 #endif

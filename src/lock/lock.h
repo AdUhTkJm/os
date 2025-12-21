@@ -1,7 +1,7 @@
 #ifndef LOCK_H
 #define LOCK_H
 
-#include "../utils/stl/vector.h"
+#include "../utils/stl/list.h"
 
 #ifdef DEADLOCK
 extern "C" [[noreturn]] void panic(const char *);
@@ -11,22 +11,32 @@ extern "C" int printk(const char *, ...);
 
 namespace os {
 
+namespace detail {
+
+inline int nested_irq = 0;
+
+}
+
 // Note we can't write to sstatus.SIE bit.
 #if defined(__riscv) || IN_VSCODE
 inline void disable_preempt() {
-  __asm__ volatile(
-    "csrc sie, 2\n"   // software interrupts
-    "csrc sie, 32\n"  // timer interrupts
-    "csrc sie, 512\n" // external interrupts 
-  );
+  if (detail::nested_irq++ == 0) {
+    __asm__ volatile(
+      "csrc sie, 2\n"   // software interrupts
+      "csrc sie, %0\n"  // timer interrupts
+      "csrc sie, %1\n"  // external interrupts 
+    :: "r"(32), "r"(512));
+  }
 }
 
 inline void enable_preempt() {
-  __asm__ volatile(
-    "csrs sie, 2\n"
-    "csrs sie, 32\n"
-    "csrs sie, 512\n"
-  );
+  if (--detail::nested_irq == 0) {
+    __asm__ volatile(
+      "csrs sie, 2\n"
+      "csrs sie, %0\n"
+      "csrs sie, %1\n"
+    :: "r"(32), "r"(512));
+  }
 }
 #endif
 #if defined(__loongarch__)
@@ -110,8 +120,8 @@ public:
 #endif
 #ifndef UNIPROCESSOR
     release_impl(&v);
-    enable_preempt();
 #endif
+    enable_preempt();
   }
 
 #ifdef DEADLOCK
@@ -133,8 +143,8 @@ public:
     stack::copy(&stack);
 #  endif
 #endif
-#ifndef UNIPROCESSOR
     disable_preempt();
+#ifndef UNIPROCESSOR
     acquire_impl(&v);
 #endif
   }
@@ -146,6 +156,22 @@ class synchronized {
 public:
   synchronized(T &lock): lock(lock) { lock.acquire(); }
   ~synchronized() { lock.release(); }
+};
+
+struct tcb_t;
+struct wait_entry : intrusive_list_node<wait_entry> {
+  tcb_t *tcb;
+  bool queued = false;
+};
+
+struct wait_queue {
+  spinlock lock;
+  os::intrusive_list<wait_entry> q;
+
+  void prepare(wait_entry &entry);
+  void finish(wait_entry &entry);
+  int wake_all();
+  int wake(int n = 1);
 };
 
 }

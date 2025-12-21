@@ -25,7 +25,7 @@ struct scheduler_t {
   // Puts the current active process to sleep.
   // When sleepy = false, puts it to ready state instead.
   [[noreturn]] void yield(bool sleepy = true);
-  void yield(spinlock *lock);
+  void prepare_to_sleep();
 
   // Note that even if `can_preempt` is true, it doesn't mean preemption will always happen.
   void wakeup(tcb_t *tcb, bool can_preempt = true);

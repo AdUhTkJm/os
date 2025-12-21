@@ -161,7 +161,7 @@ class block_device : public os::block_device {
   int descid;
   bool legacy;
   spinlock lock;
-  os::vector<tcb_t*> wait;
+  wait_queue wait;
 
   struct request {
     uint32_t type;
@@ -200,7 +200,7 @@ class net_device : public os::net_device {
   unsigned rxnext = 0, rxlast = 0, txlast = 0;
   bool legacy;
   spinlock lock;
-  os::vector<tcb_t*> txwait;
+  wait_queue txwait;
   unsigned txid = 0;
 
   unsigned next_tx_descriptor();

@@ -377,8 +377,8 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
     return -EFAULT;
   bool relative = (*path)[0] != '/';
   int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY)
-    : pcb->open_file(path->get(), O_RDONLY);
+    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY | O_NOFOLLOW)
+    : pcb->open_file(path->get(), O_RDONLY | O_NOFOLLOW);
   if (fd < 0)
     return fd;
   auto f = pcb->ftbl->at(fd);
@@ -415,10 +415,13 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
     return -EFAULT;
+  int openflags = 0;
+  if (flags & AT_SYMLINK_NOFOLLOW)
+    openflags |= O_NOFOLLOW;
   bool relative = (*path)[0] != '/';
   int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_PATH)
-    : pcb->open_file(path->get(), O_PATH);
+    ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
+    : pcb->open_file(path->get(), O_PATH | openflags);
   if (fd < 0)
     return fd;
   auto node = pcb->ftbl->at(fd)->node();
@@ -814,14 +817,15 @@ HANDLE(clock_gettime, id, tp) {
   case CLOCK_MONOTONIC:
     break; // Do nothing
   case CLOCK_REALTIME:
+  case CLOCK_REALTIME_COARSE:
     time += realtime;
     break;
   default:
     return -EINVAL;
   }
 
-  spec.tv_sec = time / 1'000'000'000;
-  spec.tv_nsec = time % 1'000'000'000;
+  spec.tv_sec = time / 1_s;
+  spec.tv_nsec = time % 1_s;
   copy_to_user((void *) tp, &spec, sizeof(timespec));
   return 0;
 }
@@ -1157,6 +1161,39 @@ HANDLE(socket, domain, type, protocol) {
 
 HANDLE(bind, fd, sockaddr, size) {
   return detail::bind(fd, (void *) sockaddr, size);
+}
+
+HANDLE(connect, fd, sockaddr, size) {
+  return detail::connect(fd, (void *) sockaddr, size);
+}
+
+HANDLE(setsockopt, fd, level, optname, optval, optlen) {
+  return detail::setsockopt(fd, level, optname, (void *) optval, optlen);
+}
+
+HANDLE(sendto, fd, buf, size, flags, dest, addrlen) {
+  return detail::sendto(fd, (void *) buf, size, flags, (void *) dest, addrlen);
+}
+
+HANDLE(sendmsg, fd, msg, flags) {
+  return detail::sendmsg(fd, (void *) msg, flags);
+}
+
+HANDLE(sendmmsg, fd, msg, n, flags) {
+  auto mp = copy_from_user((void *) msg, sizeof(mmsghdr) * n);
+  if (!mp)
+    return mp;
+  auto messages = (mmsghdr *) mp->get();
+
+  int i = 0;
+  for (; i < n; i++) {
+    int sent = detail::sendmsg(fd, messages[i].msg_hdr, flags);
+    if (sent < 0)
+      return i ? i : sent;
+    
+    copy_to_user((void*) (msg + sizeof(mmsghdr) * i + offsetof(mmsghdr, msg_len)), &sent, sizeof(unsigned));
+  }
+  return i;
 }
 
 HANDLE(syslog, type, buf, size) {

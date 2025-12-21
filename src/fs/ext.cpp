@@ -591,7 +591,7 @@ size_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
     read += chunk;
   }
 
-  size_t time = now();
+  size_t time = now() / 1_s;
   meta.atime = time;
   return read;
 }
@@ -653,7 +653,7 @@ size_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) {
     written += chunk;
   }
   
-  size_t time = now();
+  size_t time = now() / 1_s;
   meta.mtime = time;
   meta.atime = time;
   fs->update_meta(this);
@@ -726,7 +726,7 @@ ext_inode::filetype ext_inode::totype(ftypeflags ty) {
 int ext_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;
-  meta.atime = meta.mtime = now();
+  meta.atime = meta.mtime = now() / 1_s;
   flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
@@ -738,7 +738,7 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
   node->meta.uid = pcb->uid;
   node->meta.gid = pcb->gid;
   node->meta.lnkcnt = (ty == Dir) ? 2 : 1;
-  node->meta.ctime = now();
+  node->meta.ctime = now() / 1_s;
   fs->update_meta(node);
 
   // Metadata always get updated in add_dirent().
@@ -755,23 +755,23 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
 
 inode::meta ext_inode::get_meta() {
   return inode::meta(
-    meta.atime,
-    meta.ctime,
-    meta.mtime
+    meta.atime * 1_s,
+    meta.ctime * 1_s,
+    meta.mtime * 1_s
   );
 }
 
 void ext_inode::set_meta(const inode::meta &meta) {
-  this->meta.atime = meta.atime;
-  this->meta.ctime = meta.ctime;
-  this->meta.mtime = meta.mtime;
+  this->meta.atime = meta.atime / 1_s;
+  this->meta.ctime = meta.ctime / 1_s;
+  this->meta.mtime = meta.mtime / 1_s;
 }
 
 int ext_inode::unlink(const string &name) {
   if (type != Dir)
     return -ENOTDIR;
 
-  meta.ctime = meta.mtime = now();
+  meta.ctime = meta.mtime = now() / 1_s;
   flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
@@ -832,7 +832,7 @@ int ext_inode::unlink(const string &name) {
 inode *ext_inode::lookup(const string &name) {
   if (type != Dir)
     return nullptr;
-  meta.atime = now();
+  meta.atime = now() / 1_s;
   flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
@@ -886,7 +886,7 @@ static inode::filetype direntry_to_type(unsigned char ty) {
 vector<inode::item> ext_inode::list() {
   if (type != Dir)
     return {};
-  meta.atime = now();
+  meta.atime = now() / 1_s;
   flags = 0;
 
   auto fs = static_cast<ext*>(this->fs);
@@ -919,7 +919,7 @@ vector<inode::item> ext_inode::list() {
 optional<string> ext_inode::readlink() {
   if (type != filetype::Link)
     return nullopt;
-  meta.atime = now();
+  meta.atime = now() / 1_s;
   
   // Data is directly stored in the directptr array, plus 3 indirect pointers.
   if (meta.sz <= 60) {

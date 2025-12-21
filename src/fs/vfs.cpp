@@ -7,10 +7,14 @@ bool vfs::path_comparator::operator()(const pair<dentry *, string> &l, const pai
   return l.second == r.second && l.first->same(r.first);
 }
 
+uint64_t vfs::path_hasher::operator()(const pair<dentry *, string> &l) const {
+  return os::detail::fnv_1a<pair<string, string>>()({ l.first->path(), l.second });
+}
+
 static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> vfs::creators;
 spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
-static_storage<os::hashmap<pair<dentry*, string>, dentry*, detail::fnv_1a<pair<dentry *, string>>, vfs::path_comparator>> vfs::dcache;
+static_storage<os::hashmap<pair<dentry*, string>, dentry*, vfs::path_hasher, vfs::path_comparator>> vfs::dcache;
 static_storage<os::vector<fs*>> vfs::tosync;
 
 inode *file::node() {

@@ -103,16 +103,17 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   bool existok = !(flags & O_EXCL);
   bool write = can_write(flags);
   bool read = can_read(flags);
+  bool follow = !(flags & O_NOFOLLOW);
   if (flags & O_PATH)
     write = read = false;
 
-  auto maybe_dentry = vfs->lookup_from(path, relbase);
+  auto maybe_dentry = vfs->lookup_from(path, relbase, follow);
   if (!maybe_dentry) {
     if (!create)
       return maybe_dentry;
 
     auto parent = dirname(path);
-    auto maybe_parent = vfs->lookup_from(parent, relbase);
+    auto maybe_parent = vfs->lookup_from(parent, relbase, follow);
     if (!maybe_parent)
       return maybe_parent;
 
@@ -131,9 +132,9 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   if (node->type == inode::Dir && write)
     return -EISDIR;
 
-  if (read && !readable(euid, egid, node))
+  if (read && !readable(uid, gid, node))
     return -EPERM;
-  if (write && !writable(euid, egid, node))
+  if (write && !writable(uid, gid, node))
     return -EPERM;
 
   file *f = new file(dentry, flags);
@@ -198,7 +199,11 @@ int tcb_t::sleep(size_t nano) {
   
   napping.lock.acquire();
   napping->push_back(this);
-  if (suspend(napping.lock) == -EINTR)
+  napping.lock.release();
+
+  // TODO: change into wait queue?
+  scheduler.prepare_to_sleep();
+  if (suspend() == -EINTR)
     return -EINTR;
   if (timeout != 0)
     return 1;

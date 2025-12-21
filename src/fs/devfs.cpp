@@ -13,16 +13,25 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
   bool block = !(flags & O_NONBLOCK);
   (void) offset;
   char *p = (char *) buf;
+
+  wait_entry entry;
   for (unsigned i = 0; i < len; i++) {
     optional<char> c = console_input_buf->pop_front();
+    lock.acquire();
     while (!c) {
-      if (!block)
+      if (!block) {
+        lock.release();
         return i == 0 ? -EAGAIN : i;
+      }
 
-      lock.acquire();
-      wait.push_back(active());
-      if (suspend(lock) != 0)
+      wait.prepare(entry);
+      lock.release();
+      assert(detail::nested_irq == 0);
+      if (suspend() != 0)
         return i == 0 ? -EINTR : i;
+      lock.acquire();
+      wait.finish(entry);
+
       c = console_input_buf->pop_front();
     }
     p[i] = *c;
@@ -50,11 +59,12 @@ short console_inode::poll(unsigned short event) {
 }
 
 void console_inode::wake_read() {
-  scheduler.wakeup_all(lock, wait);
+  wait.wake_all();
 }
 
 void console_inode::wait_on_read() {
-  wait.push_back(active());
+  wait_entry entry;
+  wait.prepare(entry);
 }
 
 block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force_reload) {
