@@ -98,6 +98,14 @@ public:
     return npos;
   }
 
+  size_t find(char t, size_t start = 0) const {
+    for (size_t i = start; i < len; i++) {
+      if (c_str()[i] == t)
+        return i;
+    }
+    return npos;
+  }
+
   string substr(size_t from, size_t l = npos) const {
     size_t end = l == npos ? len : min(from + min(l, len), len);
     return string(c_str() + from, end - from);

@@ -272,18 +272,12 @@ public:
 class dentry;
 class vfs : public shared {
 private:
-  struct path_comparator {
-    bool operator()(const pair<dentry *, string> &l, const pair<dentry *, string> &r) const;
-  };
-  struct path_hasher {
-    uint64_t operator()(const pair<dentry *, string> &l) const;
-  };
   // The way to create a new `fs` structure from the opaque `source`.
   // This is limited by the way of system call; we can't use templates.
   static static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> creators;
   static spinlock mountlock;
   // TODO: make it an LRU cache.
-  static static_storage<os::hashmap<pair<dentry*, string>, dentry*, path_hasher, path_comparator>> dcache;
+  static static_storage<os::hashmap<pair<inode*, string>, dentry*>> dcache;
   // All mounted filesystems that must respond to sync().
   static static_storage<os::vector<fs*>> tosync;
 
@@ -320,7 +314,7 @@ public:
   static int move_mount(dentry *source, dentry *target);
   int chroot(dentry *entry);
 
-  static void invalidate(dentry *entry, const string &name);
+  static void invalidate(inode *node, const string &name);
 
   // Constructs a new in-memory `fs` structure according to the given fs.
   expected<fs*> get(const string &fsname, const char *src);
@@ -386,12 +380,11 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
 
 #define SYMLINK_INODE_DEFAULT_IMPL \
   size_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(long(s.size()) - long(offset), long(len)); memcpy(buf, s.c_str() + offset, l); return l; } \
-  size_t write(size_t, const void*, size_t, int) override { return 0; } \
+  size_t write(size_t, const void*, size_t, int) override { return -EACCES; } \
   int create(const string &, filetype, int) override { return -ENOTDIR; } \
   int unlink(const string &) override { return -ENOTDIR; } \
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
-  size_t size() const override { return readlink()->size(); } \
   long inum() const override { return (long) this; } \
 
 #define DIR_INODE_DEFAULT_IMPL \

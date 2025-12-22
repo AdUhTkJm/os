@@ -27,6 +27,7 @@ int getsockopt(int fd, int level, int optname, void *optval, int *optlen);
 int sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigned addrlen);
 int sendmsg(int fd, void *msg, int flags);
 int sendmsg(int fd, const msghdr &msg, int flags);
+int prlimit64(int pid, int resource, void *newrlim, void *oldrlim);
 
 int fromtype(inode::filetype ty);
 

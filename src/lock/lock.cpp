@@ -26,7 +26,8 @@ int wait_queue::wake_all() {
   int woken = 0;
   for (auto entry : q) {
     assert(entry->queued);
-    woken++, scheduler.wakeup(entry->tcb, /*can_preempt=*/ false);
+    if (entry->tcb->status == Sleeping)
+      woken++, scheduler.wakeup(entry->tcb, /*can_preempt=*/ false);
   }
   lock.release();
 
@@ -38,8 +39,12 @@ int wait_queue::wake(int n) {
   lock.acquire();
   int woken = 0;
   for (auto it = q.begin(); it != q.end(); ++it) {
-    assert((*it)->queued);
-    scheduler.wakeup((*it)->tcb, /*can_preempt=*/ false);
+    auto entry = *it;
+    assert(entry->queued);
+    if (entry->tcb->status != Sleeping)
+      continue;
+    
+    scheduler.wakeup(entry->tcb, /*can_preempt=*/ false);
     woken++;
     if (!--n)
       break;

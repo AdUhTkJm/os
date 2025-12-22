@@ -82,10 +82,14 @@ struct elf_header {
 #define AT_EUID		12		/* Effective uid */
 #define AT_GID		13		/* Real gid */
 #define AT_EGID		14		/* Effective gid */
+#define AT_PLATFORM	15 
+#define AT_HWCAP  16
 #define AT_CLKTCK	17		/* Frequency of times() */
 #define	AT_SECURE	23		/* Boolean, was exec setuid-like?  */
 #define AT_RANDOM	25		/* Address of 16 random bytes.  */
+#define AT_HWCAP2	26
 #define AT_EXECFN	31		/* Filename of executable.  */
+#define AT_SYSINFO_EHDR	33
 
 /* ELF Program header. */
 struct program_header {
@@ -106,7 +110,7 @@ struct auxv {
   va_t phdr;
   size_t phnum;
   va_t entry;
-  bool used;
+  bool interp;
 };
 
 // Changes the content of `pcb` by parsing the ELF file.

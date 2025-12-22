@@ -80,6 +80,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   if (header.e_type == ET_DYN)
     loadbase = 0x4000'0000; // TODO: randomize
   auto pc = loadbase + header.e_entry;
+  struct auxv auxv;
   
   unique_ptr<char> interp = nullptr;
 
@@ -91,12 +92,16 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
         return -ENOEXEC;
     
       // Read the content of the mapped section.
-
       SeekGuard guard(content, phdr.p_offset);
       va_t va = phdr.p_vaddr + loadbase;
+
       va_t aligned = rounddown<PAGE_SIZE>(va);
       auto off = va - aligned;
       va_t end = roundup<PAGE_SIZE>(va + phdr.p_memsz);
+
+      // Check whether program header is mapped inside this region.
+      if (phdr.p_offset <= header.e_phoff && phdr.p_offset + phdr.p_filesz > header.e_phoff)
+        auxv.phdr = va + header.e_phoff;
 
       int prot = 0;
       if (phdr.p_flags & PF_R) prot |= PROT_READ;
@@ -121,8 +126,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
     }
   }
 
-  struct auxv auxv;
-  auxv.used = false;
+  auxv.interp = false;
   if (interp) {
     int fd = pcb->open_file(interp.get(), O_RDONLY);
     if (fd < 0)
@@ -136,12 +140,12 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
     }
     
     pc = *ret;
-    auxv.entry = loadbase + header.e_entry;
-    auxv.phdr = loadbase + header.e_phoff;
-    auxv.phnum = header.e_phnum;
-    auxv.used = true;
+    auxv.interp = true;
     pcb->close_file(fd);
   }
+
+  auxv.entry = loadbase + header.e_entry;
+  auxv.phnum = header.e_phnum;
 
   init_user(tcb);
   tcb->status = Init;

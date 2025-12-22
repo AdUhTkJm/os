@@ -617,4 +617,32 @@ int sendmsg(int fd, void *msg, int flags) {
   return sendmsg(fd, *header, flags);
 }
 
+int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  if (pid != 0 && pid != pcb->pid && pcb->uid != 0)
+    return -EPERM; // TODO: better checks
+  if (pid == 0)
+    pid = pcb->pid;
+
+  switch (resource) {
+  case RLIMIT_STACK: {
+    if (newrlim) {
+      printk("prlimit: no setting limit yet\n");
+      return -EINVAL;
+    }
+    rlimit rlim {
+      .rlim_cur = user_stack_size,
+      .rlim_max = user_stack_size
+    };
+    copy_to_user(oldrlim, &rlim, sizeof(rlimit));
+    return 0;
+  }
+  default:
+    printk("prlimit: unknown resource = %d\n", resource);
+    return -EINVAL;
+  }
+}
+
 }

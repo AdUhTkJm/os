@@ -3,18 +3,10 @@
 
 namespace os {
 
-bool vfs::path_comparator::operator()(const pair<dentry *, string> &l, const pair<dentry *, string> &r) const {
-  return l.second == r.second && l.first->same(r.first);
-}
-
-uint64_t vfs::path_hasher::operator()(const pair<dentry *, string> &l) const {
-  return os::detail::fnv_1a<pair<string, string>>()({ l.first->path(), l.second });
-}
-
 static_storage<os::hashmap<string, expected<fs*>(*)(const char *)>> vfs::creators;
 spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
-static_storage<os::hashmap<pair<dentry*, string>, dentry*, vfs::path_hasher, vfs::path_comparator>> vfs::dcache;
+static_storage<os::hashmap<pair<inode*, string>, dentry*>> vfs::dcache;
 static_storage<os::vector<fs*>> vfs::tosync;
 
 inode *file::node() {
@@ -157,7 +149,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
     comps.push_back(comp);
 
   pcb_t *pcb = active()->pcb;
-  int uid = pcb->euid, gid = pcb->egid;
+  int uid = pcb->uid, gid = pcb->gid;
 
   for (size_t i = 0; i < comps.size(); i++) {
     const string &name = comps[i];
@@ -192,7 +184,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
     if (!executable(uid, gid, cur->node))
         return -EPERM;
 
-    auto key = pair { cur, name };
+    auto key = pair { cur->node, name };
     if (auto it = dcache->find(key); it != dcache->end())
       cur = (*it).second;
     else {
@@ -315,10 +307,10 @@ int vfs::chroot(dentry *entry) {
   return 0;
 }
 
-void vfs::invalidate(dentry *entry, const string &name) {
+void vfs::invalidate(inode *node, const string &name) {
   // We don't use negative entries (i.e. explicit noent), because it would be hard to determine when to put it back,
   // when the same file is created again.
-  dcache->erase({ entry, name });
+  dcache->erase({ node, name });
 }
 
 file *vfs::open(const string &path, int flags) {
@@ -501,7 +493,11 @@ void vfs::init() {
 
 page_cache::page::page(page_cache *parent, size_t index) : parent(parent), data((char*) as_va(pframe())), index(index), dirty(false) {
   refcnt = 1;
-  parent->node->read(index * PAGE_SIZE, data, PAGE_SIZE, 0);
+  int len = parent->node->read(index * PAGE_SIZE, data, PAGE_SIZE, 0);
+  if (len < 0)
+    printk("page cache: warning: read failed\n");
+  if (len >= 0)
+    memset(data + len, 0, PAGE_SIZE - len);
 }
 
 page_cache::page::~page() {

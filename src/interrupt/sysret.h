@@ -379,4 +379,14 @@ struct sockaddr_in {
 #define FUTEX_PRIVATE_FLAG	128
 #define FUTEX_CLOCK_REALTIME	256
 
+// From <sys/resource.h>.
+#define RLIMIT_FSIZE 1
+#define	RLIMIT_DATA  2
+#define RLIMIT_STACK 3
+
+struct rlimit {
+  unsigned long rlim_cur;  /* Soft limit */
+  unsigned long rlim_max;  /* Hard limit (ceiling for rlim_cur) */
+};
+
 #endif

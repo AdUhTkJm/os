@@ -211,7 +211,6 @@ extern "C" void _start() {
 
   // Mount ext2.
   syscall((reg_t) "/dev/vda", (reg_t) "/mnt", (reg_t) "ext2", mount);
-
   // Move mount.
   syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, /*MS_MOVE=*/8192, mount);
   syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, /*MS_MOVE=*/8192, mount);
@@ -222,8 +221,10 @@ extern "C" void _start() {
   // Change current directory.
   syscall((reg_t) "/", chdir);
 
-  // Mount proc.
+  // Mount proc, and the ext4 for testing (which is also ext2).
   syscall((reg_t) "", (reg_t) "/proc", (reg_t) "procfs", mount);
+  syscall((reg_t) "/dev/vdb", (reg_t) "/mnt", (reg_t) "ext2", mount);
+
 
   int pid = syscall(0, 0, clone);
   if (pid == 0) {

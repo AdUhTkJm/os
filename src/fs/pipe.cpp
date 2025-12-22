@@ -2,6 +2,9 @@
 
 namespace os {
 
+// Change to printk for debugging.
+#define CONCURRENCY_LOG(x) (void) 0
+
 class pipefs pipefs;
 
 pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0666, FIFO), maxbuf(pipefs::maxbuf) {}
@@ -25,10 +28,12 @@ size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
     }
 
     read_wait.prepare(entry);
+    CONCURRENCY_LOG("read: suspend\n");
     lock.release();
     if (suspend() != 0)
       return -EINTR;
     lock.acquire();
+    CONCURRENCY_LOG("read: resume\n");
     read_wait.finish(entry);
   }
 
@@ -38,13 +43,19 @@ size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
   rpos += l;
 
   // Resize the vector if it is large enough, and more than half of it is already read.
+  bool freed = false;
   if (sz >= 1_kb && rpos >= sz / 2) {
     vector<char> v(sz - rpos);
     memcpy(v.data(), buffer.data() + rpos, sz - rpos);
     buffer = os::move(v);
     rpos = 0;
+    freed = true;
   }
   lock.release();
+
+  // Wake only on write_wait condition change.
+  if (freed)
+    CONCURRENCY_LOG("read: wake writers\n"), write_wait.wake();
   return l;
 }
 
@@ -54,6 +65,7 @@ size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) 
   lock.acquire();
 
   wait_entry entry;
+  bool empty = buffer.empty();
   while (buffer.size() == maxbuf) {
     // No more readers. Don't write.
     if (readers == 0) {
@@ -67,10 +79,12 @@ size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) 
     }
 
     write_wait.prepare(entry);
+    CONCURRENCY_LOG("write: suspend\n");
     lock.release();
     if (suspend() != 0)
       return -EINTR;
     lock.acquire();
+    CONCURRENCY_LOG("write: resume\n");
     write_wait.finish(entry);
   }
 
@@ -78,6 +92,11 @@ size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) 
   auto l = min(maxbuf - sz, len);
   buffer.resize(sz + l);
   memcpy(buffer.data() + sz, buf, l);
+  lock.release();
+
+  // Wake only on read_wait condition change.
+  if (empty)
+    CONCURRENCY_LOG("write: wake readers\n"), read_wait.wake();
   return l;
 }
 
@@ -110,7 +129,6 @@ void pipe_inode::finish_write_wait(wait_entry &entry) {
 void pipe_inode::onclose(int flags) {
   bool read = (flags & 0x3) == O_RDONLY || (flags & 0x3) == O_RDWR;
   bool write = (flags & 0x3) == O_WRONLY || (flags & 0x3) == O_RDWR;
-  printk("before close: %d %d\n", readers, writers);
 
   {
     synchronized _(lock);
@@ -119,21 +137,18 @@ void pipe_inode::onclose(int flags) {
     if (write)
       writers--;
   }
-  printk("after  close: %d %d\n", readers, writers);
 
   if (!readers)
-    write_wait.wake_all();
+    CONCURRENCY_LOG("readers empty: wake writers\n"), write_wait.wake_all();
   if (!writers)
-    read_wait.wake_all();
+    CONCURRENCY_LOG("writers empty: wake readers\n"), read_wait.wake_all();
 }
 
 void pipe_inode::incf(const file *file) {
-  printk("before incf: %d %d\n", readers, writers);
   if (can_read(file->flags))
     incread();
   if (can_write(file->flags))
     incwrite();
-  printk("after  incf: %d %d\n", readers, writers);
 }
 
 }

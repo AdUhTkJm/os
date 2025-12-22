@@ -25,7 +25,9 @@ void map_single(void *va, pte_t *root) {
     return;
   }
   const auto &vma = pcb->vma.at(addr);
-  pa_t pa = (vma.flags & MAP_SHARED) ? to_pa((*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data) : os::pframe();
+  pa_t pa = (vma.flags & MAP_SHARED)
+    ? to_pa((*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data)
+    : os::pframe_zeroed();
   int flags = PTE_V | PTE_U;
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
@@ -60,8 +62,6 @@ void map_single(void *va, pte_t *root) {
   // Copy the contents if it exists.
   if (!vma.backup) {
     // It is required that we zero this if we're using an anonymous mmap.
-    if (vma.flags & MAP_ANONYMOUS)
-      memset(va_page, 0, PAGE_SIZE);
     return;
   }
   
@@ -72,8 +72,6 @@ void map_single(void *va, pte_t *root) {
     auto off = vma.begin % PAGE_SIZE;
     auto read = min(PAGE_SIZE - off, vma.maxread);
     vma.backup->read((void *) vma.begin, read);
-    memset((char*) rounddown<4_kb>(vma.begin), 0, off);
-    memset((char*) vma.begin + read, 0, PAGE_SIZE - off - read);
     return;
   }
 
@@ -87,9 +85,6 @@ void map_single(void *va, pte_t *root) {
     SeekGuard guard(vma.backup, vma.offset + off);
     vma.backup->read((void *) va_page, read);
   }
-
-  if (read < PAGE_SIZE)
-    memset((char*) va_page + read, 0, PAGE_SIZE - read);
 }
 
 void map_current(void *va) {

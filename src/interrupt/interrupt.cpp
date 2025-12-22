@@ -527,7 +527,7 @@ HANDLE(unlinkat, dirfd, _path, flags) {
     return ret;
 
   // Forget it in dcache.
-  vfs::invalidate(file->entry->parent, file->entry->name);
+  vfs::invalidate(file->entry->parent->node, file->entry->name);
   return 0;
 }
 
@@ -667,12 +667,14 @@ HANDLE(getcwd, buf, size) {
 }
 
 HANDLE(uname, buf) {
+  // Just to bypass glibc kernel version checks.
+  // Linux 6.18 is actually the latest one.
   utsname name {
-    .sysname = "Pristine",
+    .sysname = "Linux",
     .nodename = "",
-    .release = "0.1",
-    .version = "0.1",
-    .machine = "RISC-V64",
+    .release = "6.18.0",
+    .version = "#1 Dec 22 2025",
+    .machine = "riscv64",
   };
   auto host = hostname();
   memcpy(name.nodename, host, strlen(host));
@@ -795,14 +797,7 @@ HANDLE(chroot, _path) {
 }
 
 HANDLE(prlimit64, pid, resource, new_rlim, old_rlim) {
-  if (pid != 0 && pid != pcb->pid && pcb->uid != 0)
-    return -EPERM; // TODO: better checks
-  if (pid == 0)
-    pid = pcb->pid;
-
-  printk("prlimit: resource = %d\n", resource);
-  // TODO
-  return -1;
+  return detail::prlimit64(pid, resource, (void *) new_rlim, (void *) old_rlim);
 }
 
 HANDLE(ioctl, fd, op, argp) {

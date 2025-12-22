@@ -53,17 +53,17 @@ os::spinlock table_lock;
 }
 
 // A basic symbol table by preprocessor and build script.
-struct Symbol {
+struct symbol {
   uintptr_t addr;
-  const char* name;
+  const char *name;
 };
 
 // By construction, this is sorted. So when lookup, we can use a binary search.
-const Symbol symbols[] = {
+const symbol symbols[] = {
 #include "../../build/instr/symtbl.inc"
 };
 
-constexpr size_t symcnt = sizeof(symbols) / sizeof(Symbol);
+constexpr size_t symcnt = sizeof(symbols) / sizeof(symbol);
 
 }
 

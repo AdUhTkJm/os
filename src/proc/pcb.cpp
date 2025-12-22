@@ -439,10 +439,8 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
   // Copy various information from parent, if we aren't sharing the PCB.
   if (!share_vm) {
     cp->kproc = pp->kproc;
-    cp->uid = pp->euid;
-    cp->euid = pp->euid;
-    cp->suid = pp->euid;
-    cp->gid = pp->gid;
+    cp->uid = cp->euid = cp->suid = pp->uid;
+    cp->gid = cp->egid = cp->sgid = pp->gid;
     cp->execpath = pp->execpath;
     cp->pwd = pp->pwd;
     cp->pgid = pp->pgid;
@@ -490,8 +488,10 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   auto oldvma = pcb->vma;
   pcb->vma.clear();
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file) {
+    pcb->vma = oldvma;
     return -ENOENT;
+  }
 
   // Try parse the shebang.
   char begin[2] {};
@@ -506,11 +506,21 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
         interp.push_back(v);
       }
     }
-    printk("interpreter: %s\n", interp.c_str());
-    
+    // We have to trim the string.
+    unsigned x = 2;
+    for (; x < interp.size() && interp[x] == ' '; x++);
+
     vector<string> newargv;
-    newargv.reserve(argv.size() + 1);
-    newargv.push_back(interp);
+    if (auto y = interp.find(' ', x); y != string::npos) {
+      newargv.reserve(argv.size() + 2);
+      auto name = interp.substr(0, y);
+      newargv.push_back(name);
+      newargv.push_back(interp.substr(y + 1));
+      interp = name;
+    } else {
+      newargv.reserve(argv.size() + 1);
+      newargv.push_back(interp);
+    }
     for (auto arg : argv)
       newargv.push_back(arg);
 
@@ -532,8 +542,9 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     pt::free(pcb->pt_root);
     pcb->pt_root = __kernel_pt_root;
   }
+  // Note we must supply an absolute path.
+  pcb->execpath = file->entry->path();
   pcb->close_file(fd);
-  pcb->execpath = path;
   pcb->execd = true;
 
   // Reallocate the page table and shallow-copy the higher half of kernel space.
@@ -572,17 +583,21 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     argvp.push_back(usp);
   }
   
+  // TODO: get real random source
+  char *random;
+  memcpy(random = usp -= 16, "aduhtkjm_123456", 16);
+  char *platform;
+  memcpy(platform = usp -= 8, "riscv64", 8);
+  
   // Pad to 16-bytes.
   usp = rounddown<16>(usp);
 
   // If there is an even number of argv, envp and auxv combined together, then we'll
   // need an extra 8-byte padding here to counter for the argc.
-  constexpr int AUXV_SIZE_DYNAMIC = 14;
-  constexpr int AUXV_SIZE_STATIC = 8;
-  const auto auxv_size = auxv->used ? AUXV_SIZE_DYNAMIC : AUXV_SIZE_STATIC;
-  if ((argv.size() + envp.size() + auxv_size) % 2 == 0) {
+  // Since each auxv entry is 16-byte, we don't need to worry for that.
+  if ((argv.size() + envp.size()) % 2 == 0)
     usp -= 8;
-  }
+  
 
   // Copy the AUXV entries.
   // TODO: consider ELF32 as well. busybox is ELF64 so doesn't matter.
@@ -595,31 +610,30 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   // as well as https://elixir.bootlin.com/musl/v1.2.2/source/ldso/dynlink.c.
   //
   // Note that CRT might need auxv entries as well, so we must include them
-  // even if we don't use AUXV.
-  
-  // TODO: get real random source
-  char *random;
-  memcpy(random = usp -= 16, "aduhtkjm_1234567", 16);
-
-  // Don't forget to change this when adding/removing entries!
-  static_assert(AUXV_SIZE_DYNAMIC == 14);
-  static_assert(AUXV_SIZE_STATIC == 8);
+  // even if we don't use ld.so.
   COPY_ENTRY(AT_NULL, 0);
-  if (auxv->used) {
-    COPY_ENTRY(AT_EXECFN, (va_t) pathptr);
-    COPY_ENTRY(AT_ENTRY, auxv->entry);
-    COPY_ENTRY(AT_PHENT, sizeof(program_header));
-    COPY_ENTRY(AT_PHDR, auxv->phdr);
-    COPY_ENTRY(AT_PHNUM, auxv->phnum);
-    COPY_ENTRY(AT_BASE, interp_pos);
-  }
+  COPY_ENTRY(AT_BASE, auxv->interp ? interp_pos : 0);
+  COPY_ENTRY(AT_ENTRY, auxv->entry);
+  COPY_ENTRY(AT_PHENT, sizeof(program_header));
+  COPY_ENTRY(AT_PHDR, auxv->phdr);
+
+  COPY_ENTRY(AT_PHNUM, auxv->phnum);
+  COPY_ENTRY(AT_EXECFN, (va_t) pathptr);
   COPY_ENTRY(AT_PAGESZ, PAGE_SIZE);
   COPY_ENTRY(AT_UID, pcb->uid);
   COPY_ENTRY(AT_GID, pcb->gid);
+
   COPY_ENTRY(AT_EUID, pcb->euid);
   COPY_ENTRY(AT_EGID, pcb->egid);
   COPY_ENTRY(AT_RANDOM, (va_t) random);
   COPY_ENTRY(AT_SECURE, 0);
+  COPY_ENTRY(AT_SYSINFO_EHDR, 0);
+
+  COPY_ENTRY(AT_CLKTCK, 1_s / tick_length); // This expects tick frequency.
+  COPY_ENTRY(AT_PLATFORM, (va_t) platform);
+  COPY_ENTRY(AT_HWCAP, 0);
+  COPY_ENTRY(AT_HWCAP2, 0);
+  COPY_ENTRY(AT_FLAGS, 0);
 
   // Copy the pointers.
   // We copy envp pointers first, so that argv will be closer to stack top,
