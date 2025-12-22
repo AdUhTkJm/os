@@ -4,10 +4,11 @@
 #include "stl/ring_buffer.h"
 #include <stdarg.h>
 
-namespace os {
+extern "C" [[gnu::no_instrument_function]] int sprintf(char *dst, const char *fmt, ...);
+extern "C" [[gnu::no_instrument_function]] int vsprintf(char *dst, const char *fmt, va_list args);
 
-int sprintf(char *dst, const char *fmt, ...);
-int vsprintf(char *dst, const char *fmt, va_list args);
+namespace os {
+  
 void klog(const char *fmt, ...);
 
 struct log_buffer {

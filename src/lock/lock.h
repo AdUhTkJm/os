@@ -172,6 +172,7 @@ struct wait_queue {
   void finish(wait_entry &entry);
   int wake_all();
   int wake(int n = 1);
+  void wake(wait_entry &entry, bool can_preempt = true);
 };
 
 }

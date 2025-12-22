@@ -176,6 +176,27 @@ struct is_function : integral_constant<
 template<class T>
 constexpr bool is_function_v = is_function<T>::value;
 
+template<unsigned long ...N>
+struct index_sequence {
+  using value_type = unsigned long;
+  constexpr static unsigned long size() { return sizeof...(N); }
+};
+
+namespace detail {
+  template<unsigned long N, unsigned long ...Next>
+  struct make_index_sequence_helper : public make_index_sequence_helper<N - 1U, N - 1U, Next...> {};
+
+  template<unsigned long... Next>
+  struct make_index_sequence_helper<0U, Next...> {
+    using type = index_sequence<Next...>;
+  };
+} // namespace detail
+
+// 4. The user-facing alias template.
+// This is the public interface that leverages the helper to return the correct sequence type.
+template <unsigned long N>
+using make_index_sequence = typename detail::make_index_sequence_helper<N>::type;
+
 }
 
 #endif

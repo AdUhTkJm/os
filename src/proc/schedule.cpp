@@ -5,7 +5,7 @@ namespace os {
 scheduler_t scheduler;
 static_storage<tcb_t> boot_tcb;
 static_storage<pcb_t> boot_pcb;
-static_storage<os::list<tcb_t*>> napping;
+wait_queue napping;
 
 void scheduler_t::add(tcb_t *tcb) {
   synchronized _(lock);
@@ -110,26 +110,12 @@ void scheduler_t::wakeup(tcb_t *tcb, bool can_preempt) {
     lock.release();
 }
 
-void scheduler_t::unnap(tcb_t *tcb, bool wake) {
-  for (auto it = napping->begin(); it != napping->end(); ++it) {
-    if (*it == tcb) {
-      napping->erase(it);
-      if (wake)
-        wakeup(tcb, /*can_preempt=*/ false);
-      break;
-    }
-  }
-}
-
 // TODO: unnecessary O(n^2).
 void scheduler_t::tick() {
-  os::vector<tcb_t*> tounnap;
-  for (auto tcb : *napping) {
-    if (--tcb->timeout <= 0)
-      tounnap.push_back(tcb);
+  for (auto entry : napping.q) {
+    if (--entry->tcb->timeout <= 0)
+      napping.wake(*entry);
   }
-  for (auto tcb : tounnap)
-    unnap(tcb);
 }
 
 }

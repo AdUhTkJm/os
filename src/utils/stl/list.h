@@ -18,7 +18,6 @@ concept intrusive_capable = is_base_of<intrusive_list_node<T>, T>::value;
 
 template<intrusive_capable T>
 class intrusive_list {
-  T *head = nullptr, *tail = nullptr;
   size_t sz = 0;
 
   intrusive_list_node<T> *into(T *node) const {
@@ -26,6 +25,8 @@ class intrusive_list {
   }
   friend class iterator;
 public:
+  T *head = nullptr, *tail = nullptr;
+
   class iterator {
   public:
     T *node;

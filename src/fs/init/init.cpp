@@ -244,7 +244,7 @@ extern "C" void _start() {
     
     // Execute the shell.
 #ifdef TEST
-    const char *argv[] = { "/bin/sh", "-c", "mount /dev/vdb /mnt && cd /mnt/glibc/basic && ./run-all.sh", nullptr };
+    const char *argv[] = { "/bin/sh", "-c", "mount /dev/vdb /mnt && cd /mnt/glibc/ && ./libctest_testcode.sh", nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };
 #endif

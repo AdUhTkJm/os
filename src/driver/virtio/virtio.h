@@ -158,6 +158,7 @@ static_assert(offsetof(queue_legacy, used) % PAGE_SIZE == 0);
 class block_device : public os::block_device {
   pa_t base;
   void *queue; // Either queue or queue_legacy.
+  unsigned rxlast = 0;
   int descid;
   bool legacy;
   spinlock lock;

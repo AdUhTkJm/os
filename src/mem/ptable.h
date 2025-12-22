@@ -118,10 +118,10 @@ inline constexpr va_t sext(va_t x) {
   return pa + KERNEL_OFFSET;
 }
 
-pa_t to_pa(va_t va);
-pa_t to_pa(va_t va, const pte_t *root);
-inline pa_t to_pa(const void *va) { return to_pa((va_t) va); }
-inline pa_t to_pa(const void *va, const pte_t *root) { return to_pa((va_t) va, root); }
+[[gnu::no_instrument_function]] pa_t to_pa(va_t va);
+[[gnu::no_instrument_function]] pa_t to_pa(va_t va, const pte_t *root);
+[[gnu::no_instrument_function]] inline pa_t to_pa(const void *va) { return to_pa((va_t) va); }
+[[gnu::no_instrument_function]] inline pa_t to_pa(const void *va, const pte_t *root) { return to_pa((va_t) va, root); }
 
 // Returns -1 when the PTE is not valid.
 int pte_flags(va_t va);
@@ -133,15 +133,15 @@ inline int pte_flags(const void *va, const pte_t *root) { return pte_flags((va_t
 void *kalloc(size_t size);
 
 extern bool onboot;
-pte_t *pt_root();
+[[gnu::no_instrument_function]] pte_t *pt_root();
 
 namespace pt {
 
-inline bool is_leaf(pte_t pte) {
+[[gnu::no_instrument_function]] inline bool is_leaf(pte_t pte) {
   return pte & PTE_RWX;
 }
 
-inline bool is_valid(pte_t pte) {
+[[gnu::no_instrument_function]] inline bool is_valid(pte_t pte) {
   return pte & PTE_V;
 }
 

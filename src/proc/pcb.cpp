@@ -197,16 +197,17 @@ void pcb_t::send_signal(int sig) {
 int tcb_t::sleep(size_t nano) {
   timeout = nano == -1ul ? (1l << 63) : (nano + tick_length - 1) / tick_length;
   
-  napping.lock.acquire();
-  napping->push_back(this);
-  napping.lock.release();
+  wait_entry entry;
+  napping.prepare(entry);
+  
+  int ret = 0;
+  if (suspend() != 0)
+    ret = -EINTR;
+  else if (timeout != 0)
+    ret = 1;
 
-  scheduler.prepare_to_sleep();
-  if (suspend() == -EINTR)
-    return -EINTR;
-  if (timeout != 0)
-    return 1;
-  return 0;
+  napping.finish(entry);
+  return ret;
 }
 
 int nextpid() {
@@ -233,6 +234,7 @@ void init_user(tcb_t *tcb) {
     stack_top - user_stack_size, tcb->usp = stack_top,
     PROT_READ | PROT_WRITE, MAP_PRIVATE | VMA_IS_STACK
   });
+  pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = user_stack_size;
 }
 
 void init(tcb_t *tcb) {
@@ -445,6 +447,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     cp->pwd = pp->pwd;
     cp->pgid = pp->pgid;
     cp->sid = pp->sid;
+    memcpy(cp->rlims, pp->rlims, sizeof(pp->rlims));
   }
   
   scheduler.add(ct);

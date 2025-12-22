@@ -628,15 +628,23 @@ int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
 
   switch (resource) {
   case RLIMIT_STACK: {
+    auto before = pcb->rlims[RLIMIT_STACK];
+
     if (newrlim) {
-      printk("prlimit: no setting limit yet\n");
-      return -EINVAL;
+      auto plim = copy_from_user(newrlim, sizeof(rlimit));
+      if (!plim)
+        return -EFAULT;
+
+      auto rlim = *(rlimit *) plim->get();
+      if (rlim.rlim_max > pcb->rlims[RLIMIT_STACK].rlim_max || rlim.rlim_cur > rlim.rlim_max)
+        return -EPERM;
+
+      pcb->rlims[RLIMIT_STACK] = rlim;
+      // TODO: actually reduce stack size
     }
-    rlimit rlim {
-      .rlim_cur = user_stack_size,
-      .rlim_max = user_stack_size
-    };
-    copy_to_user(oldrlim, &rlim, sizeof(rlimit));
+
+    if (oldrlim)
+      copy_to_user(oldrlim, &before, sizeof(rlimit));
     return 0;
   }
   default:

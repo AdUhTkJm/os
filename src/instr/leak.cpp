@@ -72,9 +72,11 @@ extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
     stack.frames[stack.top++] = this_fn;
 }
 
+void check_slab_freelist();
 extern "C" void __cyg_profile_func_exit(void *, void *) {
   if (stack.top > 0)
     stack.top--;
+  check_slab_freelist();
 }
 
 namespace os::stack {
@@ -105,7 +107,7 @@ void clear(shadow_stack *stack) {
   stack->top = 0;
 }
 
-const char* lookup_symbol(unsigned long pc) {
+[[gnu::no_instrument_function]] const char* lookup_symbol(unsigned long pc) {
   if (symcnt == 0 || pc >= symbols[symcnt - 1].addr)
     return "<unknown>";
 

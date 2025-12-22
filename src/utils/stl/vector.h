@@ -33,9 +33,9 @@ public:
     if (this == &other)
       return *this;
     delete[] dat;
-    dat = new V[cap];
     sz = other.sz;
     cap = other.cap;
+    dat = new V[cap];
     for (size_t i = 0; i < sz; i++)
       dat[i] = other[i];
     return *this;
@@ -133,8 +133,8 @@ public:
   size_t size() const { return sz; }
   size_t capacity() const { return cap; }
 
-  V &operator[](size_t i) { return dat[i]; }
-  const V &operator[](size_t i) const { return dat[i]; }
+  V &operator[](size_t i) { assert(i < sz); return dat[i]; }
+  const V &operator[](size_t i) const { assert(i < sz); return dat[i]; }
 
   bool empty() const { return sz == 0; }
 };

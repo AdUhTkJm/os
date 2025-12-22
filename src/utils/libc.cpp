@@ -10,14 +10,16 @@ unsigned strlen(const char *s) {
 }
 
 // Must be C standard-compliant to work! g++ will assume this.
-void *memset(void *p, int v, size_t size) {
+void *memset(void *_p, int v, size_t size) {
+  char *p = (char *) _p;
   char *b = p;
   while (size--)
     *(char*) p++ = v;
   return b;
 }
 
-void *memcpy(void *dst, const void *src, size_t size) {
+void *memcpy(void *_dst, const void *_src, size_t size) {
+  char *dst = (char *) _dst, *src = (char *) _src;
   char *b = dst;
   while (size--)
     *(char*) dst++ = *(char*) src++;

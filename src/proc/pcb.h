@@ -98,9 +98,11 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   bool kmode = false;     // Whether this executed in kernel mode.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
+  int sigresume = 0;      // The signal that causes the thread to wake up from sigwait().
   void __user *tls;       // Thread-local storage pointer.
   sigset mask = 0;        // Masked (ignored) signals.
   sigset pending = 0;     // Pending signals, for this thread.
+  sigset sigwait = 0;     // Signals that the process is waiting for.
   long timeout = 0;       // Timeout to last sleep.
 
   pcb_t *pcb;             // Parent process.
@@ -141,6 +143,7 @@ struct pcb_t {
   os::tty::tty *tty;      // Terminal typewriter.
   wait_queue wait;        // Threads suspended in wait() system call.
   spinlock waitlock;      // Lock associated with `wait`.
+  rlimit rlims[4];        // Resource limits.
   tms times {};
   long last_schedule;
 
@@ -226,6 +229,7 @@ tcb_t *make_kprocess(T fptr) {
   tcb->usp = (va_t) vmalloc<16>(usp_size) + usp_size;
   tcb->pcb = pcb;
   tcb->tid = pcb->pid;
+  pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = usp_size;
   pcb->threads.push_back(tcb);
   pidmap->insert(pcb->pid, pcb);
   init(tcb);

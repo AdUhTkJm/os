@@ -12,11 +12,11 @@
 namespace os::stack { void dump(); }
 #  define __assert_dump_stack stack::dump();
 #  endif
-extern "C" {
+#  define C extern "C" [[gnu::no_instrument_function]]
 #endif
 
 
-[[noreturn]] void panic(const char *s);
+C [[noreturn]] void panic(const char *s);
 #define __assert0(x, line) do { \
   [[unlikely]] if (!(x)) { \
     __assert_dump_stack; \
@@ -26,31 +26,27 @@ extern "C" {
 #define __assert1(x, line) __assert0(x, line)
 #define assert(x) __assert1(x, __LINE__)
 
-unsigned strlen(const char *s);
-void *memset(void *p, int v, size_t size);
-void *memcpy(void *dst, const void *src, size_t n);
-int printk(const char *fmt, ...);
-char *itoa(int value, char *str, int base);
-char *ltoa(long value, char *str, int base);
-char *ultoa(unsigned long value, char *str, int base);
-int atoi(const char *str);
-long atol(const char *str);
-unsigned long atoul(const char *str);
-unsigned long hextoul(const char *str);
-int isspace(int c);
-int strcmp(const char *l, const char *r);
-int memcmp(const void *l, const void *r, size_t n);
-int strncmp(const char *l, const char *r, size_t n);
-void strcpy(char *dst, const char *src);
-void strcat(char *dst, const char *src);
-unsigned long strtoul(const char *s, char **endptr, int base);
-const char *strstr(const char *haystack, const char *needle);
-void srand(unsigned);
-size_t __rand64();
-int rand();
-
-#ifdef __cplusplus
-}
-#endif
+C unsigned strlen(const char *s);
+C void *memset(void *p, int v, size_t size);
+C void *memcpy(void *dst, const void *src, size_t n);
+C int printk(const char *fmt, ...);
+C char *itoa(int value, char *str, int base);
+C char *ltoa(long value, char *str, int base);
+C char *ultoa(unsigned long value, char *str, int base);
+C int atoi(const char *str);
+C long atol(const char *str);
+C unsigned long atoul(const char *str);
+C unsigned long hextoul(const char *str);
+C int isspace(int c);
+C int strcmp(const char *l, const char *r);
+C int memcmp(const void *l, const void *r, size_t n);
+C int strncmp(const char *l, const char *r, size_t n);
+C void strcpy(char *dst, const char *src);
+C void strcat(char *dst, const char *src);
+C unsigned long strtoul(const char *s, char **endptr, int base);
+C const char *strstr(const char *haystack, const char *needle);
+C void srand(unsigned);
+C size_t __rand64();
+C int rand();
 
 #endif

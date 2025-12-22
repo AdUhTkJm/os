@@ -44,6 +44,8 @@ os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
 uintptr_t physbegin, physend;
 
 struct pframe_meta {
+  // 0 for normal memory; non-zero value `i` for slabs[i].
+  unsigned char type;
   unsigned char refcnt;
 };
 
@@ -184,7 +186,114 @@ void mark_reserved() {
   }
 }
 
+struct slab : intrusive_list_node<slab> {
+  // The first free object.
+  void *head;
+  // We have padding anyway, so 8 bytes and 2 bytes are the same here.
+  size_t count;
+};
+
+constexpr size_t vslab(int denom) {
+  return rounddown<16>((PAGE_SIZE - sizeof(slab)) / denom);
 }
+
+// Except for 8, all other values must be multiples of 16.
+constexpr size_t sizes[] = {
+  8, 16, 32, 64, 128,
+  vslab(12), vslab(6), vslab(5),
+  vslab(4), vslab(3), vslab(2)
+};
+constexpr size_t size_count = sizeof(sizes) / sizeof(size_t);
+
+intrusive_list<slab> slabs[size_count];
+
+bool push_slab(int i) {
+  size_t size = sizes[i];
+  void *page = vm_alloc_pages(1, PTE_RW | PTE_V);
+  if (!page)
+    return false;
+
+  // Mark the belonging of the page.
+  auto pos = (to_pa(page) - physbegin) / PAGE_SIZE;
+  assert(pos <= sizeof(meta) / sizeof(pframe_meta));
+  meta[pos].type = i;
+
+  slab *slb = (slab *) page;
+  slb->head = (void *) ((va_t) page + sizeof(slab));
+  slb->count = (PAGE_SIZE - sizeof(slab)) / size;
+
+  // Build the internal freelist.
+  auto cur = (va_t) slb->head;
+  for (size_t j = 0; j < slb->count - 1; j++) {
+    *(void **) cur = (void *) (cur + size);
+    cur += size;
+  }
+  *(void **) cur = nullptr;
+
+  slabs[i].push_back(slb);
+  return true;
+}
+
+void *slab_malloc(size_t len) {
+  unsigned i = 0;
+  for (; i < size_count; i++) {
+    if (len <= sizes[i])
+      break;
+  }
+  // Larger lengths should be handled directly by a page allocator.
+  assert(i != size_count);
+
+  // Create a new slab if necessary.
+  if (slabs[i].empty()) {
+    if (!push_slab(i))
+      return nullptr;
+  }
+
+  slab *cur = slabs[i].front();
+  void *mem = cur->head;
+
+  // Pop one element from the free list.
+  cur->head = *(void **) mem;
+  if (--cur->count == 0)
+    slabs[i].pop_front();
+
+  return mem;
+}
+
+void slab_free(void *p, int i) {
+  slab *slb = (slab *) rounddown<PAGE_SIZE>(p);
+  // Put the slab back.
+  if (!slb->count++)
+    slabs[i].push_back(slb);
+
+  // Push one element to the free list.
+  *(void **) p = slb->head;
+  slb->head = p;
+}
+
+#ifdef DEBUG_MEMORY
+#  define CANARY_BEGIN 0x12345678
+#  define CANARY_END   0xfedcba90
+#endif
+
+}
+
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
+[[gnu::no_instrument_function]] void check_slab_freelist() {
+  for (unsigned i = 0; i < size_count; i++) {
+    for (auto slb = slabs[i].head; slb; slb = slb->next) {
+      va_t start = (va_t) slb + sizeof(slab);
+      va_t end = (va_t) slb + PAGE_SIZE;
+
+      for (void *cur = slb->head; cur; cur = *(void **) cur) {
+        va_t addr = (va_t)cur;
+        assert(addr >= start && addr < end);
+        assert((addr - start) % sizes[i] == 0);
+      }
+    }
+  }
+}
+#endif
 
 namespace os {
 
@@ -282,6 +391,19 @@ pa_t pmalloc(int pagecnt) {
 }
 
 void *vmalloc_impl(size_t len) {
+#ifdef DEBUG_MEMORY
+  if (len + 24 <= sizes[size_count - 1]) {
+    va_t mem = (va_t) slab_malloc(len + 24);
+    *(unsigned long *) mem = len;
+    *(unsigned long *) (mem + 8) = CANARY_BEGIN;
+    *(unsigned long *) (mem + 16 + len) = CANARY_END;
+    return (void *) (mem + 16);
+  }
+#else
+  if (len <= sizes[size_count - 1])
+    return slab_malloc(len);
+#endif
+
   size_t pagecount = os::roundup<PAGE_SIZE>(len + sizeof(size_t)) / PAGE_SIZE;
   size_t *p = (size_t *) vm_alloc_pages(pagecount, PTE_RW | PTE_V);
   *p = pagecount;
@@ -294,6 +416,22 @@ void vfree(void *p) {
 #endif
   if (!p)
     return;
+  auto pos = (to_pa(p) - physbegin) / PAGE_SIZE;
+  assert(pos < sizeof(meta) / sizeof(pframe_meta));
+  if (auto type = meta[pos].type) {
+#ifdef DEBUG_MEMORY
+    if (*(unsigned long *) ((va_t) p - 8) != CANARY_BEGIN)
+      panic("vfree: corrupted begin");
+    size_t len = *(unsigned long *) ((va_t) p - 16);
+    if (*(unsigned long *) ((va_t) p + len) != CANARY_END)
+      panic("vfree: corrupted end");
+    slab_free((char *) p - 16, type);
+#else
+    slab_free(p, type);
+#endif
+    return;
+  }
+
   auto q = (size_t *) p;
   [[unlikely]] while (!q[-1])
     q--;

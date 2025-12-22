@@ -5,7 +5,7 @@
 namespace {
 
 // strcpy() that modifies dst.
-void copy(char *&dst, const char *src) {
+[[gnu::no_instrument_function]] void copy(char *&dst, const char *src) {
   while ((*dst++ = *src++));
   dst--; // We don't want the '\0' at the end.
 }
@@ -20,7 +20,7 @@ C int printk(const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
 
-  int len = os::vsprintf(buf, fmt, args);
+  int len = vsprintf(buf, fmt, args);
 
   va_end(args);
   // Exclude the '\0' at the end.
@@ -28,11 +28,7 @@ C int printk(const char *fmt, ...) {
   return len;
 }
 
-namespace os {
-
-log_buffer log;
-
-int vsprintf(char *dst, const char *fmt, va_list args) {
+C int vsprintf(char *dst, const char *fmt, va_list args) {
   char buf[32];
   char *start = dst;
   for (const char *p = fmt; *p; p++) {
@@ -125,13 +121,17 @@ int vsprintf(char *dst, const char *fmt, va_list args) {
   return dst - start;
 }
 
-int sprintf(char *dst, const char *fmt, ...) {
+C int sprintf(char *dst, const char *fmt, ...) {
   va_list args;
   va_start(args, fmt);
   int len = vsprintf(dst, fmt, args);
   va_end(args);
   return len;
 }
+
+namespace os {
+
+log_buffer log;
 
 void klog(const char *fmt, ...) {
   char tmp[256];

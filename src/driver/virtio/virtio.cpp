@@ -23,6 +23,9 @@ static_storage<os::hashmap<int, block_device*>> blk_intr;
 static_storage<os::hashmap<int, net_device*>> net_intr;
 static_storage<os::hashmap<int, net_device*>> net_devs;
 
+// Maps `head` to the request's wait entry.
+wait_entry *blk_read_req[vq::size];
+
 [[gnu::no_instrument_function]] void block_device_handler(int irq) {
   if (!blk_intr->count(irq))
     return;
@@ -36,9 +39,19 @@ static_storage<os::hashmap<int, net_device*>> net_devs;
   int status = mmrd<uint32_t>(dev->base + INTERRUPT_STATUS);
   if (!(status & 1))
     return;
+
+  auto queue = (vq::queue_legacy *) dev->queue;
+  for (unsigned i = dev->rxlast; i < queue->used.idx; i++) {
+    const auto &used = queue->used.ring[i % vq::size];
+    assert(blk_read_req[used.id]);
+    dev->wait.wake(*blk_read_req[used.id], /*can_preempt=*/ false);
+    blk_read_req[used.id] = nullptr;
+  }
+  dev->rxlast = queue->used.idx;
+
   mmwr(dev->base + INTERRUPT_ACK, status);
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
-  dev->wait.wake_all();
+  scheduler.maybe_preempt();
 }
 
 [[gnu::no_instrument_function]] void net_device_handler(int irq) {
@@ -240,33 +253,34 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
 
   // Tell device that a new request has come.
   FENCE;
-  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
 
   wait_entry entry;
+
   lock.acquire();
-  for (int i = 0;;) {
-    wait.prepare(entry);
-    lock.release();
-    if (suspend() != 0)
-      return -EINTR;
+  if (blk_read_req[head])
+    panic("block_device: queue full");
 
-    lock.acquire();
-    wait.finish(entry);
-    RFENCE;
-    for (uint16_t last = queue->used.idx; i != last; i++) {
-      vq::used_ring::element used = queue->used.ring[i % vq::size];
-      
-      if (used.id == head) {
-        lock.release();
-        if (status == 0)
-          memcpy(buffer, (void *) as_va(buf), 512);
+  blk_read_req[head] = &entry;
+  // No spurious wake up this time; we only wake the exact one.
+  wait.prepare(entry);
+  lock.release();
 
-        pfree(req);
-        pfree(buf);
-        return status;
-      }
-    }
-  }
+  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
+  if (suspend() != 0)
+    return -EINTR;
+
+  lock.acquire();
+  wait.finish(entry);
+  lock.release();
+
+  RFENCE;
+  assert(status != 0xff);
+  if (status == 0)
+    memcpy(buffer, (void *) as_va(buf), 512);
+
+  pfree(req);
+  pfree(buf);
+  return status;
 }
 
 int block_device::write_legacy(uint64_t lba, const void *buffer) {

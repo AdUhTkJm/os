@@ -7,7 +7,7 @@
 namespace os {
 
 // These are processes that are sleeping for a timeout.
-extern static_storage<os::list<tcb_t*>> napping;
+extern wait_queue napping;
 
 struct scheduler_t {
   os::intrusive_list<tcb_t> sleep, ready;
@@ -15,7 +15,7 @@ struct scheduler_t {
   spinlock lock;
 
   // No global constructor is allowed. Hence this explicit init.
-  void init() { napping.construct(); }
+  void init() { }
   
   void add(tcb_t *tcb);
   // Chooses the next process to schedule, and switches to it.
@@ -77,7 +77,7 @@ extern scheduler_t scheduler;
 extern static_storage<tcb_t> boot_tcb;
 extern static_storage<pcb_t> boot_pcb;
 
-inline tcb_t *active() {
+[[gnu::no_instrument_function]] inline tcb_t *active() {
   return scheduler.active;
 }
 

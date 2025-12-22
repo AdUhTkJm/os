@@ -55,6 +55,17 @@ int wait_queue::wake(int n) {
   return woken;
 }
 
+void wait_queue::wake(wait_entry &entry, bool can_preempt) {
+  lock.acquire();
+  assert(entry.queued);
+  if (entry.tcb->status == Sleeping)
+    scheduler.wakeup(entry.tcb, /*can_preempt=*/ false);
+  lock.release();
+
+  if (can_preempt)
+    scheduler.maybe_preempt();
+}
+
 #ifdef DEADLOCK
 // Called by context_save.
 void check_suspend() {

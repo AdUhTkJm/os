@@ -435,8 +435,8 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_gid = (unsigned) node->gid,
     .st_rdev = 0,
     .st_size = (long) node->size(),
-    .st_blksize = 1024,
-    .st_blocks = 0,
+    .st_blksize = 4096,
+    .st_blocks = (long) (511 + node->size()) / 512,
     .st_atim = { .tv_sec = long(meta.atime / 1_s), .tv_nsec = long(meta.atime % 1_s) },
     .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
     .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
@@ -959,14 +959,51 @@ HANDLE(rt_sigprocmask, how, set, oldset, size) {
   return 0;
 }
 
+HANDLE(rt_sigtimedwait, sig, info, timeout) {
+  if (info) {
+    printk("sigtimedwait: no info yet\n");
+    return -EINVAL;
+  }
+
+  auto sigset = copy_from_user((void *) sig, sizeof(sigset_t));
+  if (!sigset)
+    return sigset;
+
+  size_t tm = 0;
+  if (timeout) {
+    auto timep = copy_from_user((void *) timeout, sizeof(timespec));
+    if (!timep)
+      return timep;
+    auto time = (timespec *) timep->get();
+    tm = time->tv_nsec + time->tv_sec * 1_s;
+  }
+
+  auto wait = *(unsigned long*) sigset->get();
+  if (tm == 0) {
+    if (wait & tcb->pending.sig)
+      return tcb->pending.next(~wait);
+    return -EAGAIN;
+  }
+
+  tcb->sigresume = -1;
+  tcb->sigwait = wait;
+  tcb->sleep(tm);
+  return tcb->sigresume != -1 ? tcb->sigresume : -EAGAIN;
+}
+
 HANDLE(kill, pid, sig) {
   if (pid == 0)
     pid = pcb->pid;
+  printk("kill: pid %d, sig %d\npids: ", pid, sig);
+  for (auto [_, x] : *pidmap)
+    printk("%d ", x->pid);
+  printk("\n");
   
   auto fproc = pidmap->find(pid);
   if (fproc == pidmap->end())
     return -ESRCH;
   auto [_, proc] = *fproc;
+  printk("kill: process found\n");
   
   if (proc->uid != pcb->uid && proc->uid != pcb->euid && pcb->uid != 0)
     return -EPERM;
