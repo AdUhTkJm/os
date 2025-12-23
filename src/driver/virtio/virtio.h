@@ -55,12 +55,10 @@ enum block_device_legacy_offsets {
   QUEUE_PFN = 0x40,
 };
 
-// SIZE_MAX is defined by <stdint.h>.
-// We static-asserted in main() to make this true.
-#undef SIZE_MAX
+// SIZE_MAX is defined by <stdint.h>, so note the `SIZEMAX` here.
 // See Section 5.2.3 for these feature bits of block devices.
 enum block_features {
-  SIZE_MAX = 1,
+  SIZEMAX = 1 << 1,
   SEG_MAX = 1 << 2,
   GEOMETRY = 1 << 4,
   RDONLY = 1 << 5,
@@ -75,7 +73,6 @@ enum block_features {
   SECURE_ERASE = 1 << 16,
   ZONED = 1 << 17,
 };
-#define SIZE_MAX 18446744073709551615
 
 
 enum features : unsigned long {
@@ -163,6 +160,8 @@ class block_device : public os::block_device {
   bool legacy;
   spinlock lock;
   wait_queue wait;
+  unsigned long cap;
+  unsigned segment_size_max;
 
   // Track read requests.
   // Maps `head` to the request's wait entry.
@@ -193,8 +192,8 @@ class block_device : public os::block_device {
   };
   static_assert(sizeof(request_legacy) == 16);
 
-  int read_legacy(uint64_t lba, void *buffer);
-  int write_legacy(uint64_t lba, const void *buffer);
+  int read_legacy(uint64_t lba, void *buffer, int len);
+  int write_legacy(uint64_t lba, const void *buffer, int len);
   friend void block_device_handler(int irq);
 public:
   block_device(const device &, bool legacy);
@@ -202,8 +201,8 @@ public:
   block_device &operator=(const block_device &) = delete;
 
   // For operation specifications, see 5.2.6.
-  int read(uint64_t lba, void *buffer) override;
-  int write(uint64_t lba, const void *buffer) override;
+  int read(uint64_t lba, void *buffer, int len) override;
+  int write(uint64_t lba, const void *buffer, int len) override;
 };
 
 class net_device : public os::net_device {

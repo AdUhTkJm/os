@@ -325,6 +325,10 @@ public:
   // Initialize the global structure.
   static void init();
 
+#ifndef NDEBUG
+  static auto &inspect_dcache() { return dcache; }
+#endif
+
   static const vector<fs*> &to_sync() { return *tosync; }
 };
 

@@ -9,8 +9,8 @@
 namespace os {
 
 struct /*interface*/ block_device {
-  virtual int read(size_t lba, void *buf) = 0;
-  virtual int write(size_t lba, const void *buf) = 0;
+  virtual int read(size_t lba, void *buf, int len) = 0;
+  virtual int write(size_t lba, const void *buf, int len) = 0;
 };
 
 class devfs : public fs {
@@ -67,15 +67,17 @@ class block_inode : public inode_impl<block_inode> {
   inode::meta meta;
 
   struct cached_sector {
-    unsigned char data[512];
+    // We allocate a physical page for it.
+    // If we just write `data[4096]`, then there will be ~4KB of padding introduced by VM allocator.
+    unsigned char *data = 0;
     bool dirty = false;
     bool valid = false;
   };
   // TODO: change into LRU
   os::hashmap<unsigned, cached_sector> cache;
 
-  expected<cached_sector*> load_sector(unsigned sector, bool force_reload = false);
-  void flush_sector(unsigned sector);
+  expected<cached_sector*> load_page(unsigned page, bool force_reload = false);
+  void flush_page(unsigned page);
 public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
@@ -87,6 +89,8 @@ public:
 
   // Special functionality.
   void flush();
+  void *get_page(unsigned i);
+  void mark_dirty(unsigned i);
 };
 
 class urandom_inode : public inode_impl<urandom_inode> {

@@ -72,7 +72,8 @@ class ext_inode : public os::inode_impl<ext_inode> {
   };
 
   friend class ext;
-  unique_ptr<char[]> read_block(unsigned long block);
+  const char *read_block(unsigned long block);
+  char *read_block_mutable(unsigned long block);
   void write_block(unsigned long block, const char *data);
   int flags;
 
@@ -222,7 +223,7 @@ class ext : public fs {
   unsigned gdsz = 32;
   // The group descriptor table.
   os::vector<block_group> gdt;
-  inode *device;
+  block_inode *device;
   os::crc32c<0x1edc6f41> crc;
   // This cannot become LRU; we hope each inode file has a single instance in memory.
   os::hashmap<size_t, ext_inode*> nodecache;
@@ -259,12 +260,13 @@ class ext : public fs {
   void free_blocks(ext_inode *node, size_t block, int level);
   friend class ext_inode;
 public:
-  ext(inode *device);
+  ext(block_inode *device);
   ext_inode *get() override;
   void erase(inode*) override;
   bool has_backup() override { return true; }
   void sync() override;
 
+  void on_corrupt() { panic("ext: corrupted filesystem"); }
   bool valid() { return superblock.magic == 0xef53; }
 };
 

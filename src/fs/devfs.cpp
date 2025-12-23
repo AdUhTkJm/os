@@ -70,23 +70,28 @@ void console_inode::finish_read_wait(wait_entry &entry) {
   wait.finish(entry);
 }
 
-expected<block_inode::cached_sector*> block_inode::load_sector(unsigned sector, bool force_reload) {
-  auto &c = cache[sector];
+expected<block_inode::cached_sector*> block_inode::load_page(unsigned page, bool force_reload) {
+  auto &c = cache[page];
   if (c.valid && !force_reload)
     return &c;
   
-  if (auto ret = dev->read(sector, c.data); ret != 0)
-    return ret < 0 ? ret : -EIO;
+  unsigned sector = page * 8;
+  if (!c.data)
+    c.data = (unsigned char *) as_va(pframe());
+
+  if (auto ret = dev->read(sector, c.data, 8); ret != 0)
+    return -EIO;
 
   c.valid = true;
+  c.dirty = false;
   return &c;
 }
 
-void block_inode::flush_sector(unsigned sector) {
-  auto &c = cache[sector];
+void block_inode::flush_page(unsigned page) {
+  auto &c = cache[page];
   if (!c.valid || !c.dirty)
     return;
-  dev->write(sector, c.data);
+  dev->write(page, c.data, 8);
   c.dirty = false;
 }
 
@@ -97,102 +102,68 @@ void block_inode::flush_sector(unsigned sector) {
   auto &c = **cp;
 
 ssize_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
-  bool direct = flags & O_DIRECT;
-  if (len == 0)
-    return 0;
+  size_t pos = 0;
 
-  size_t sector = offset / 512;
-  size_t soff = offset % 512;
-  char *dst = (char*) buf;
+  while (pos < len) {
+    size_t cur = offset + pos;
+    size_t off = cur % PAGE_SIZE;
+    
+    auto cp = load_page(cur / PAGE_SIZE, flags & O_DIRECT);
+    if (!cp)
+      return -EIO;
+    auto &page = **cp;
 
-  // Partial first sector.
-  if (soff > 0) {
-    LOAD_SECTOR(c, sector, direct);
-    size_t sz = min(len, 512 - soff);
-    memcpy(dst, c.data + soff, sz);
-
-    dst += sz;
-    len -= sz;
-    sector++;
+    size_t l = min(len - pos, PAGE_SIZE - off);
+    memcpy((char *) buf + pos, page.data + off, l);
+    
+    pos += l;
   }
-
-  // Full sectors.
-  while (len >= 512) {
-    LOAD_SECTOR(c, sector, direct);
-    memcpy(dst, c.data, 512);
-
-    dst += 512;
-    len -= 512;
-    sector++;
-  }
-
-  // Last partial sector.
-  if (len > 0) {
-    LOAD_SECTOR(c, sector, direct);
-    memcpy(dst, c.data, len);
-    dst += len;
-  }
-
-  return dst - (char *) buf;
+  return pos;
 }
 
 ssize_t block_inode::write(size_t offset, const void *buf, size_t len, int flags) {
-  bool direct = flags & O_DIRECT;
-  bool sync = flags & O_SYNC;
-  if (len == 0)
-    return 0;
+  size_t pos = 0;
 
-  size_t total = 0;
-  size_t sector = offset / 512;
-  size_t soff = offset % 512;
-  auto *src = (const char*) buf;
+  while (pos < len) {
+    size_t cur = offset + pos;
+    size_t off = cur % PAGE_SIZE;
+    size_t l = min(len - pos, PAGE_SIZE - off);
 
-  // Partial first sector.
-  if (soff > 0) {
-    LOAD_SECTOR(c, sector, direct);
-    size_t sz = min(len, 512 - soff);
-    memcpy(c.data + soff, src, sz);
-    c.dirty = true;
-
-    src += sz;
-    len -= sz;
-    total += sz;
-    sector++;
+    // If writing an entire page, we don't need to load old data.
+    bool full = (off == 0 && l == PAGE_SIZE);
+    auto cp = load_page(cur / PAGE_SIZE, (flags & O_DIRECT) && !full);
+    
+    auto &page = **cp;
+    memcpy(page.data + off, (char*)buf + pos, l);
+    
+    page.dirty = true;
+    page.valid = true;
+    pos += l;
   }
 
-  // Whole sectors.
-  while (len >= 512) {
-    LOAD_SECTOR(c, sector, direct);
-    memcpy(c.data, src, 512);
-    c.valid = true;
-    c.dirty = true;
-
-    src += 512;
-    len -= 512;
-    total += 512;
-    sector++;
-  }
-
-  // Last partial sector.
-  if (len > 0) {
-    LOAD_SECTOR(c, sector, direct);
-    memcpy(c.data, src, len);
-    c.dirty = true;
-
-    total += len;
-  }
-
-  if (direct || sync)
+  if (flags & (O_DIRECT | O_SYNC))
     flush();
-
-  return total;
+  return pos;
 }
 
 void block_inode::flush() {
-  for (const auto &[sector, c] : cache)
+  for (const auto &[page, c] : cache)
     // Note we can't capture reference directly, since the pair is temporarily constructed.
     // This `flush_sector` will always check dirtiness.
-    flush_sector(sector);
+    flush_page(page);
+}
+
+void *block_inode::get_page(unsigned i) {
+  auto page = load_page(i);
+  if (!page)
+    return nullptr;
+
+  return (*page)->data;
+}
+
+void block_inode::mark_dirty(unsigned i) {
+  auto &page = cache.at(i);
+  page.dirty = true;
 }
 
 tty_inode::tty_inode(console_inode *console): inode_impl(devfs.get(), 0, 0, 0666, File), tty(console) {}

@@ -419,7 +419,6 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
   bool relative = (*path)[0] != '/';
-  printk("fstatat: %s\n", path->get());
   int fd = relative
     ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
     : pcb->open_file(path->get(), O_PATH | openflags);

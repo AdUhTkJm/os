@@ -73,6 +73,7 @@ public:
   void deallocate(int fd);
   void clear();
   int count(int fd) { return open.count(fd); }
+  size_t size() { return open.size(); }
   
   // It is sometimes not easy to use `operator[]` on a pointer.
   file *operator[](int x) { return open.count(x) ? open[x] : nullptr; }

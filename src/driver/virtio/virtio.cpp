@@ -103,9 +103,11 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
 
   mmwr(base + DEVICE_FEATURESEL, 0);
   auto features_low = mmrd<uint32_t>(base + DEVICE_FEATURE);
-  bool anylayout = features_low & legacy_features::ANY_LAYOUT;
 
-  uint64_t supported = anylayout ? legacy_features::ANY_LAYOUT : 0;
+  uint64_t supported = 0;
+  if (features_low & SIZEMAX)
+    supported |= SIZEMAX;
+  printk("features: %x, supported: %x\n", features_low, supported);
   mmwr(base + DRIVER_FEATURESEL, 0);
   mmwr<uint32_t>(base + DRIVER_FEATURE, supported);
 
@@ -188,6 +190,13 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
     // In legacy we shouldn't set up QueueReady.
   }
 
+  // Read the capacity and the max segment size.
+  cap = mmrd<unsigned long>(base + CONFIG_BASE);
+  if (supported & SIZEMAX)
+    segment_size_max = mmrd<unsigned>(base + CONFIG_BASE + 4);
+  else
+    segment_size_max = 512;
+
   // Initialize the free list structure.
   count = vq::size;
   head = 0;
@@ -244,18 +253,23 @@ void block_device::free_chain(descriptor desc) {
 }
 
 // The lba is the logical block address.
-int block_device::read_legacy(uint64_t lba, void *buffer) {
+int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
   // We need to ensure that they lie in the same page, so we can't just put them on `ksp`.
   // But it doesn't matter for `status` - one byte always works.
   pa_t req = pframe();
-  pa_t buf = pframe();
+  pa_t buf = pmalloc(roundup<PAGE_SIZE>(512 * len) / PAGE_SIZE);
   pa_t status = pframe();
   *(request_legacy*) as_va(req) = {
     .type = 0, /* Read */
     .reserved = 0,
     .sector = lba,
   };
+  if (lba + len >= cap) {
+    printk("virtio: warning: reading sector %ld - %ld on a device with only %ld sectors\n", lba, lba + len, cap);
+    stack::dump();
+    return -EIO;
+  }
   
   mmwr<unsigned char>(status, 0xff);
 
@@ -273,7 +287,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   d0.next = d[1];
 
   d1.addr = buf;
-  d1.len = 512;
+  d1.len = 512 * len;
   d1.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
   d1.next = d[2];
 
@@ -312,7 +326,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   auto stat = mmrd<unsigned char>(status);
   assert(stat != 0xff);
   if (stat == 0)
-    memcpy(buffer, (void *) as_va(buf), 512);
+    memcpy(buffer, (void *) as_va(buf), 512 * len);
 
   pfree(req);
   pfree(buf);
@@ -320,10 +334,10 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   return stat;
 }
 
-int block_device::write_legacy(uint64_t lba, const void *buffer) {
+int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
   pa_t req = pframe();
-  pa_t buf = pframe();
+  pa_t buf = pmalloc(roundup<PAGE_SIZE>(512 * len) / PAGE_SIZE);
   *(request_legacy*) as_va(req) = {
     .type = 1, /* Write */
     .reserved = 0,
@@ -331,7 +345,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   };
   
   int status = 0xff;
-  memcpy((void *) as_va(buf), buffer, 512);
+  memcpy((void *) as_va(buf), buffer, 512 * len);
 
   descriptor d[3];
   if (!alloc_chain(3, d))
@@ -347,7 +361,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   d0.next = d[1];
 
   d1.addr = buf;
-  d1.len = 512;
+  d1.len = 512 * len;
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = d[2];
 
@@ -368,15 +382,15 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   return status;
 }
 
-int block_device::read(uint64_t lba, void *buffer) {
+int block_device::read(uint64_t lba, void *buffer, int len) {
   if (legacy)
-    return read_legacy(lba, buffer);
+    return read_legacy(lba, buffer, len);
   assert(false && "NYI for non-legacy devices");
 }
 
-int block_device::write(size_t lba, const void *buffer) {
+int block_device::write(size_t lba, const void *buffer, int len) {
   if (legacy)
-    return write_legacy(lba, buffer);
+    return write_legacy(lba, buffer, len);
   assert(false && "NYI for non-legacy devices");
 }
 

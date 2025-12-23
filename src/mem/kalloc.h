@@ -22,10 +22,11 @@ void drop(pa_t p);
 
 // Gives a consecutive chunk of physical memory.
 pa_t pmalloc(int pagecnt);
-// Gives a consecutive chunk in the lower 4GB, for
 
+// Gives the number of free pages in the system.
+size_t pavail();
 
-/* Free a chunk of memory allocated by `vmalloc`. */
+// Free a chunk of memory allocated by `vmalloc`.
 void vfree(void *p);
 
 // Initialize the bitmap allocator.

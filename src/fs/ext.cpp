@@ -87,11 +87,13 @@ unsigned ext_inode::crc(const extent_header *extent_block) const {
   return fs->crc(extent_block, fs->blksz - 12, hash);
 }
 
-unique_ptr<char[]> ext_inode::read_block(unsigned long block) {
+char *ext_inode::read_block_mutable(unsigned long block) {
   auto fs = static_cast<ext*>(this->fs);
-  unique_ptr<char[]> buf(new char[fs->blksz]);
-  fs->device->read(fs->offset(block), buf.get(), fs->blksz, flags);
-  return buf;
+  return (char *) fs->device->get_page(fs->offset(block) / PAGE_SIZE);
+}
+
+const char *ext_inode::read_block(unsigned long block) {
+  return read_block_mutable(block);
 }
 
 void ext_inode::write_block(unsigned long block, const char *data) {
@@ -102,12 +104,19 @@ void ext_inode::write_block(unsigned long block, const char *data) {
 size_t ext_inode::locate_ext4(size_t byte) {
   auto fs = static_cast<ext*>(this->fs);
   uint32_t tgt = byte / fs->blksz;
-  auto block = find_path(tgt).back();
-  extent_header *header;
+  auto path = find_path(tgt);
+  if (path.size() == 0)
+    return 0;
+
+  auto block = path.back();
+  const extent_header *header;
   if (block != 0) {
-    auto buf = read_block(block);
-    header = (extent_header *) buf.get();
-  } else header = (extent_header *) meta.directptr;
+    const char *p = read_block(block);
+    if (!p)
+      return 0;
+    header = (const extent_header *) p;
+  } else
+    header = (const extent_header *) meta.directptr;
   extent* ext = (extent*) (header + 1);
   
   for (int i = 0; i < header->entries; i++) {
@@ -260,18 +269,22 @@ vector<unsigned long> ext_inode::find_path(unsigned tgt) {
   auto header = (extent_header *) meta.directptr;
   unique_ptr<char[]> buf(new char[fs->blksz]);
   uint64_t block = 0;
+  int last_depth = -1;
 
   for (auto idx = (extent_idx *) (header + 1);;) {
     path.push_back(block);
     if (header->magic != 0xf30a)
-      // Filesystem corrupted.
-      panic("ext4: corrupted headers");
+      fs->on_corrupt();
 
     if (header->depth == 0)
       return path;
+    
+    if (header->depth - last_depth != 1 && path.size() > 1)
+      fs->on_corrupt();
+    last_depth = header->depth;
 
     // We must recurse.
-    extent_idx* node = nullptr;
+    extent_idx *node = nullptr;
 
     // Find the index entry containing the target block.
     for (int i = 0; i < header->entries; ++i) {
@@ -279,21 +292,26 @@ vector<unsigned long> ext_inode::find_path(unsigned tgt) {
         node = idx + i;
       else break;
     }
+    // This is a hole.
     if (!node)
-      return path;
+      return { };
 
     // The new block still starts with a header, and followed by indices.
     block = ((unsigned long) node->leaf_hi << 32) + node->leaf_lo;
+    if (block == 0)
+      fs->on_corrupt();
+
     fs->device->read(fs->offset(block), buf.get(), fs->blksz, flags);
-    header = (extent_header*) buf.get();
-    idx = (extent_idx*) (header + 1);
+    header = (extent_header *) buf.get();
+    idx = (extent_idx *) (header + 1);
 
     if (fs->do_crc) {
       auto crc = *(unsigned *)(buf.get() + fs->blksz - 12);
       auto computed = this->crc(header);
+      printk("do crc: %d vs %d\n", crc, computed);
       if (crc != computed) {
         printk("ext: crc mismatch: %p != %p", crc, computed);
-        panic("ext: crc mismatch");
+        fs->on_corrupt();
       }
     }
   }
@@ -303,7 +321,12 @@ expected<ext_inode::extent_idx> ext_inode::split(const vector<unsigned long> &pa
   auto fs = static_cast<class ext*>(this->fs);
   assert(path[level] != 0);
   auto blockbuf = read_block(path[level]);
-  auto old = (extent_header *) blockbuf.get();
+  if (!blockbuf)
+    return -EIO;
+
+  // NOTE: we cast out `const` here.
+  auto old = (extent_header *) blockbuf;
+  fs->device->mark_dirty(path[level]);
 
   uint64_t b = fs->balloc();
   if (b == -1ul)
@@ -365,16 +388,21 @@ int ext_inode::insert_extent(const vector<unsigned long> &path, int level, int p
   auto out = *outp;
 
   // Insert the entry into parents.
+  auto fs = (class ext *) this->fs;
   for (int i = int(path.size()) - 2; i >= 1; i--) {
     auto parent = path[i];
-    auto buf = read_block(parent);
-    auto header = (extent_header*) buf.get();
+    auto buf = read_block_mutable(parent);
+    if (!buf)
+      return -EIO;
+
+    auto header = (extent_header*) buf;
     auto indices = (extent_idx *) (header + 1);
     unsigned pos = insertion_pos(indices, header->entries, out.logical);
 
     if (header->entries != header->max) {
       insert(indices, header->entries, pos, out);
-      write_block(parent, buf.get());
+      fs->device->mark_dirty(parent);
+      write_block(parent, buf);
       return 0;
     }
 
@@ -398,7 +426,6 @@ int ext_inode::insert_extent(const vector<unsigned long> &path, int level, int p
   }
 
   // If we reached here, we must split the root.
-  auto fs = static_cast<class ext*>(this->fs);
   auto block = fs->balloc();
   if (block == -1ul)
     return -ENOSPC;
@@ -436,8 +463,11 @@ int ext_inode::set_pointer_ext4(unsigned index, size_t value) {
   auto fs = static_cast<ext*>(this->fs);
   auto path = find_path(index);
   auto block = path.back();
-  auto buf = read_block(block);
-  auto header = (extent_header *) buf.get();
+  auto buf = read_block_mutable(block);
+  if (!buf)
+    return -EIO;
+
+  auto header = (extent_header *) buf;
   auto exts = (extent *) (header + 1);
 
   assert(header->depth == 0);
@@ -481,6 +511,7 @@ int ext_inode::set_pointer_ext4(unsigned index, size_t value) {
   ext.phys_hi = value >> 32;
   ext.phys_lo = (unsigned) value;
   header->entries++;
+  fs->device->mark_dirty(block);
   return 0;
 }
 
@@ -546,7 +577,8 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   else
     meta.sz = sz;
 
-  set_pointer(meta.sz / blksz, newblk);
+  if (auto ret = set_pointer(meta.sz / blksz, newblk); ret < 0)
+    return ret;
 
   unique_ptr<char[]> block = new char[blksz];
   memset(block.get(), 0, blksz);
@@ -634,7 +666,8 @@ ssize_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) 
         break;
 
       // Attach block to inode.
-      set_pointer(pos / fs->blksz, newblk);
+      if (auto ret = set_pointer(pos / fs->blksz, newblk); ret < 0)
+        return ret;
 
       // Zero the new block.
       unique_ptr<char[]> zero(new char[fs->blksz]);
@@ -784,7 +817,7 @@ int ext_inode::unlink(const string &name) {
     fs->device->read(offset, &entry, sizeof(direntry), flags);
     
     if (entry.size < sizeof(entry))
-      panic("unlink: corrupt filesystem");
+      fs->on_corrupt();
 
     pos += entry.size;
     if (entry.inum == 0)
@@ -837,27 +870,30 @@ inode *ext_inode::lookup(const string &name) {
 
   auto fs = static_cast<ext*>(this->fs);
 
-  // The basic structure is similar to list().
-  for (unsigned pos = 0; pos < meta.sz;) {
-    // Read the directory entry header.
-    int block = locate(pos);
-    unsigned offset = block * fs->blksz + pos % fs->blksz;
-    direntry entry;
-    fs->device->read(offset, &entry, sizeof(entry), 0);
+  // Do batch reading: read a block each time, rather than locate()'ing every single entry.
+  for (unsigned pos = 0; pos < meta.sz; ) {
+    unsigned off = pos % fs->blksz;
     
-    if (entry.size < sizeof(entry))
-      // Corrupt filesystem.
-      return nullptr;
+    size_t b = locate(pos);
+    const char *data = (const char *) fs->device->get_page(fs->offset(b) / PAGE_SIZE);
 
-    if (entry.inum != 0) {
-      unique_ptr<char[]> p(new char[entry.namelen + 1]);
-      fs->device->read(offset + sizeof(entry), p.get(), entry.namelen, 0);
-      p[entry.namelen] = '\0';
-      // For string comparison, we must make sure `p` is a null-terminated string.
-      if (name == p.get())
-        return fs->read_from_inum(entry.inum);
+    // Iterate through all entries that live inside this 4KB block.
+    while (off < fs->blksz && pos < meta.sz) {
+      auto entry = (const direntry *) (data + off);
+      
+      if (entry->size < sizeof(direntry) || off + entry->size > fs->blksz)
+        fs->on_corrupt(); // Safety check
+
+      if (entry->inum != 0) {
+        if (name.size() == entry->namelen && 
+          strncmp(name.c_str(), (char *) (entry + 1), entry->namelen) == 0) {
+          return fs->read_from_inum(entry->inum);
+        }
+      }
+      
+      pos += entry->size;
+      off += entry->size;
     }
-    pos += entry.size;
   }
   return nullptr;
 }
@@ -935,7 +971,7 @@ optional<string> ext_inode::readlink() {
 }
 
 // Currently we're assuming ext2 header starts at sector 2. This isn't always the case; read sectors 0 & 1 to know.
-ext::ext(inode *device): device(device) {
+ext::ext(block_inode *device): device(device) {
   constexpr auto sbsz = sizeof(struct superblock);
   unique_ptr<char[]> block(new char[sbsz]);
   device->read(1024, block.get(), sbsz, 0);
@@ -1107,12 +1143,16 @@ void ext::free_blocks(ext_inode *node, size_t block, int level) {
   if (!block)
     return;
 
-  auto data = node->read_block(block);
-  auto p = (unsigned *) data.get();
+  auto data = device->get_page(offset(block) / PAGE_SIZE);
+  if (!data)
+    return;
+
+  auto p = (unsigned *) data;
   free_block(block);
   if (level == 1) {
     for (unsigned i = 0; i < blksz / sizeof(int); i++)
       free_block(p[i]);
+    device->mark_dirty(offset(block) / PAGE_SIZE);
     return;
   }
 
@@ -1233,10 +1273,7 @@ ext_inode *ext::read_from_inum(size_t inum) {
 }
 
 void ext::sync() {
-  auto dev = dyn_cast<block_inode>(device);
-  if (!dev)
-    panic("ext2: not a block inode");
-  dev->flush();
+  device->flush();
 }
 
 size_t ext::read_64(uint32_t lo, uint32_t hi) {
@@ -1284,9 +1321,10 @@ expected<fs*> ext_creator(const char *src) {
   if (fd < 0)
     return -EBADF;
   inode *node = pcb->ftbl->at(fd)->node();
-  if (node->type != inode::BlockDevice)
+  auto blk = dyn_cast<block_inode>(node);
+  if (node->type != inode::BlockDevice || !blk)
     return -ENOTBLK;
-  auto ext = new class ext(node);
+  auto ext = new class ext(blk);
   if (!ext->root)
     return -EINVAL;
   return ext;

@@ -31,6 +31,7 @@ struct frame_t {
 };
 
 pa_t free_head;
+size_t physavail;
 
 // No extra paddings.
 static_assert(sizeof(frame_t) == PAGE_SIZE);
@@ -171,6 +172,7 @@ void mark_reserved() {
     }
     return WalkResult::Continue;
   });
+  physavail += min(physend - physbegin, MAX_PA_SIZE) / PAGE_SIZE;
 
   auto rsv = fdt::reserved();
   // Don't touch the space of the free-list allocator.
@@ -183,6 +185,7 @@ void mark_reserved() {
     auto start_page = (begin - physbegin) / PAGE_SIZE;
     auto end_page = start_page + roundup<PAGE_SIZE>(size) / PAGE_SIZE;
     pmmap.set(start_page, end_page);
+    physavail -= (end_page - start_page);
   }
 }
 
@@ -331,6 +334,7 @@ pa_t pframe() {
 #if defined(DEBUG_MEMORY)
   memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
 #endif
+  physavail--;
   return pa;
 }
 
@@ -359,6 +363,7 @@ void pfree(pa_t p) {
     return;
 
   // This region is managed by free list allocator.
+  physavail++;
   const auto end = (pa_t) __kernel_end - KERNEL_OFFSET;
   if (p >= end && p < end + FREE_LIST_SIZE * PAGE_SIZE) {
     auto *frame = (frame_t *) as_va(p);
@@ -455,6 +460,11 @@ void init_freelist_kalloc() {
   
   ((frame_t *) as_va(end) - 1)->next = 0;
   free_head = begin;
+  physavail += FREE_LIST_SIZE;
+}
+
+size_t pavail() {
+  return physavail;
 }
 
 }

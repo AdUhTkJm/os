@@ -126,8 +126,8 @@ typename hashmap<K, V, Hash, Eq>::entry* hashmap<K, V, Hash, Eq>::find_slot(cons
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 typename hashmap<K, V, Hash, Eq>::iterator hashmap<K, V, Hash, Eq>::insert(const K &key, const V &value) {
-  if (sz >= cap * 3 / 4)
-    reserve(cap * 2);
+  if (sz >= cap / 2)
+    reserve(cap * 7 / 4);
 
   auto start = hash(key), i = start;
 
@@ -210,7 +210,9 @@ hashmap<K, V, Hash, Eq>::~hashmap() {
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
 V &hashmap<K, V, Hash, Eq>::at(const K &key) {
-  return find_slot(key)->value;
+  entry *slot = find_slot(key);
+  assert(slot);
+  return slot->value;
 }
 
 template<typename K, typename V, hasher<K> Hash, comparator<K> Eq>
