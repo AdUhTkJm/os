@@ -69,10 +69,8 @@ void wait_queue::wake(wait_entry &entry, bool can_preempt) {
 #ifdef DEADLOCK
 // Called by context_save.
 void check_suspend() {
-  if (detail::nested_irq > 0) {
-    stack::dump();
+  if (detail::nested_irq > 0)
     panic("check_suspend: deadlock");
-  }
 }
 #endif
 

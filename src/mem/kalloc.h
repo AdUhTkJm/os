@@ -25,6 +25,8 @@ pa_t pmalloc(int pagecnt);
 
 // Gives the number of free pages in the system.
 size_t pavail();
+// Gives the number of total pages in the system.
+size_t ptotal();
 
 // Free a chunk of memory allocated by `vmalloc`.
 void vfree(void *p);

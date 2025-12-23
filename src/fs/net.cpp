@@ -187,16 +187,20 @@ void ip::fill_header(char *p, address dst, address src, unsigned short len, prot
   assert(checksum(h) == 0);
 }
 
-int ip::write(net_device *dev, const void *data, size_t len, address src, address dst, protocol prot, int flags, option options) {
+int ip::write(const void *data, size_t len, address src, address dst, protocol prot, int flags, option options) {
   char *p = ((char *) data) - sizeof(ip::header);
   ip::address arpdst;
-  if (options.broadcast)
+  net_device *dev = nullptr;
+  if (options.broadcast) {
     arpdst = 0xffffffff;
-  else {
+    // We might be setting up DHCP, in which case we don't have a routing table.
+    dev = virtio::netdev();
+  } else {
     auto route = lookup_route(dst);
     if (!route)
       return -ENETUNREACH;
     arpdst = route->gateway ? route->gateway : dst;
+    dev = route->dev;
   }
   ip::fill_header(p, dst, src, len, prot);
   return arp::write(dev, p, len + sizeof(ip::header), arpdst, flags, options);
@@ -304,10 +308,8 @@ void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, p
   // h->checksum = htons(udp::checksum(src, dst, h, payload_len));
 }
 
-udp_socket_inode::udp_socket_inode(net_device *dev, ip::address src, unsigned short port):
-  inode_impl(&sockfs, 0, 0, 0666, Socket), dev(dev), src(src), srcport(port) {
-  if (srcport != 0)
-    demux->udps.insert(srcport, this);
+udp_socket_inode::udp_socket_inode():
+  inode_impl(&sockfs, 0, 0, 0666, Socket), src(ip::src), srcport(0) {
 }
 
 udp_socket_inode::~udp_socket_inode() {
@@ -383,7 +385,6 @@ ssize_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) 
   // Total header length.
   constexpr size_t total = sizeof(eth::header) + sizeof(ip::header) + sizeof(udp::header);
   char data[udp::MTU + total];
-  printk("udp: src %s:%d, dst %s:%d\n", ip::format(src).c_str(), htons(srcport), ip::format(dst).c_str(), htons(dstport));
 
   for (; off < len; off += udp::MTU) {
     auto l = min(len - off, udp::MTU);
@@ -391,7 +392,7 @@ ssize_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) 
 
     auto q = data + total - sizeof(udp::header);
     udp::fill_header(q, src, dst, srcport, dstport, len);
-    int ret = ip::write(dev, q, l + sizeof(udp::header), src, dst, protocol::UDP, flags, options);
+    int ret = ip::write(q, l + sizeof(udp::header), src, dst, protocol::UDP, flags, options);
     if (ret < 0)
       return off ? off : ret;
   }
@@ -418,17 +419,23 @@ short udp_socket_inode::poll(unsigned short events) {
   short result = 0;
   if (events & POLLIN && rx.size())
     result |= POLLIN;
-  if (events & POLLOUT && !dev->write_full())
+  // Perhaps delegate to lower layers?
+  if (events & POLLOUT)
     result |= POLLOUT;
   return result;
 }
 
 int udp_socket_inode::bind(ip::address src, udp::port port) {
+  if (port == 0) {
+    if (port = htons(allocate()); !port)
+      return -EADDRINUSE;
+  }
   if (demux->udps.count(port))
-    return -EBUSY;
+    return -EADDRINUSE;
   
   this->src = src;
-  demux->udps.erase(port);
+  if (srcport != 0)
+    demux->udps.erase(srcport);
   demux->udps.insert(srcport = port, this);
   return 0;
 }
@@ -444,9 +451,7 @@ void udp_socket_inode::wake_read() {
   readwait.wake_all();
 }
 
-void udp_socket_inode::wake_write() {
-  dev->wake_write();
-}
+void udp_socket_inode::wake_write() {}
 
 void dhcp::fill_option(unsigned char *&dst, unsigned char type, const char *src, unsigned char len) {
   dst[0] = type;
@@ -460,7 +465,8 @@ void dhcp::daemon() {
   ip::dns.construct();
 
   // The IP addresses stay the same after conversion to big-endian, so we omit the conversion here.
-  auto sock = new udp_socket_inode(virtio::netdev(), 0, htons(68));
+  auto sock = new udp_socket_inode();
+  sock->bind(ip::src, htons(68));
   sock->connect(0xffffffff, htons(67));
 discover:
   alignas(4) unsigned char payload[300] = { 0x01, 0x01, 0x06, 0x00 };
@@ -625,21 +631,24 @@ request:
     ip::routes->push_back({
       .network = htonl(0x7f000001),
       .mask = 0xffffff00,
-      .gateway = 0
+      .gateway = 0,
+      .dev = virtio::netdev() // TODO: change into local device
     });
 
     // src/netmask (obtained from DHCP)
     ip::routes->push_back({
       .network = ip::src,
       .mask = ip::subnet_mask,
-      .gateway = 0
+      .gateway = 0,
+      .dev = virtio::netdev()
     });
 
     // 0.0.0.0/0 -> routers[0]
     ip::routes->push_back({
       .network = 0,
       .mask = 0,
-      .gateway = (*ip::routers)[0]
+      .gateway = (*ip::routers)[0],
+      .dev = virtio::netdev()
     });
   }
 

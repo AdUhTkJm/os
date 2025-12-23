@@ -8,6 +8,8 @@ namespace os {
 
 // These are processes that are sleeping for a timeout.
 extern wait_queue napping;
+// Processes that have a ticking itimer, with ITIMER_REAL.
+extern static_storage<os::list<pcb_t*>> itimer_real;
 
 struct scheduler_t {
   os::intrusive_list<tcb_t> sleep, ready;
@@ -60,11 +62,10 @@ struct scheduler_t {
     maybe_preempt_impl();
   }
 
-  // Remove tcb from the napping list.
-  void unnap(tcb_t *tcb, bool wake = true);
   // Tell all napping processes that they have already napped a timer tick.
   // Wakes up processes, but doesn't preempt.
   void tick();
+  void record_itimer_real(pcb_t *pcb);
 private:
   [[noreturn]] void dispatch_impl();
   

@@ -14,10 +14,12 @@
 
 // In nanosecond.
 extern int timer_tick;
-// In nanosecond, from Unix epoch.
+// In nanosecond, from Unix epoch. This is initially boot time.
 extern size_t realtime;
 // Default to zero (UTC).
 timezone zone;
+// Total amount of (virtually) shared memory.
+size_t pshared;
 
 // Returns current timestamp.
 size_t os::now() {
@@ -900,8 +902,10 @@ HANDLE(mmap, addr, len, prot, flags, fd, offset) {
   } else if (shared)
     backup = new file(new dentry("<anon>", tmpfs->get(), nullptr), O_RDWR);
   
-  if (shared)
+  if (shared) {
+    pshared += end - start;
     backup->node()->cache = new page_cache(backup->node());
+  }
 
   // Now allocate near this cap. Note that this has to be page-aligned.
   vma::vma_t vma(start, end, prot, flags, backup, offset, len);
@@ -1236,6 +1240,77 @@ HANDLE(syslog, type, buf, size) {
   return detail::syslog(type, (char *) buf, size);
 }
 
+HANDLE(sysinfo, info) {
+  struct sysinfo sysinfo {
+    .uptime = long((now() - realtime) / 1_s),
+    .loads = {}, // TODO: what's this?
+    .totalram = ptotal() * PAGE_SIZE,
+    .freeram = pavail() * PAGE_SIZE,
+    .sharedram = pshared,
+    .bufferram = 0,
+    .totalswap = 0,
+    .freeswap = 0,
+    .procs = (unsigned short) pidmap->size(),
+    .totalhigh = 0,
+    .freehigh = 0,
+    .mem_unit = PAGE_SIZE
+  };
+  copy_to_user((void *) info, &sysinfo, sizeof(struct sysinfo));
+  return 0;
+}
+
+HANDLE(setitimer, which, timer, old) {
+  if (which < 0 || which >= 3)
+    return -EINVAL;
+  if (which != ITIMER_REAL) {
+    printk("setitimer: no timer %d yet\n", timer);
+    return -EINVAL;
+  }
+  
+  auto p = copy_from_user((void *) timer, sizeof(itimerval));
+  if (!p)
+    return p;
+  itimerval time = *(itimerval *) p->get();
+  if (time.it_interval.tv_usec > 999999 || time.it_interval.tv_usec < 0)
+    return -EINVAL;
+  if (time.it_value.tv_usec > 999999 || time.it_value.tv_usec < 0)
+    return -EINVAL;
+  
+  auto intv = time.it_interval.tv_usec * 1000 + time.it_interval.tv_sec * 1_s;
+  auto tm = time.it_value.tv_usec * 1000 + time.it_value.tv_sec * 1_s;
+
+  pcb->itimers[which].interval = (intv + tick_length - 1) / tick_length;
+  pcb->itimers[which].timeout = (tm + tick_length - 1) / tick_length;
+  scheduler.record_itimer_real(pcb);
+
+  if (old) {
+    auto timer = pcb->itimers[which];
+    auto intv = timer.interval * tick_length;
+    auto time = timer.timeout * tick_length + now();
+    itimerval v {
+      .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
+      .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
+    };
+    copy_to_user((void *) old, &v, sizeof(itimerval));
+  }
+  return 0;
+}
+
+HANDLE(getitimer, which, old) {
+  if (which < 0 || which >= 3)
+    return -EINVAL;
+
+  auto timer = pcb->itimers[which];
+  auto intv = timer.interval * tick_length;
+  auto time = timer.timeout * tick_length + now();
+  itimerval v {
+    .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
+    .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
+  };
+  copy_to_user((void *) old, &v, sizeof(timeval) * 2);
+  return 0;
+}
+
 SYSHANDLE_END
 
 }
@@ -1294,9 +1369,6 @@ namespace os {
       printk("exception: scause = %ld, stval = %p, sepc = %p\n", scause, stval, sepc);
       break;
     }
-#ifdef FUNC_INSTRUMENT
-    os::stack::dump();
-#endif
     panic("exception occurred in kernel");
   } else {
     auto pid = active()->pcb->pid;

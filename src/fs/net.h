@@ -41,12 +41,14 @@ enum protocol : unsigned char {
 
 struct tcb_t;
 class udp_socket_inode;
+class tcp_socket_inode;
 struct net_device;
 
 class demux {
 public:
   // Maps port to inode.
   os::hashmap<__big unsigned short, udp_socket_inode*> udps;
+  os::hashmap<__big unsigned short, tcp_socket_inode*> tcps;
   void push(char *buf, int len);
 };
 
@@ -123,7 +125,7 @@ constexpr size_t MTU = 1500;
 // Assumes `data` has enough space at front for IP header.
 //  [-h-|--ip payload--]
 //      |---------------- `data`
-int write(net_device *dev, const void *data, size_t len, address src, address dst, protocol prot, int flags, option options);
+int write(const void *data, size_t len, address src, address dst, protocol prot, int flags, option options);
 void read(const char *p, size_t len, int error = 0);
 
 string format(__big ip::address addr);
@@ -133,6 +135,7 @@ struct route {
   ip::address network;
   ip::address mask;
   ip::address gateway;
+  net_device *dev;
 };
 
 extern static_storage<vector<route>> routes;
@@ -207,7 +210,6 @@ struct /*interface*/ net_device {
 };
 
 class udp_socket_inode : public inode_impl<udp_socket_inode> {
-  net_device *dev;
   spinlock rxlock;
   wait_queue readwait;
 
@@ -233,7 +235,7 @@ public:
 
   FILE_INODE_DEFAULT_IMPL;
 
-  udp_socket_inode(net_device *dev, ip::address src, udp::port port);
+  udp_socket_inode();
   ~udp_socket_inode();
   ssize_t read(size_t, void *buf, size_t len, int flags) override;
   ssize_t write(size_t, const void*, size_t, int flags) override;

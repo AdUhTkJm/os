@@ -146,8 +146,12 @@ struct pcb_t {
   wait_queue wait;        // Threads suspended in wait() system call.
   spinlock waitlock;      // Lock associated with `wait`.
   rlimit rlims[4];        // Resource limits.
-  tms times {};
-  long last_schedule;
+  tms times {};           // For times() system call. TODO: update on every tick.
+  long last_schedule;     // The timestamp of last schedule.
+  struct itimer {
+    long timeout;         // In ticks.
+    long interval;        // In ticks.
+  } itimers[3] {};        // Timers for get/setitimer() system call.
 
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.

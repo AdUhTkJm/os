@@ -531,28 +531,28 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
     if (!b)
       continue;
 
-    unique_ptr<char[]> block = new char[blksz];
-    fs->device->read(fs->offset(b), block.get(), blksz, 0);
+    char *block = read_block_mutable(b);
 
     size_t pos = 0;
     while (pos < blksz) {
       // The old entry. We traverse through the entry list.
-      auto *de = (direntry *)(block.get() + pos);
-      size_t len = roundup<4>(sizeof(direntry) + de->namelen);
+      auto *de = (direntry *) (block + pos);
 
+      size_t len = roundup<4>(de->size);
       // This is a full entry that occupies the rest of the block.
       // We shrink the previous entry and then create a new one.
+      // (Even when inum == 0, the size should also be correct, and the logic is unified.)
       if (de->size - len >= roundup<4>(sizeof(direntry) + name.size())) {
         de->size = len;
 
-        auto *ne = (direntry *)(block.get() + pos + len);
+        auto *ne = (direntry *) (block + pos + len);
         ne->inum = inum;
         ne->namelen = name.size();
         ne->type = type;
         ne->size = blksz - (pos + len);
         memcpy(ne->name, name.c_str(), name.size());
 
-        fs->device->write(fs->offset(b), block.get(), blksz, 0);
+        fs->device->mark_dirty(b);
         fs->update_meta(this);
         return 0;
       }
@@ -566,7 +566,7 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   if (!newblk)
     return -ENOSPC;
 
-  auto sz = (unsigned long)meta.sz + blksz;
+  auto sz = (unsigned long) meta.sz + blksz;
   if (fs->size_64) {
     sz += ((unsigned long) meta.acl << 32);
     meta.sz = sz % (1ull << 32);
@@ -580,16 +580,16 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   if (auto ret = set_pointer(meta.sz / blksz, newblk); ret < 0)
     return ret;
 
-  unique_ptr<char[]> block = new char[blksz];
-  memset(block.get(), 0, blksz);
+  auto block = read_block_mutable(newblk);
+  memset(block, 0, blksz);
 
-  auto *entry = (direntry *) block.get();
+  auto *entry = (direntry *) block;
   entry->inum = inum;
   entry->namelen = name.size();
   entry->type = type;
   entry->size = blksz;
   memcpy(entry->name, name.c_str(), name.size());
-  fs->device->write(fs->offset(newblk), block.get(), blksz, 0);
+  fs->device->mark_dirty(newblk);
   fs->update_meta(this);
 
   return 0;
@@ -613,7 +613,7 @@ ssize_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
       return read ? read : -ENOSPC;
     size_t chunk = min(size - pos % size, end - pos);
 
-    char* p = (char*) buf + read;
+    char *p = (char *) buf + read;
 
     // Sparse hole.
     if (b == 0)
@@ -875,7 +875,9 @@ inode *ext_inode::lookup(const string &name) {
     unsigned off = pos % fs->blksz;
     
     size_t b = locate(pos);
-    const char *data = (const char *) fs->device->get_page(fs->offset(b) / PAGE_SIZE);
+    if (b == 0)
+      return nullptr;
+    const char *data = read_block(b);
 
     // Iterate through all entries that live inside this 4KB block.
     while (off < fs->blksz && pos < meta.sz) {

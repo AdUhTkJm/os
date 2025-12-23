@@ -3,6 +3,10 @@
 #include "helper.h"
 #include "../mem/ptable.h"
 
+namespace os::stack {
+  void dump();
+}
+
 C void kputs(const char *s) {
   unsigned len = strlen(s);
   sbi_console_write(len, os::to_pa(s));
@@ -13,6 +17,9 @@ C void kputch(char c) {
 }
 
 C void panic(const char *s) {
+#ifdef FUNC_INSTRUMENT
+  os::stack::dump();
+#endif
   printk("kernel panicked: %s\n", s);
   sbi_system_reset();
 }

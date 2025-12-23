@@ -547,7 +547,6 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   }
   // Note we must supply an absolute path.
   pcb->execpath = file->entry->path();
-  printk("exec: %s\n", pcb->execpath.c_str());
   pcb->close_file(fd);
   pcb->execd = true;
 

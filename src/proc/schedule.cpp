@@ -5,6 +5,7 @@ namespace os {
 scheduler_t scheduler;
 static_storage<tcb_t> boot_tcb;
 static_storage<pcb_t> boot_pcb;
+static_storage<os::list<pcb_t*>> itimer_real;
 wait_queue napping;
 
 void scheduler_t::add(tcb_t *tcb) {
@@ -110,12 +111,23 @@ void scheduler_t::wakeup(tcb_t *tcb, bool can_preempt) {
     lock.release();
 }
 
-// TODO: unnecessary O(n^2).
 void scheduler_t::tick() {
   for (auto entry : napping.q) {
     if (--entry->tcb->timeout <= 0)
       napping.wake(*entry);
   }
+  for (auto pcb : *itimer_real) {
+    auto &itimer = pcb->itimers[ITIMER_REAL];
+    if (--itimer.timeout <= 0) {
+      pcb->send_signal(SIGALRM);
+      if (itimer.interval != 0)
+        itimer.timeout = itimer.interval;
+    }
+  }
+}
+
+void scheduler_t::record_itimer_real(pcb_t *pcb) {
+  itimer_real->push_back(pcb);
 }
 
 }

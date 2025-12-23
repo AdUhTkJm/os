@@ -467,4 +467,8 @@ size_t pavail() {
   return physavail;
 }
 
+size_t ptotal() {
+  return (physend - physbegin) / PAGE_SIZE;
+}
+
 }

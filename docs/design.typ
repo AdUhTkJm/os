@@ -47,19 +47,21 @@
 }
 
 // Generate a fake paragraph, so that the "first" paragraph isn't special.
+#let fakepar = par(leading: 1.5em)[#text(size:0.0em)[#h(0.0em)]];
+
 #show heading: it => {
   it
-  par(leading: 1.5em)[#text(size:0.0em)[#h(0.0em)]]
+  fakepar
 }
 
 #show raw.where(block: true): it => {
   pad(it, bottom: -12pt)
-  par(leading: 1.5em)[#text(size:0.0em)[#h(0.0em)]]
+  fakepar
 }
 
 #show list: it => {
   pad(it, bottom: -12pt)
-  par(leading: 1.5em)[#text(size:0.0em)[#h(0.0em)]]
+  fakepar
 }
 
 #let parindent = 2em;
@@ -98,11 +100,15 @@
 
 = 启动流程
 
+== 内存布局
+
+== 启动流程 <boot>
+
 = 基础设施
 
 在编写操作系统时，C++ 的标准库是不可用的。因此，我需要自行编写一些基础设施。
 
-== 容器
+== 容器 <containers>
 
 我实现了下列容器：
 
@@ -162,7 +168,7 @@ dentry *entry = *ret; // Extract value
 
 类似地，当不需要 E 时，我也实现了 `optional<T>`。这是因为 C++ 没有零长度的类型，所以无法直接复用 `expected<T, unit>`。
 
-== 锁
+== 同步工具
 
 === 自旋锁 <spinlock>
 
@@ -171,6 +177,109 @@ dentry *entry = *ret; // Extract value
 实际上，这个数值还可以方便调试：如果进程在差值不为零的时候进入睡眠，将会触发 panic。这个功能默认关闭，但可以通过构建脚本中的 `--detect-deadlock` 打开。
 
 === 等待队列 <wait-queue>
+
+等待是内核中常见的操作：当线程进行磁盘 IO、进入睡眠、或者调用 wait(2) 的时候，它们都需要将自身加入某个等待队列中，以便后续唤醒。
+
+我们需要避免这样的 lost-wakeup 问题：
+
+#context {
+set rect(stroke: none)
+set align(center)
+
+let line = line(stroke: stroke(dash: "dashed", paint: blue), length: 10%);
+let underline(str) = pad(
+  stack(dir: ltr, spacing: 3pt, text(str, baseline: -5pt, stroke: stroke(thickness: 0.5pt, paint: blue)), line),
+  left: -100pt);
+
+box(
+stack(
+  dir:ltr,
+  stack(dir: ttb, spacing: 0pt,
+    rect()[*进程 A*],
+    rect()[加入等待队列],
+    underline("preempt"),
+    v(40pt),
+    underline("resume"),
+    rect(inset: 0pt)[入睡],
+  ),
+  h(60pt),
+  stack(dir: ttb,
+    rect()[*进程 B*],
+    pad(rect()[唤醒 A], top: 30pt)
+  ),
+),
+)
+}
+
+为了解决这个问题，需要让已经被唤醒过的进程在“入睡”阶段不真正入睡。
+
+换言之，我们可以让“入睡” (`suspend()`) 仅仅只是切换线程的操作，而不会更改线程本身的状态。相对地，“加入等待队列”会让线程切换到 sleeping状态，而“唤醒”则会让线程切换到 ready 状态。这样就可以完全避免 lost-wakeup 了。
+
+但这还不够。我们必须考虑这种情况：
+
+
+#context {
+set rect(stroke: none)
+set align(center)
+
+let line = line(stroke: stroke(dash: "dashed", paint: blue), length: 10%);
+let underline(str) = pad(
+  stack(dir: ltr, spacing: 3pt, text(str, baseline: -5pt, stroke: stroke(thickness: 0.5pt, paint: blue)), line),
+  left: -100pt);
+
+box(
+stack(
+  dir:ltr,
+  stack(dir: ttb, spacing: 0pt,
+    rect()[*进程 A*],
+    rect()[加入等待队列],
+    underline("preempt"),
+    v(40pt),
+    underline("resume"),
+    rect(inset: 0pt)[入睡],
+  ),
+  h(60pt),
+  stack(dir: ttb,
+    rect()[*进程 B*],
+    pad(rect()[唤醒 A], top: 20pt)
+  ),
+  h(60pt),
+  stack(dir: ttb,
+    rect()[*进程 C*],
+    pad(rect()[唤醒 A], top: 40pt)
+  )
+),
+)
+}
+
+这是合法的。例如，A 在 sigtimedwait(2) 处陷入沉睡，但是信号和计时器同时到来，这时 A 就会被唤醒两次。所以，我们必须保证 `wake()` 是*幂等*的，也就是重复操作与一次操作是等效的。
+
+因此，我采用了这样的设计：
+
+```cpp
+struct wait_entry : intrusive_list_node<wait_entry> {
+  tcb_t *tcb;
+  bool queued = false;
+};
+
+struct wait_queue {
+  spinlock lock;
+  os::intrusive_list<wait_entry> q;
+
+  void prepare(wait_entry &entry);
+  void finish(wait_entry &entry);
+  int wake(int n = 1);
+  // More overloads of wake()
+};
+```
+
+我额外存储了一个 `queue` 的值，来表示它当前是否在队列中。考虑到每个线程的 ksp 都是独立的，`wait_entry` 可以直接在栈上分配。
+
+关于 `tcb_t` 的更多内容，请见@threads。
+
+= 进程
+
+== 线程与进程 <threads>
 
 = 文件系统
 
@@ -192,11 +301,34 @@ inode 中的纯虚函数包含这些内容：
 
 - *等待*。在 poll(2) 中，我们可能需要等待文件变得可读/可写。为此，inode 可以重写 `{prepare,finish}_{read,write}_wait` 这四个函数。它们主要和@wait-queue 所提到的等待队列挂钩。
 
-- *触发器*。
+- *触发器*。当执行某些操作时，可能需要更新硬盘上的数据，例如 `chmod` 与 `close` 等。这并不是必须实现的操作，因为很多文件系统只存在于内存中。因此，我在 inode 中添加了 `onclose`, `onchmod` 等操作：它们的默认实现是空的，但子类可以自由重写。
+
+为了能够在运行时区分不同的 inode，我们需要为 inode 增加一个“种类”字段。实际上，这就是 C++ 的 RTTI。考虑到我们没有 libstdc++，我利用 CRTP 实现了一个简单的 RTTI：
+
+```cpp
+template<class T>
+class inode_impl : public inode {
+  static uint64_t class_id() {
+    static int unique;
+    return (uint64_t) &unique;
+  }
+public:
+  inode_impl(/*metadata*/): inode(/*metadata*/, /*rtti=*/ (long) class_id()) {}
+  static bool classof(inode *p) {
+    return p->rtti == class_id();
+  }
+};
+```
+
+只要每个 inode 的子类 T 都继承 `inode_impl<T>`，它们就能自动获得各异的 RTTI。这和@containers 中所提到的侵入式链表是相似的。
+
+除了上面提到的 metadata 和虚表之外，inode 还维护了引用计数和链接计数。对于硬盘上的文件系统，当引用计数归零的时候，就可以释放 inode；对于内存中的文件系统，释放 inode 就相当于删除，因此只有在引用计数和链接计数都为零时才可以释放。
+
+
 
 = 调试工具 <instr>
 
-== Shadow Stack
+== Shadow Stack <instrument>
 
 我能够在这个 OS 的任何一个地方获取、存储或是打印当前调用栈。
 
@@ -215,9 +347,9 @@ struct shadow_stack {
 } extern stack;
 ```
 
-#indent 在这种实现方式下，复制、存储调用栈也十分简便。
+在这种实现方式下，复制、存储调用栈也十分简便。
 
-这种插桩的方式确实会产生巨大的性能影响：编译器损失了大量的内联机会，而且增大了寄存器压力。不过，在构建脚本中传入 `--no-instrument`，就可以通过条件编译禁用这个功能。
+这种插桩的方式确实会产生巨大的性能影响：编译器损失了大量的内联机会，减少了叶子函数，而且增大了寄存器压力。不过，在构建脚本中传入 `--no-instrument`，就可以通过条件编译禁用这个功能。
 
 我们有时会希望在调用栈中剔除一些无关的函数，例如打印这个 shadow stack 的函数。这时，使用 `[[gnu::no_instrument_function]]` 即可阻止 g++ 插桩。我对所有操作这个栈的函数，spinlock，以及硬件中断的处理器都添加了这个属性。
 
@@ -242,12 +374,7 @@ Stack dump:
   #8: 0xffffffc080206af8 (os::intrusive_list<os::tcb_t>::push_back(os::tcb_t*))
   #7: 0xffffffc080226424 (os::scheduler_t::prepare_to_sleep())
   #6: 0xffffffc0802158f8 (os::wait_queue::prepare(os::wait_entry&))
-  #5: 0xffffffc080230c1a (os::console_inode::prepare_read_wait(os::wait_entry&))
-  #4: 0xffffffc080230f8e (os::tty_inode::prepare_read_wait(os::wait_entry&))
-  #3: 0xffffffc0802070e8 ((anonymous namespace)::syshandle(os::trapframe*))
-  #2: 0xffffffc08021a49e (os::vma::map_single(void*, unsigned long*))
-  #1: 0xffffffc08021aa66 (os::vma::map_current(void*))
-  #0: 0xffffffc0802070e8 ((anonymous namespace)::syshandle(os::trapframe*))
+  ...
 kernel panicked: src/main/../mem/../utils/stl/list.h:66: assertion failed: !contains(node)
 ```
 
@@ -256,6 +383,18 @@ kernel panicked: src/main/../mem/../utils/stl/list.h:66: assertion failed: !cont
 或许有人会问，在 Rust 盛行的今天，依赖这种简陋的 ASan 是否是一种倒退？我的回答是，我选择了 C++ 无限制的自由，也做好了为每一字节内存负责的准备。C++ 并不代表放弃内存安全，它是一个系统的性质，而不是一个语言的保证。
 
 我通过染色、guard page、重载 ```cpp operator new```等方法来在运行期检测内存安全问题。自然，这会带来性能损失，但与上面的 shadow stack 类似，可以通过在构建脚本中使用 `--no-debug-memory` 取消这部分代码的编译。
+
+=== 内存分配方式
+
+我的内存分配分为三级：分配物理内存，分配虚拟内存页，以及可以分配任意大小虚拟内存的 `vmalloc()`。
+
+正如@boot 所说，在启动时，我首先初始化了一个 16MB 的 free-list allocator，然后读取 FDT 并初始化了 128 MB（以 QEMU 的默认设置为例）的 bitmap allocator。
+
+对于虚拟内存页的分配，我也采用 bitmap allocator。
+
+对于任意长度的虚拟内存分配，我采用的是 slab allocator。其中 slab 的大小设置是 8, 16, ..., 256, 以及`rounddown<16>((4096 - sizeof(slab_header)) / n)`, 其中 $1 < n < 7 or n = 12$。这样的大小能让一页恰好可以分配 $n$ 个对象。超出这个范围的对象将会按整页分配。这里的 `rounddown<16>` 是为了对齐要求：这个 OS 中除了按页对齐之外，最大的对齐要求就是 16 字节的。
+
+至于 ```cpp operator new```，它会直接调用 `vmalloc()`。值得注意的是 C++ 会自动考虑 ```cpp operator new[]``` 所附带的数组长度信息，这会加在数组元素所需要的大小上。这无需来自 C++ runtime 的支持。
 
 === 染色
 
@@ -274,8 +413,33 @@ kernel panicked: exception ocurred in kernel
 
 === 泄漏检测 <leak-detect>
 
+当@instrument 所述的 shadow stack 启用时，我会在每个虚拟页的 alloc/free 函数中记录它们的调用栈，并在合适的位置（手动调整源代码）打印所有未被释放的记录。
+
+我给 ```cpp operator new``` 和```cpp operator new[]```分别添加了两个重载：
+
+```cpp
+void *operator new(size_t len, os::permanent_t);
+void *operator new(size_t len, os::safe_t);
+```
+
+它们的效果是一样的，都会让分配的内存不计入内存泄漏检测中。第一个重载主要用于不会被释放的内容，例如 initramfs 的 inode。第二个重载主要用于容器中：容器会管理好自己的分配和释放，因此是安全的。这样可以减少一些误报。
+
 === 越界检测
 
+考虑到虚拟内存分配一共有两种方式，我为它们分别添加了越界检测。
+
+对于按页分配的大对象，我会在它的头尾各额外空出一页来，不将它们 map 到任何物理页上。值得注意的是，我并不能 map 但是将权限设为 0，否则这违反了 RISC-V Sv39 页表的要求（权限为 0 的页一定不是页表的叶子）。
+
+在回收时，这两个 guard page 也会一并回收。
+
+对于 slab allocator 中的小对象，在@instrument 中的 shadow stack 启用时，我会在 `__cyg_profile_func_exit` 中检查所有 slab 中每个空位的 `next` 指针是否完好（指向同一页内，并且对齐正确）。如果不正确，那么立即触发 panic，从而可以直接定位越界的函数。
+
+这要求 panic 所依赖的函数全部都标注了 `[[gnu::no_instrument_function]]`，否则将会无限递归。同时，这极其消耗性能，所以只有在启用 `--debug-memory-expensive` 的时候，我才会进行这个昂贵的检查。
+
 === 二次释放检测
+
+这实际上是免费送的检测。
+
+在实现 copy-on-write 的时候，我们需要增加线程所引用的物理页的引用计数。为了检测二次释放，只需要在释放的时候检测引用计数是否已经为零就可以了。
 
 = 中断处理 <interrupt>

@@ -382,7 +382,7 @@ int socket(int domain, int type, int protocol) {
     if (protocol != 0 && protocol != UDP)
       return -EINVAL;
 
-    auto node = new udp_socket_inode(virtio::netdev(), ip::src, 0);
+    auto node = new udp_socket_inode;
     auto f = new file(new dentry("<sock>", node, nullptr), O_RDWR | flags);
     return pcb->ftbl->allocate(f);
   }

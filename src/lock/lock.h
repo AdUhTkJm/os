@@ -106,8 +106,6 @@ public:
 #  ifdef FUNC_INSTRUMENT
       printk("lock: last released:");
       stack::dump(stack);
-      printk("lock: now:");
-      stack::dump();
 #  endif
       panic("lock: release: double release");
     }
@@ -133,8 +131,6 @@ public:
 #  ifdef FUNC_INSTRUMENT
       printk("lock: last acquired:\n");
       stack::dump(stack);
-      printk("lock: now:\n");
-      stack::dump();
 #  endif
       panic("lock: acquire: already owned");
     }

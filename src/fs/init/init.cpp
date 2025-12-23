@@ -244,7 +244,10 @@ extern "C" void _start() {
     
     // Execute the shell.
 #ifdef TEST
-    const char *argv[] = { "/bin/sh", "-c", "cd /mnt/glibc/ && sh ./busybox_testcode.sh", nullptr };
+    const char *test = 
+      //"cd /mnt/glibc/ && sh ./busybox_testcode.sh";
+      "cd mnt && mkdir tmp && cd tmp && echo a > a.txt";
+    const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };
 #endif
