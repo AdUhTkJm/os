@@ -9,7 +9,7 @@ namespace os {
 static_storage<console_inode> console;
 static_storage<class devfs> devfs;
 
-size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
+ssize_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
   bool block = !(flags & O_NONBLOCK);
   (void) offset;
   char *p = (char *) buf;
@@ -39,7 +39,7 @@ size_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
   return len;
 }
 
-size_t console_inode::write(size_t offset, const void *buf, size_t len, int) {
+ssize_t console_inode::write(size_t offset, const void *buf, size_t len, int) {
   (void) offset;
   char *p = (char *) buf;
   for (unsigned i = 0; i < len; i++)
@@ -70,17 +70,16 @@ void console_inode::finish_read_wait(wait_entry &entry) {
   wait.finish(entry);
 }
 
-block_inode::cached_sector &block_inode::load_sector(unsigned sector, bool force_reload) {
+expected<block_inode::cached_sector*> block_inode::load_sector(unsigned sector, bool force_reload) {
   auto &c = cache[sector];
   if (c.valid && !force_reload)
-    return c;
+    return &c;
   
-  if (auto ret = dev->read(sector, c.data); ret != 0) {
-    printk("read return: %d\n", ret);
-    panic("block device: read failed");
-  }
+  if (auto ret = dev->read(sector, c.data); ret != 0)
+    return ret < 0 ? ret : -EIO;
+
   c.valid = true;
-  return c;
+  return &c;
 }
 
 void block_inode::flush_sector(unsigned sector) {
@@ -91,7 +90,13 @@ void block_inode::flush_sector(unsigned sector) {
   c.dirty = false;
 }
 
-size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
+#define LOAD_SECTOR(c, sector, direct) \
+  auto cp = load_sector(sector, direct); \
+  if (!cp) \
+    return cp; \
+  auto &c = **cp;
+
+ssize_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
   bool direct = flags & O_DIRECT;
   if (len == 0)
     return 0;
@@ -102,7 +107,7 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
   // Partial first sector.
   if (soff > 0) {
-    auto &c = load_sector(sector, direct);
+    LOAD_SECTOR(c, sector, direct);
     size_t sz = min(len, 512 - soff);
     memcpy(dst, c.data + soff, sz);
 
@@ -113,7 +118,7 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
   // Full sectors.
   while (len >= 512) {
-    auto &c = load_sector(sector, direct);
+    LOAD_SECTOR(c, sector, direct);
     memcpy(dst, c.data, 512);
 
     dst += 512;
@@ -123,7 +128,7 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
   // Last partial sector.
   if (len > 0) {
-    auto &c = load_sector(sector, direct);
+    LOAD_SECTOR(c, sector, direct);
     memcpy(dst, c.data, len);
     dst += len;
   }
@@ -131,7 +136,7 @@ size_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
   return dst - (char *) buf;
 }
 
-size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+ssize_t block_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   bool direct = flags & O_DIRECT;
   bool sync = flags & O_SYNC;
   if (len == 0)
@@ -144,7 +149,7 @@ size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags)
 
   // Partial first sector.
   if (soff > 0) {
-    auto &c = load_sector(sector, direct);
+    LOAD_SECTOR(c, sector, direct);
     size_t sz = min(len, 512 - soff);
     memcpy(c.data + soff, src, sz);
     c.dirty = true;
@@ -157,7 +162,7 @@ size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags)
 
   // Whole sectors.
   while (len >= 512) {
-    auto &c = cache[sector];
+    LOAD_SECTOR(c, sector, direct);
     memcpy(c.data, src, 512);
     c.valid = true;
     c.dirty = true;
@@ -170,7 +175,7 @@ size_t block_inode::write(size_t offset, const void *buf, size_t len, int flags)
 
   // Last partial sector.
   if (len > 0) {
-    auto &c = load_sector(sector, direct);
+    LOAD_SECTOR(c, sector, direct);
     memcpy(c.data, src, len);
     c.dirty = true;
 
@@ -195,7 +200,7 @@ tty_inode::tty_inode(console_inode *console): inode_impl(devfs.get(), 0, 0, 0666
 // Note we don't need to read the entire amount of `len`.
 // We only need to guarantee we don't read more than `len`;
 // for terminals, we should return whenever a newline occurs.
-size_t tty_inode::read(size_t, void *buf, size_t len, int) {
+ssize_t tty_inode::read(size_t, void *buf, size_t len, int) {
   // TODO: noblock?
   if (line.size() == 0) {
     line = tty.readline();
@@ -210,7 +215,7 @@ size_t tty_inode::read(size_t, void *buf, size_t len, int) {
   return l;
 }
 
-size_t tty_inode::write(size_t, const void *buf, size_t len, int) {
+ssize_t tty_inode::write(size_t, const void *buf, size_t len, int) {
   tty.write((const char*) buf, len);
   return len;
 }

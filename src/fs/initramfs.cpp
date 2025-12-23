@@ -25,7 +25,7 @@ namespace os {
 
 class initramfs *initramfs;
 
-size_t initramfs_inode::read(size_t offset, void *buf, size_t len, int) {
+ssize_t initramfs_inode::read(size_t offset, void *buf, size_t len, int) {
   ssize_t l = min(long(sz) - long(offset), long(len));
   if (l <= 0)
     return 0;
@@ -34,7 +34,7 @@ size_t initramfs_inode::read(size_t offset, void *buf, size_t len, int) {
 }
 
 // This is read-only.
-size_t initramfs_inode::write(size_t, const void *, size_t, int) {
+ssize_t initramfs_inode::write(size_t, const void *, size_t, int) {
   return 0;
 }
 

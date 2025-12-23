@@ -331,7 +331,7 @@ void udp_socket_inode::receive(int error) {
   readwait.wake_all();
 }
 
-size_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
+ssize_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
   bool block = !(flags & O_NONBLOCK);
 
   wait_entry entry;
@@ -368,7 +368,7 @@ size_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
   }
 }
 
-size_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
+ssize_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
   // Allocate a port when there's none.
   if (!srcport) {
     auto port = htons(allocate());
@@ -657,9 +657,6 @@ request:
   msg += ip::format((*ip::dns)[0]);
   msg += "\n";
   file->write(msg.c_str(), msg.size());
-  char ff[30] {};
-  file->read(ff, 29);
-  printk("dhcp: %s\n", ff);
   pcb->close_file(fd);
   
   tcb->sleep(lease_time * 500'000'000ul /*ns*/);

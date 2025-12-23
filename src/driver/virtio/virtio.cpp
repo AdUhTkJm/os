@@ -23,9 +23,6 @@ static_storage<os::hashmap<int, block_device*>> blk_intr;
 static_storage<os::hashmap<int, net_device*>> net_intr;
 static_storage<os::hashmap<int, net_device*>> net_devs;
 
-// Maps `head` to the request's wait entry.
-wait_entry *blk_read_req[vq::size];
-
 [[gnu::no_instrument_function]] void block_device_handler(int irq) {
   if (!blk_intr->count(irq))
     return;
@@ -43,9 +40,13 @@ wait_entry *blk_read_req[vq::size];
   auto queue = (vq::queue_legacy *) dev->queue;
   for (unsigned i = dev->rxlast; i < queue->used.idx; i++) {
     const auto &used = queue->used.ring[i % vq::size];
-    assert(blk_read_req[used.id]);
-    dev->wait.wake(*blk_read_req[used.id], /*can_preempt=*/ false);
-    blk_read_req[used.id] = nullptr;
+    auto id = used.id;
+    assert(id < vq::size && dev->readreq[id]);
+
+    dev->wait.wake(*dev->readreq[id], /*can_preempt=*/ false);
+    dev->readreq[id] = nullptr;
+
+    dev->free_chain(id);
   }
   dev->rxlast = queue->used.idx;
 
@@ -187,29 +188,59 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
     // In legacy we shouldn't set up QueueReady.
   }
 
+  // Initialize the free list structure.
+  count = vq::size;
+  head = 0;
+  for (int i = 0; i < vq::size; i++)
+    free[i] = i;
+  memset(readreq, 0, sizeof(readreq));
+
   // Finish the setup.
   status |= device_status::DRIVER_OK;
   mmwr(base + STATUS, status);
-}
-
-vq::desc &block_device::next_descriptor() {
-  // The non-legacy part is NYI.
-  // TODO: Test whether queue is full?
-  auto queue = (vq::queue_legacy*) this->queue;
-  auto &desc = queue->desc[descid];
-  descid = (descid + 1) % vq::size;
-  return desc;
-}
-
-uint16_t block_device::indexof(const vq::desc &desc) {
-  auto queue = (vq::queue_legacy*) this->queue;
-  return &desc - queue->desc;
 }
 
 unsigned net_device::next_tx_descriptor() {
   auto desc = txid;
   txid = (txid + 1) % vq::size;
   return desc;
+}
+
+bool block_device::alloc_chain(int n, descriptor *desc) {
+  if (count < n)
+    return false;
+
+  for (int i = 0; i < n; i++) {
+    desc[i] = free[head++];
+    count--;
+    if (i > 0)
+      next[desc[i - 1]] = desc[i];
+  }
+  // VirtIO driver does not allow looping descriptors.
+  // So we create a self-looping as a special guard (in software) to note the end of the chain.
+  next[desc[n - 1]] = desc[n - 1];
+  return true;
+}
+
+void block_device::free_chain(descriptor desc) {
+  int i = 0;
+  for (; i < vq::size; i++) {
+    descriptor n = next[desc];
+    bool last = desc == next[desc];
+    next[desc] = 0;
+    free[--head] = desc;
+    count++;
+
+    // Detect the loop we just created.
+    if (last)
+      break;
+    desc = n;
+
+    assert(head + count == vq::size);
+    assert(desc < vq::size);
+  }
+  [[unlikely]] if (i == vq::size)
+    panic("block_device: free_chain: chain corrupted");
 }
 
 // The lba is the logical block address.
@@ -219,52 +250,56 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   // But it doesn't matter for `status` - one byte always works.
   pa_t req = pframe();
   pa_t buf = pframe();
+  pa_t status = pframe();
   *(request_legacy*) as_va(req) = {
     .type = 0, /* Read */
     .reserved = 0,
     .sector = lba,
   };
   
-  unsigned char status = 0xff;
+  mmwr<unsigned char>(status, 0xff);
 
-  vq::desc &d1 = next_descriptor();
-  vq::desc &d2 = next_descriptor();
-  vq::desc &d3 = next_descriptor();
-  d1.addr = req;
-  d1.len = sizeof(request_legacy);
-  d1.flags = vq::descflags::HAS_NEXT;
-  d1.next = indexof(d2);
+  descriptor d[3];
+  if (!alloc_chain(3, d))
+    panic("block device: read: no descriptors available");
+  auto queue = (vq::queue_legacy *) this->queue;
+  vq::desc &d0 = queue->desc[d[0]];
+  vq::desc &d1 = queue->desc[d[1]];
+  vq::desc &d2 = queue->desc[d[2]];
 
-  d2.addr = buf;
-  d2.len = 512;
-  d2.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
-  d2.next = indexof(d3);
+  d0.addr = req;
+  d0.len = sizeof(request_legacy);
+  d0.flags = vq::descflags::HAS_NEXT;
+  d0.next = d[1];
 
-  d3.addr = to_pa(&status);
-  d3.len = 1;
-  d3.flags = vq::descflags::WRITEONLY;
-  d3.next = 0;
+  d1.addr = buf;
+  d1.len = 512;
+  d1.flags = vq::descflags::HAS_NEXT | vq::descflags::WRITEONLY;
+  d1.next = d[2];
+
+  d2.addr = status;
+  d2.len = 1;
+  d2.flags = vq::descflags::WRITEONLY;
+  d2.next = 0;
 
   // Put the head of chain into available ring for the device to read.
-  auto queue = (vq::queue_legacy*) this->queue;
-  uint16_t head = indexof(d1);
+  uint16_t head = d[0];
   queue->avail.ring[queue->avail.idx % vq::size] = head;
   queue->avail.idx++;
-
-  // Tell device that a new request has come.
-  FENCE;
 
   wait_entry entry;
 
   lock.acquire();
-  if (blk_read_req[head])
+  if (readreq[head])
     panic("block_device: queue full");
 
-  blk_read_req[head] = &entry;
+  readreq[head] = &entry;
   // No spurious wake up this time; we only wake the exact one.
   wait.prepare(entry);
   lock.release();
 
+  // Tell device that a new request has come.
+  WFENCE;
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   if (suspend() != 0)
     return -EINTR;
@@ -274,13 +309,15 @@ int block_device::read_legacy(uint64_t lba, void *buffer) {
   lock.release();
 
   RFENCE;
-  assert(status != 0xff);
-  if (status == 0)
+  auto stat = mmrd<unsigned char>(status);
+  assert(stat != 0xff);
+  if (stat == 0)
     memcpy(buffer, (void *) as_va(buf), 512);
 
   pfree(req);
   pfree(buf);
-  return status;
+  pfree(status);
+  return stat;
 }
 
 int block_device::write_legacy(uint64_t lba, const void *buffer) {
@@ -296,28 +333,31 @@ int block_device::write_legacy(uint64_t lba, const void *buffer) {
   int status = 0xff;
   memcpy((void *) as_va(buf), buffer, 512);
 
-  vq::desc &d1 = next_descriptor();
-  vq::desc &d2 = next_descriptor();
-  vq::desc &d3 = next_descriptor();
-  d1.addr = req;
-  d1.len = sizeof(request_legacy);
+  descriptor d[3];
+  if (!alloc_chain(3, d))
+    panic("block device: write: no descriptors available");
+  auto queue = (vq::queue_legacy *) this->queue;
+  vq::desc &d0 = queue->desc[d[0]];
+  vq::desc &d1 = queue->desc[d[1]];
+  vq::desc &d2 = queue->desc[d[2]];
+
+  d0.addr = req;
+  d0.len = sizeof(request_legacy);
+  d0.flags = vq::descflags::HAS_NEXT;
+  d0.next = d[1];
+
+  d1.addr = buf;
+  d1.len = 512;
   d1.flags = vq::descflags::HAS_NEXT;
-  d1.next = indexof(d2);
+  d1.next = d[2];
 
-  d2.addr = buf;
-  d2.len = 512;
-  d2.flags = vq::descflags::HAS_NEXT;
-  d2.next = indexof(d3);
-
-  d3.addr = to_pa(&status);
-  d3.len = 1;
-  d3.flags = vq::descflags::WRITEONLY;
-  d3.next = 0;
+  d2.addr = to_pa(&status);
+  d2.len = 1;
+  d2.flags = vq::descflags::WRITEONLY;
+  d2.next = 0;
 
   // Put the head of chain into available ring for the device to read.
-  // TODO: check queue full
-  auto queue = (vq::queue_legacy*) this->queue;
-  queue->avail.ring[queue->avail.idx % vq::size] = indexof(d1);
+  queue->avail.ring[queue->avail.idx % vq::size] = d[0];
   queue->avail.idx++;
 
   // Tell device that a new request has come.

@@ -96,6 +96,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   bool ctx_valid = false; // Whether the syscall/trap context is valid.
   bool kthread = false;   // Whether this is a kernel thread.
   bool kmode = false;     // Whether this executed in kernel mode.
+  unsigned char sclock;   // The clock that the thread sleeps on.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
   int sigresume = 0;      // The signal that causes the thread to wake up from sigwait().

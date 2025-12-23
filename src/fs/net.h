@@ -235,8 +235,8 @@ public:
 
   udp_socket_inode(net_device *dev, ip::address src, udp::port port);
   ~udp_socket_inode();
-  size_t read(size_t, void *buf, size_t len, int flags) override;
-  size_t write(size_t, const void*, size_t, int flags) override;
+  ssize_t read(size_t, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
   void wake_read() override;
   void wake_write() override;

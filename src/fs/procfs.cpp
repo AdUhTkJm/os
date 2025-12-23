@@ -3,7 +3,7 @@
 
 namespace os::proc {
 
-size_t filesystems::read(size_t offset, void *buf, size_t len, int) {
+ssize_t filesystems::read(size_t offset, void *buf, size_t len, int) {
   auto content = string("\n").join(vfs::recorded_fs()) + "\n";
   if (offset >= content.size())
     return 0;

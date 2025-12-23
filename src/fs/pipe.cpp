@@ -9,7 +9,7 @@ class pipefs pipefs;
 
 pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0666, FIFO), maxbuf(pipefs::maxbuf) {}
 
-size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
+ssize_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
   // Offset is not supported on pipes.
   (void) offset;
   lock.acquire();
@@ -59,7 +59,7 @@ size_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
   return l;
 }
 
-size_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+ssize_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   (void) offset;
   
   lock.acquire();

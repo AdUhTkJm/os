@@ -32,8 +32,8 @@ public:
   META_DEFAULT_IMPL;
 
   console_inode(): inode_impl(devfs.get(), 0, 0, 0666, CharDevice) {}
-  size_t read(size_t offset, void *buf, size_t len, int flags) override;
-  size_t write(size_t, const void*, size_t, int flags) override;
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
 
   void wake_read() override;
@@ -74,15 +74,15 @@ class block_inode : public inode_impl<block_inode> {
   // TODO: change into LRU
   os::hashmap<unsigned, cached_sector> cache;
 
-  cached_sector &load_sector(unsigned sector, bool force_reload = false);
+  expected<cached_sector*> load_sector(unsigned sector, bool force_reload = false);
   void flush_sector(unsigned sector);
 public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
 
   block_inode(block_device *dev): inode_impl(devfs.get(), 0, 0, 0666, BlockDevice), dev(dev) {}
-  size_t read(size_t offset, void *buf, size_t len, int flags) override;
-  size_t write(size_t, const void*, size_t, int flags) override;
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t, const void*, size_t, int flags) override;
   // poll() is default, as a regular file.
 
   // Special functionality.
@@ -98,8 +98,8 @@ public:
   META_DEFAULT_IMPL;
 
   urandom_inode();
-  size_t read(size_t offset, void *buf, size_t len, int flags) override;
-  size_t write(size_t, const void*, size_t, int flags) override;
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t, const void*, size_t, int flags) override;
 
   void add_entropy(unsigned long entropy);
 };
@@ -114,8 +114,8 @@ public:
   META_DEFAULT_IMPL;
 
   tty_inode(console_inode *console);
-  size_t read(size_t offset, void *buf, size_t len, int flags) override;
-  size_t write(size_t, const void*, size_t, int flags) override;
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
   
   void wake_read() override;
@@ -130,8 +130,8 @@ public:
   META_DEFAULT_IMPL;
 
   null_inode();
-  size_t read(size_t, void *, size_t, int) override { return 0; }
-  size_t write(size_t, const void*, size_t len, int) override { return len; }
+  ssize_t read(size_t, void *, size_t, int) override { return 0; }
+  ssize_t write(size_t, const void*, size_t len, int) override { return len; }
 };
 
 extern static_storage<console_inode> console;

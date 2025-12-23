@@ -28,6 +28,7 @@ int sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigne
 int sendmsg(int fd, void *msg, int flags);
 int sendmsg(int fd, const msghdr &msg, int flags);
 int prlimit64(int pid, int resource, void *newrlim, void *oldrlim);
+int nanosleep(int clock, int flags, void *rqtp, void *rmtp);
 
 int fromtype(inode::filetype ty);
 

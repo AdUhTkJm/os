@@ -653,4 +653,34 @@ int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
   }
 }
 
+int nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
+  auto tcb = active();
+  if (flags == 1) {
+    printk("nanosleep: no abstime yet\n");
+    return -EINVAL;
+  }
+
+  tcb->sclock = clock;
+  auto m_rq = copy_from_user(rqtp, sizeof(timespec));
+  if (!m_rq)
+    return m_rq;
+
+  auto rq = *(timespec *) m_rq->get();
+  if (rq.tv_nsec >= (long) 1_s || rq.tv_sec < 0)
+    return -EINVAL;
+
+  size_t nano = rq.tv_sec * 1'000'000'000 + rq.tv_nsec;
+  auto ret = tcb->sleep(nano);
+  if (rmtp) {
+    auto rem = tcb->timeout;
+    timespec tm {
+      .tv_sec = (long) (rem / 1_s),
+      .tv_nsec = (long) (rem % 1_s),
+    };
+    copy_to_user(rmtp, &tm, sizeof(timespec));
+    return -1;
+  }
+  return 0;
+}
+
 }

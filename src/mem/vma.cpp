@@ -60,10 +60,9 @@ void map_single(void *va, pte_t *root) {
   } _takeback(finisher);
 
   // Copy the contents if it exists.
-  if (!vma.backup) {
+  if (!vma.backup)
     // It is required that we zero this if we're using an anonymous mmap.
     return;
-  }
   
   // `begin` and this address are in the same page.
   // We read from beginning.
@@ -79,7 +78,7 @@ void map_single(void *va, pte_t *root) {
   va_t off = (va_t) va_page - vma.begin;
 
   // Note that these are unsigned, so a direct subtraction and then max(..., 0) won't work.
-  size_t read = off < vma.maxread ? min((size_t) PAGE_SIZE, vma.maxread - off) : 0;
+  ssize_t read = off < vma.maxread ? min((size_t) PAGE_SIZE, vma.maxread - off) : 0;
 
   if (read > 0) {
     SeekGuard guard(vma.backup, vma.offset + off);

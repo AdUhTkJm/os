@@ -164,6 +164,20 @@ class block_device : public os::block_device {
   spinlock lock;
   wait_queue wait;
 
+  // Track read requests.
+  // Maps `head` to the request's wait entry.
+  wait_entry *readreq[vq::size];
+
+  // Track free descriptors.
+  using descriptor = uint16_t;
+  descriptor free[vq::size];
+  unsigned short head;
+  unsigned short count;
+  descriptor next[vq::size];
+
+  bool alloc_chain(int n, descriptor *desc);
+  void free_chain(descriptor desc);
+
   struct request {
     uint32_t type;
     uint32_t reserved;
@@ -178,9 +192,6 @@ class block_device : public os::block_device {
     uint64_t sector;
   };
   static_assert(sizeof(request_legacy) == 16);
-
-  vq::desc &next_descriptor();
-  uint16_t indexof(const vq::desc &);
 
   int read_legacy(uint64_t lba, void *buffer);
   int write_legacy(uint64_t lba, const void *buffer);

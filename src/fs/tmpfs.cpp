@@ -8,7 +8,7 @@ void tmpfs_inode::load(void *dat, size_t sz) {
   memcpy(data.data(), dat, sz);
 }
 
-size_t tmpfs_inode::read(size_t offset, void *buf, size_t len, int) {
+ssize_t tmpfs_inode::read(size_t offset, void *buf, size_t len, int) {
   ssize_t l = min(long(data.size()) - long(offset), long(len));
   if (l <= 0)
     return 0;
@@ -17,7 +17,7 @@ size_t tmpfs_inode::read(size_t offset, void *buf, size_t len, int) {
   return l;
 }
 
-size_t tmpfs_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+ssize_t tmpfs_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   bool append = flags & O_APPEND;
   offset = append ? data.size() : offset;
   if (data.size() < offset + len)

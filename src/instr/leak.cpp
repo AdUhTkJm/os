@@ -72,11 +72,16 @@ extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
     stack.frames[stack.top++] = this_fn;
 }
 
+#ifdef DEBUG_MEMORY_EXPENSIVE
 void check_slab_freelist();
+#endif
+
 extern "C" void __cyg_profile_func_exit(void *, void *) {
   if (stack.top > 0)
     stack.top--;
+#ifdef DEBUG_MEMORY_EXPENSIVE
   check_slab_freelist();
+#endif
 }
 
 namespace os::stack {

@@ -278,7 +278,7 @@ void slab_free(void *p, int i) {
 
 }
 
-#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
+#if defined(DEBUG_MEMORY_EXPENSIVE) && defined(FUNC_INSTRUMENT)
 [[gnu::no_instrument_function]] void check_slab_freelist() {
   for (unsigned i = 0; i < size_count; i++) {
     for (auto slb = slabs[i].head; slb; slb = slb->next) {

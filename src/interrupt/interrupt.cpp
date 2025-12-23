@@ -419,6 +419,7 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
   bool relative = (*path)[0] != '/';
+  printk("fstatat: %s\n", path->get());
   int fd = relative
     ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
     : pcb->open_file(path->get(), O_PATH | openflags);
@@ -854,7 +855,14 @@ HANDLE(settimeofday, tv, tz) {
     unsigned long tick = rdtime() * (unsigned long) timer_tick;
     if (time < tick)
       return -EINVAL;
-    realtime = time - tick;
+
+    auto nreal = time - tick;
+    // Advance timeout for all threads that wait on a real time clock.
+    for (auto entry : napping.q) {
+      if (entry->tcb->sclock == CLOCK_REALTIME)
+        entry->tcb->timeout += (realtime - nreal + tick_length - 1) / tick_length;
+    }
+    realtime = nreal;
   }
   return 0;
 }
@@ -994,16 +1002,11 @@ HANDLE(rt_sigtimedwait, sig, info, timeout) {
 HANDLE(kill, pid, sig) {
   if (pid == 0)
     pid = pcb->pid;
-  printk("kill: pid %d, sig %d\npids: ", pid, sig);
-  for (auto [_, x] : *pidmap)
-    printk("%d ", x->pid);
-  printk("\n");
   
   auto fproc = pidmap->find(pid);
   if (fproc == pidmap->end())
     return -ESRCH;
   auto [_, proc] = *fproc;
-  printk("kill: process found\n");
   
   if (proc->uid != pcb->uid && proc->uid != pcb->euid && pcb->uid != 0)
     return -EPERM;
@@ -1119,25 +1122,11 @@ retry:
 }
 
 HANDLE(nanosleep, rqtp, rmtp) {
-  auto m_rq = copy_from_user((void *) rqtp, sizeof(timespec));
-  if (!m_rq)
-    return m_rq;
+  return detail::nanosleep(CLOCK_MONOTONIC, 0, (void *) rqtp, (void *) rmtp);
+}
 
-  auto rq = *(timespec *) m_rq->get();
-  if (rq.tv_nsec >= (long) 1_s || rq.tv_sec < 0)
-    return -EINVAL;
-
-  size_t nano = rq.tv_sec * 1'000'000'000 + rq.tv_nsec;
-  size_t rem = tcb->sleep(nano);
-  if (rmtp) {
-    timespec tm {
-      .tv_sec = (long) (rem / 1_s),
-      .tv_nsec = (long) (rem % 1_s),
-    };
-    copy_to_user((void *) rmtp, &tm, sizeof(timespec));
-    return -1;
-  }
-  return 0;
+HANDLE(clock_nanosleep, clock, flags, rqtp, rmtp) {
+  return detail::nanosleep(clock, flags, (void *) rqtp, (void *) rmtp);
 }
 
 HANDLE(rt_sigaction, sig, act, oldact) {

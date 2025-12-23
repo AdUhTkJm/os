@@ -114,8 +114,8 @@ public:
   static inode::filetype totype(ftypeflags ty);
   static int to_dirent_type(inode::filetype ty);
 
-  size_t read(size_t offset, void *buf, size_t len, int flags) override;
-  size_t write(size_t offset, const void *buf, size_t len, int flags) override;
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
   int create(const string &name, filetype ty, int mode) override;
   int unlink(const string &name) override;
   inode *lookup(const string &name) override;

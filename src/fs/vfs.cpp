@@ -18,7 +18,7 @@ inode::~inode() {
     delete cache;
 }
 
-size_t file::read(void *buf, size_t len) {
+ssize_t file::read(void *buf, size_t len) {
   [[likely]] if (!node()->cache) {
     auto ret = node()->read(offset, buf, len, flags);
     if ((ssize_t) ret < 0)
@@ -29,8 +29,8 @@ size_t file::read(void *buf, size_t len) {
   }
 
   // We have a page cache and have to read from it.
-  size_t read = 0;
-  while (read < len && offset < len) {
+  ssize_t read = 0;
+  while (read < long(len) && offset < len) {
     size_t poff = offset % PAGE_SIZE;
     page_cache::page &page = (*node()->cache)[offset / PAGE_SIZE];
 
@@ -43,7 +43,7 @@ size_t file::read(void *buf, size_t len) {
   return read;
 }
 
-size_t file::write(const void *buf, size_t len) {
+ssize_t file::write(const void *buf, size_t len) {
   if (flags & O_APPEND)
     offset = node()->size();
 
@@ -74,7 +74,7 @@ size_t file::write(const void *buf, size_t len) {
   return written;
 }
 
-size_t file::seek(long pos, whence whence) {
+ssize_t file::seek(long pos, whence whence) {
   size_t before = offset;
   switch (whence) {
   case begin:

@@ -563,20 +563,22 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   return 0;
 }
 
-size_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
+ssize_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
   auto fs = static_cast<ext*>(this->fs);
   this->flags = flags;
 
   size_t size = fs->blksz;
   size_t pos = offset;
   size_t end = min((size_t) meta.sz, offset + len);
-  size_t read = 0;
+  ssize_t read = 0;
+
+  meta.atime = now() / 1_s;
 
   while (pos < end) {
     size_t b = locate(pos);
 
     if (b == -1ul)
-      return read;
+      return read ? read : -ENOSPC;
     size_t chunk = min(size - pos % size, end - pos);
 
     char* p = (char*) buf + read;
@@ -584,19 +586,17 @@ size_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
     // Sparse hole.
     if (b == 0)
       memset(p, 0, chunk);
-    else
-      fs->device->read(fs->offset(b) + pos % size, p, chunk, flags);
+    else if (auto ret = fs->device->read(fs->offset(b) + pos % size, p, chunk, flags); ret < 0)
+      return read ? read : ret;
 
     pos += chunk;
     read += chunk;
   }
 
-  size_t time = now() / 1_s;
-  meta.atime = time;
   return read;
 }
 
-size_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) {
+ssize_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) {
   if (len == 0)
     return 0;
   this->flags = flags;

@@ -26,6 +26,7 @@ parser.add_argument("--log-syscall", action="store_true")
 parser.add_argument("--detect-deadlock", action="store_true")
 parser.add_argument("--no-instrument", action="store_true")
 parser.add_argument("--no-debug-memory", action="store_true")
+parser.add_argument("--debug-memory-expensive", action="store_true")
 parser.add_argument("--no-debug", action="store_true")
 parser.add_argument("--gdb", action="store_true")
 parser.add_argument("--smp", action="store_true")
@@ -70,6 +71,9 @@ if not args.no_instrument:
 
 if not args.no_debug_memory:
   flags += ["-DDEBUG_MEMORY"]
+
+if args.debug_memory_expensive:
+  flags += ["-DDEBUG_MEMORY_EXPENSIVE"]
 
 if args.log_refcnt:
   flags += ["-DLOG_REFCNT"]

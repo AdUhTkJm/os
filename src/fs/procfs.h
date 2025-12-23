@@ -22,8 +22,8 @@ public:
   META_DEFAULT_IMPL;
 
   filesystems(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
-  size_t read(size_t, void *, size_t, int) override;
-  size_t write(size_t, const void *, size_t, int) override { return -EACCES; }
+  ssize_t read(size_t, void *, size_t, int) override;
+  ssize_t write(size_t, const void *, size_t, int) override { return -EACCES; }
 };
 
 class process : public inode_impl<process> {

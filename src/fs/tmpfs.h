@@ -17,8 +17,8 @@ public:
   
   tmpfs_inode(class fs *fs, int uid, int gid, int mode, filetype ty): inode_impl(fs, uid, gid, mode, ty) { }
 
-  size_t read(size_t offset, void* buf, size_t len, int flags) override;
-  size_t write(size_t offset, const void* buf, size_t len, int flags) override;
+  ssize_t read(size_t offset, void* buf, size_t len, int flags) override;
+  ssize_t write(size_t offset, const void* buf, size_t len, int flags) override;
 
   int create(const string &name, filetype ty, int mode) override;
   int unlink(const string &name) override;

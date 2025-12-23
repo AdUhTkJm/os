@@ -41,8 +41,8 @@ class initramfs_inode : public inode_impl<initramfs_inode> {
 public:
   using inode_impl::inode_impl;
 
-  size_t read(size_t offset, void *buf, size_t len, int flags) override;
-  size_t write(size_t offset, const void *buf, size_t len, int flags) override;
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+  ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
   int create(const string &name, filetype ty, int) override;
   int unlink(const string &) override { return -EROFS; }
   inode *lookup(const string &name) override;
