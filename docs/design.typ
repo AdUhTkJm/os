@@ -3,17 +3,54 @@
 
 #set text(font: ("Libertinus Serif", "Noto Serif CJK SC"), lang: "zh", region: "cn", features: (calt: 0))
 
-#let bib = [
-  #set text(lang: "en")
-  #bibliography("bibtex.bib")
-];
+#let bib = (
+  
+);
+
+#let bibliography = {
+
+let bib = (
+  (
+    label: "defect2017boot",
+    author: "The Defect",
+    title: "Boot Process",
+    from: "Slay The Spire",
+    year: 2017,
+    link: "https://sts.huijiwiki.com/wiki/%E5%90%AF%E5%8A%A8%E6%B5%81%E7%A8%8B",
+  ),
+  (
+    label: "kinich2025price",
+    author: "Kinich",
+    title: "Character Voice: Something to Share",
+    from: "Genshin Impact",
+    year: 2025,
+    link: "\"My people are strong believers in absolute freedom. They think the bond ... should be built on mutual trust and support. Guess I'm the odd one out.\"",
+  )
+)
+
+for i in range(array.len(bib)) {
+  let entry = bib.at(i);
+  
+  [
+    // A special value, examined afterwards.
+    // We use a hack here: the length of this string will be the index to look at in the array.
+    #heading(depth: 5, numbering: "1" + "." * i, outlined: false)[
+      \[#(i+1)\] #entry.author, #strong(entry.title). #emph(entry.from), #entry.year.
+      #if ("link" in entry) {
+        entry.link; [.]
+      }
+    ]; #label(entry.label);
+  ]
+}
+
+};
 
 #show: ilm.with(
   title: [操作系统设计文档],
   author: "黄越",
   date: datetime.today(),
   date-format: "[year].[month].[day]",
-  bibliography: bib,
+  bibliography: none,
   raw-text: (
     custom-font: ("Fira Code")
   ),
@@ -45,10 +82,16 @@
   } else if (it.depth == 2) {
     set text(18pt)
     pad(it, bottom: -12pt)
-  } else {
+  } else if (it.depth == 3) {
     set text(13pt)
     // Remove numbering.
     pad(it.body, bottom: -12pt)
+  } else if (it.depth == 5) {
+    // A special "heading" for reference.
+    set text(12pt, weight: "regular");
+    pad(par(it.body), bottom: -20pt); "\n";
+  } else {
+    panic("heading: unknown depth")
   }
 }
 
@@ -57,7 +100,9 @@
 
 #show heading: it => {
   it
-  fakepar
+  if (it.depth <= 3) {
+    fakepar
+  }
 }
 
 #show raw.where(block: true): it => {
@@ -85,8 +130,12 @@
   if (x.depth == 1) {
     [第 #text 章]
   }
-  if (x.depth >= 2) {
+  if (x.depth >= 2 and x.depth != 5) {
     [#text 节]
+  }
+  // The special reference to bibliography.
+  if (x.depth == 5) {
+    [\[#(it.element.numbering.len())\]];
   }
 }
 
@@ -99,7 +148,7 @@
 
 - *学习路径*。在项目开始前，我并没有开发 OS 的经验。对于初学者而言，现有的 OS 内部实在过于复杂。为了保证我能够真正理解内核的每一个行为，我必须亲手实现每一个模块。
 
-由于 C++ 在没有 std 的情况下缺少可用的库，而且我放弃了基于现成操作系统开发，我必须从最底层开始构建一切：
+由于 C++ 在没有 std 的情况下缺少可用的库，我必须从最底层开始构建一切：
 
 + *基础库* (`utils/`, @infra)。我实现了一套小型 STL，包括了内核所需的各种容器。它还包含了一部分模板元编程的工具。
 
@@ -117,7 +166,13 @@
 
 + *硬件驱动* (`driver/`, `fdt/`)。它包含各类 VirtIO 设备的驱动以及 FDT 的读取。
 
-文档接下来的部分将详细解释各个模块的具体实现细节。如果没有特殊说明，这些细节默认是 RISC-V 的。此外，我在参考文献中放了一些彩蛋。
+从工作量的角度来看，#include("data/git_summary.tex");。
+
+文档接下来的部分将详细解释各个模块的具体实现细节。如果没有特殊说明，这些细节默认是 RISC-V 的。
+
+这篇文档也算是我的 OS 学习记录，所以并未直接使用 AI 编写（当然，让 Gemini 给了一些参考意见）。相信我，AI 的遣词造句水平是我望尘莫及的。况且你不能指望 AI 真的能写 Typst 代码：我试过，GPT 一直在胡言乱语。
+
+此外，参考文献中被我放了一些#h(-0.3em)#[#set text(stroke: stroke(paint: luma(85%), thickness: 0.5pt)); #strike(stroke: luma(80%))[其实全部都是]]彩蛋。
 
 = 启动流程
 
@@ -153,11 +208,33 @@ v(-height)
 )
 }
 
-#indent 这里显示的地址是*虚拟地址*。
+#indent 这里显示的地址是*虚拟地址*。实际加载的地址 (_load memory address_, LMA) 是减去 `0xffff'ffc0'0000‘0000` 偏移量后的值：这是为了让 OS 占据高位地址。这里有 38 位可用的地址，而 39-64 位需要全部为 1，这是 Sv39 页表的规定。
 
-== 启动流程 #footnote[@defect2017boot 中提到的启动流程在启动机器人时可能产生故障。] <boot>
+== 启动流程 <boot>
 
+最初启动的时候，我还没有设置栈，但需要立即启动虚拟内存。这就是 .text.low 段的作用：它可以在不使用栈的情况下，以 pt_root 作为页表的根，将前 16 GB 内存映射到高位地址。同时，它还会将 0x8000'0000 所在的 1GB 映射到它本身，以免下一条指令直接 page fault。
 
+这里的 a0, a1 是 OpenSBI 提供的 Hart ID 以及 FDT 的地址。我需要将它们先保存在内存中的确定位置，以便设置好栈之后再去阅读。
+
+在映射完成之后，我会跳到 .text.high 执行，并初始化栈。在这之后，C++ 的基本特性就可以使用了。
+
+接下来我会开启内存分配，使得 ```cpp operator new, delete```可以工作。同时，@memsafety 所提到的内存检查工具也开始工作，提供额外的格挡 @defect2017boot，方便后续启动。
+
+接下来，我会初始化这几个模块：
+
+- *FDT*。读取 MMIO 硬件的位置，以及可用物理内存的范围。可以管理较大内存的 bitmap allocator 在这时才被启动；前面的那个是个 free-list allocator，它管理的内存也是操作系统本身镜像的一部分，放在操作系统的栈的后面。
+
+- *硬件驱动*。包括 VirtIO 的硬盘与网卡驱动。
+
+- *文件系统*。首先是 initramfs，然后是 devfs 和 tmpfs。其他文件系统会在 `init` 进程中挂载。
+
+- *启动进程*。启动 `idle` (pid 0),`init` (pid 1) 以及一个 DHCP 进程。实际上，如果在构建脚本中启用 `--unit-test`，那么不会启动进程，而是执行一部分单元测试，然后直接退出。这里的单元测试目前只包括 B-tree 的插入、删除、查找和迭代器操作。
+
+如果没有指定 `--unit-test` 选项，这时，操作系统本体就启动完成了。
+
+接下来，`init` 会挂载 ext2，然后将刚刚挂上的 devfs 和 tmpfs 移动到 ext2 下，再 chroot。这样就没有人能访问 initramfs 了。（启动 `init` 时需要 /dev/console，所以必须先挂载 devfs 才行。）
+
+现在有了完整的 ext2 磁盘，就可以启动 shell 了。这需要先设置好 stdin/stdout/stderr，将它们重定向到 TTY。最后执行 execve，就启动完成了。
 
 = 基础设施 <infra>
 
@@ -198,6 +275,17 @@ class hashmap;
 ```
 
 这些容器内部的内存分配都被 `safe` 标记了，不计入@leak-detect 所提到的内存泄漏检测中。
+
+*B-tree* `os::btree`。它只支持偶数阶。我需要的其实是一个类似 `std::map` 的有序键值对容器。考虑到 `std::map` 使用的是红黑树，而这和 4 阶的 B-tree 是等价的，我选择直接实现一个 B-tree：它可以减少一点内存分配次数，而且缓存命中率更高一些。
+
+B-tree 唯一的缺点就是在修改元素的时候，会导致其他元素的迭代器失效。这通常可以通过重新查找下一个 key 来避免。
+
+我可以在每个用到它的地方指定合适的 `Order`，来优化访问效率：
+
+```cpp
+template<class K, class V, int Order> requires(Order % 2 == 0)
+class btree;
+```
 
 == 错误处理工具
 
@@ -336,6 +424,60 @@ struct wait_queue {
 
 == 线程与进程 <threads>
 
+为了支持 clone(2)，我需要区分线程和进程。记载进程信息的是 PCB (_process control block_)，而记载线程信息的是 TCB (_thread control block_)。为了避免混淆，我并没有给 TCP 网络协议的控制块单独取名——否则这个也会叫 TCB，而是将字段全部放在了 `tcp_socket_inode` 中（见 @tcp）。
+
+当 clone(2) 的 `SHARE_VM` 存在时，将会创建线程。它们有不同的 TCB，但共享同一个 PCB。当没有这个 flag 的时候，会复制整个 PCB。
+
+线程独有的信息主要有：
+
+- *栈*。`ksp`, `usp`记录内核与用户态的栈的位置。就算是内核进程，这两个栈依然是分开的。
+
+- *上下文*。进入睡眠时，记录当前 system call 的进度。
+
+- *状态*。`Sleeping`, `Ready` 等用于调度的信息。它们的切换在@wait-queue 中有所提及。
+
+此外，还有如信号、睡眠时长等各个 system call 专用的信息。
+
+剩下的几乎所有内容，包括页表、uid/gid、VFS、地址空间，都存储在 PCB 内。其中还有更多的和 system call 相关的琐碎内容。
+
+== 线程的一生
+
+=== 创造
+
+第一个用户态的线程（和进程）是直接在启动时创造的。之后的线程都是通过 clone 产生的。
+
+在 clone 时，我们几乎只需要复制所有东西就可以了，只有一个需要额外操作的地方：地址空间。为了避免复制所有已经分配的页，我采取了 copy-on-write: 复制页表，取消写权限，并增加一个 `PTE_COW` flag 即可。这时，还需要给物理页分配器中的引用计数加一，以防二次释放。
+
+在 page fault handler 中，如果遇到 store fault 的同时发现 `PTE_COW` 存在，那么就复制当前页，并让原有页的引用计数减一。
+
+这种机制实际上依赖 Sv39 给的软件可以自由使用的两个 bit。对于 Loongarch 而言，页表是纯软件的，所以其实无所谓；我直接重复使用了 RISC-V 的页表。
+
+=== 执行新程序
+
+对于 execve 而言，我们需要先读取 ELF（或是 shebang），更改地址空间的内容，再往栈上放 argc, argv, envp 和 auxv。
+
+实际上，glibc 需要的 auxv 似乎还挺多的。使用 `LD_SHOW_AUXV=1` 可以显示所有提供给程序的 auxv：在 host OS 上使用可以看到需要哪些，在 guest OS 上使用可以方便调试。
+
+有的程序需要 TLS (_thread local storage_)。考虑到用户态的栈对于每个进程也是独立的，我选择直接拿栈的最下面作为 TLS。
+
+=== 睡眠与醒来
+
+在睡眠时，我们需要记录“当前 system call 的进度”。换言之，当线程醒来时，它会认为“它刚从睡眠函数返回”。
+
+这说明我们只需要保存 callee-saved registers，同时保存睡眠函数的 `ra` 就可以了：这时 `ra` 恰好是返回后的下一条指令。
+
+在醒来时，我们加载这些寄存器，并跳转回 ra，就能继续执行了。
+
+按照这个原理来说，`context_save` 其实是不会返回的，但它“看起来”返回了。这意味着我们不能给它加上 `[[noreturn]]` 属性，否则编译器会做出错误的假设。
+
+=== 终止与死亡
+
+当 exit/exit_group 被调用时，线程就终止了。这时不能直接 ```cpp delete tcb```，而是先释放绝大部分资源，留着 wait4() 调用的时候再 ```cpp delete```。
+
+特别需要注意的是，不能直接释放内核态的栈 `ksp`：我们正在这个栈上。这个留给析构函数删除就好了。
+
+接下来，唤醒 wait4() 中的线程，然后给父进程发个 `SIGCHLD` 信号，最后把所有的子进程都交给 `init` (pid 1)，就可以了。
+
 = 文件系统 <fs>
 
 所谓 _virtual_ file system，正应该用 ```cpp virtual``` 函数实现。
@@ -379,7 +521,11 @@ public:
 
 除了上面提到的 metadata 和虚表之外，inode 还维护了引用计数和链接计数。对于硬盘上的文件系统，当引用计数归零的时候，就可以释放 inode；对于内存中的文件系统，释放 inode 就相当于删除，因此只有在引用计数和链接计数都为零时才可以释放。
 
+== 网络
 
+=== UDP <udp>
+
+=== TCP <tcp>
 
 = 调试工具 <instr>
 
@@ -433,9 +579,9 @@ Stack dump:
 kernel panicked: src/main/../mem/../utils/stl/list.h:66: assertion failed: !contains(node)
 ```
 
-== 内存安全
+== 内存安全 <memsafety>
 
-或许有人会问，在 Rust 盛行的今天，依赖这种简陋的 ASan 是否是一种倒退？我的回答是，我选择了 C++ 无限制的自由，也做好了为每一字节内存负责的准备。C++ 并不代表放弃内存安全，它是一个系统的性质，而不是一个语言的保证。
+C++ 提供了绝对的自由，但为了让运行稳定，在使用内存时依旧需要一些“契约” @kinich2025price。
 
 我通过染色、guard page、重载 ```cpp operator new```等方法来在运行期检测内存安全问题。自然，这会带来性能损失，但与上面的 shadow stack 类似，可以通过在构建脚本中使用 `--no-debug-memory` 取消这部分代码的编译。
 
@@ -499,3 +645,10 @@ void *operator new(size_t len, os::safe_t);
 
 = 中断处理 <interrupt>
 
+= 后记
+
+
+
+= 参考文献
+
+#bibliography

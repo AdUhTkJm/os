@@ -813,48 +813,54 @@ int ext_inode::unlink(const string &name) {
   meta.ctime = meta.mtime = now() / 1_s;
   flags = 0;
 
-  auto fs = static_cast<ext*>(this->fs);
-  unsigned prevoff = -1;
-  for (unsigned pos = 0; pos < meta.sz; prevoff = pos) {
+  [[unlikely]] if (name == "." || name == "..")
+    return -EINVAL;
+
+  auto fs = (ext *) this->fs;
+  unsigned prevoff = -1, mid = -1;
+  for (unsigned pos = 0; pos < meta.sz;) {
     // Read the directory entry header.
     int block = locate(pos);
-    unsigned offset = block * fs->blksz + pos % fs->blksz;
-    direntry entry;
-    fs->device->read(offset, &entry, sizeof(direntry), flags);
+    char *data = read_block_mutable(block);
+    unsigned offset = pos % fs->blksz;
+    direntry *entry = (direntry *) (data + offset);
     
-    if (entry.size < sizeof(entry))
+    if (entry->size < sizeof(direntry) || offset + entry->size > fs->blksz)
       fs->on_corrupt();
 
-    pos += entry.size;
-    if (entry.inum == 0)
+    // Don't update "prevoff" on invalid entries.
+    if (entry->inum == 0) {
+      pos += entry->size;
       continue;
+    }
+
+    // Note that we have to "track back twice" because we increased the counter early.
+    prevoff = mid, mid = pos;
+    pos += entry->size;
     
-    unique_ptr<char[]> p(new char[entry.namelen + 1]);
-    fs->device->read(offset + sizeof(entry), p.get(), entry.namelen, flags);
-    p[entry.namelen] = '\0';
-    if (name != p.get())
+    if (name.size() != entry->namelen || strncmp(name.c_str(), data + offset + sizeof(direntry), entry->namelen) != 0)
       continue;
 
     // The node itself must also be unlinked.
     // The file system caches all inodes, so that the same inode on disk will result in the same inode in memory.
-    auto inode = fs->read_from_inum(entry.inum);
+    auto inode = fs->read_from_inum(entry->inum);
     if (inode->type == Dir)
-      return -EISDIR;
+      return -EPERM;
     
     // Now we unlink it: merge the length to previous header.
-    bool first = pos % fs->blksz == 0;
+    bool first = offset == 0;
     if (first) {
       // When there is no previous header, simply set inum to zero.
-      entry.inum = 0;
-      fs->device->write(offset, &entry, sizeof(direntry), flags);
+      entry->inum = 0;
+      fs->device->mark_dirty(block);
     } else {
+      assert(prevoff != -1u);
       int prevblk = locate(prevoff);
-      prevoff = prevblk * fs->blksz + prevoff % fs->blksz;
+      prevoff = prevoff % fs->blksz;
 
-      direntry prev;
-      fs->device->read(prevoff, &prev, sizeof(direntry), 0);
-      prev.size += entry.size;
-      fs->device->write(prevoff, &prev, sizeof(direntry), 0);
+      direntry *prev = (direntry *) (read_block_mutable(prevblk) + prevoff);
+      prev->size += entry->size;
+      fs->device->mark_dirty(prevblk);
     }
 
     // Forget it in dcache. This isn't done here; see (the unique) caller, handler of `unlinkat`.
@@ -890,7 +896,7 @@ inode *ext_inode::lookup(const string &name) {
       auto entry = (const direntry *) (data + off);
       
       if (entry->size < sizeof(direntry) || off + entry->size > fs->blksz)
-        fs->on_corrupt(); // Safety check
+        fs->on_corrupt();
 
       if (entry->inum != 0) {
         if (name.size() == entry->namelen && 
@@ -1396,6 +1402,7 @@ ext_inode *ext::read_from_inum(size_t inum) {
   auto meta = (struct ext_inode::meta*) vmalloc(superblock.inode_size);
   device->read(offset, meta, superblock.inode_size, 0);
   auto inode = new ext_inode(this, *meta, inum);
+  inode->ref();
   vfree(meta);
   return nodecache[inum] = inode;
 }

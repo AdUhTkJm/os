@@ -11,9 +11,8 @@ end_time=$(git log -1 --format="%ad" --date=format:'%Y年%m月%d日')
 
 commit_count=$(git rev-list --count HEAD)
 
-echo "这个操作系统共计 ${line_count} 行代码，从 ${start_time} 开始，至 ${end_time} 结束，共有 ${commit_count} 个commit" > docs/data/git_summary.tex
+echo "这个操作系统共计 ${line_count} 行代码，从 ${start_time}开始，至 ${end_time}结束，共有 ${commit_count} 个commit" > docs/data/git_summary.tex
 
-# Make the final build
+# Build.
 cd docs
-bibtex design
-xelatex -shell-escape design.tex 
+typst compile design.typ

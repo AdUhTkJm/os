@@ -974,6 +974,8 @@ HANDLE(rt_sigprocmask, how, set, oldset, size) {
   default:
     return -EINVAL;
   };
+  // In Linux, the bit for `sig` is usually `sig - 1`.
+  mask <<= 1;
 
   // Here `tcb->mask` means ignored signals, so the logic is reversed here.
   switch (how) {
@@ -1012,6 +1014,8 @@ HANDLE(rt_sigtimedwait, sig, info, timeout) {
   }
 
   auto wait = *(unsigned long*) sigset->get();
+  // In Linux, the bit is usually `sig - 1`.
+  wait <<= 1;
   if (tm == 0) {
     if (wait & tcb->pending.sig)
       return tcb->pending.next(~wait);

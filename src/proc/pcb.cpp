@@ -289,6 +289,9 @@ void terminate(pcb_t *pcb, int ret) {
   if (pcb->parent)
     pcb->parent->wait.wake_all();
 
+  // Send a signal to parent.
+  pcb->parent->send_signal(SIGCHLD);
+
   pcb->clear();
   pidmap->erase(pcb->pid);
 

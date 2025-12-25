@@ -99,7 +99,9 @@ void scheduler_t::maybe_preempt_impl() {
   if (active->pcb->pid == 0) {
     ready.push_back(active);
     active->status = Ready;
-    dispatch_impl();
+    lock.release();
+    // This automatically calls dispatch().
+    context_save(&active->ctx, &active->ctx_valid);
   } else
     lock.release();
 }

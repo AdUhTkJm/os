@@ -139,8 +139,6 @@ int tcp_socket_inode::bind(ip::address addr, tcp::port port) {
 }
 
 void tcp_socket_inode::receive(packet &&data) {
-  printk("receive:\n");
-  hexdump(data.c_str(), min(64ul, data.size()));
   lock.acquire();
   
   if (state != tcp::ESTABLISHED)
@@ -152,7 +150,6 @@ void tcp_socket_inode::receive(packet &&data) {
 
   lock.release();
 
-  printk("wake\n");
   readwait.wake_all();
 }
 

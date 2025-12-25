@@ -194,8 +194,6 @@ int ip::write(const void *data, size_t len, address src, address dst, protocol p
   char *p = ((char *) data) - sizeof(ip::header);
   ip::address arpdst;
   net_device *dev = nullptr;
-  printk("write:\n");
-  hexdump(data, len);
   if (options.broadcast) {
     arpdst = 0xffffffff;
     // We might be setting up DHCP, in which case we don't have a routing table.
