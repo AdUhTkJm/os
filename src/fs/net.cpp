@@ -1,4 +1,4 @@
-#include "net.h"
+#include "tcp.h"
 #include "../proc/schedule.h"
 #include "../driver/virtio/virtio.h"
 #include "../utils/log.h"
@@ -100,6 +100,9 @@ void ip::read(const char *p, size_t len, int error) {
   case UDP:
     udp::read(p, len, error);
     break;
+  case TCP:
+    tcp::read(p, len, error);
+    break;
   default:
     printk("kernel warning: unknown protocol %d, dropped\n", header->protocol);
   }
@@ -182,7 +185,7 @@ void ip::fill_header(char *p, address dst, address src, unsigned short len, prot
   h->id = htons(id++);
   lock.release();
 
-  h->checksum = htons(checksum(h));
+  h->checksum = checksum(h);
   // The new checksum has to be zero.
   assert(checksum(h) == 0);
 }
@@ -206,26 +209,28 @@ int ip::write(const void *data, size_t len, address src, address dst, protocol p
   return arp::write(dev, p, len + sizeof(ip::header), arpdst, flags, options);
 }
 
-static unsigned checksum_add(unsigned sum, const void *h, unsigned len) {
-  auto p = (const unsigned char *) h;
+unsigned ip::checksum_add(unsigned sum, const void *h, unsigned len) {
+  auto p = (const unsigned short *) h;
   while (len >= 2) {
-    sum += ((p[0] << 8) | p[1]);
-    p += 2;
+    sum += *p++;
     len -= 2;
   }
   if (len == 1)
-    sum += p[0] << 8;
+    sum += *(const uint8_t *) p;
   return sum;
 }
 
-unsigned short ip::checksum(const void *h, unsigned len) {
-  unsigned sum = checksum_add(0, h, len);
-
+unsigned short ip::checksum_fold(unsigned sum) {
   // One's complement addition ("looparound carries") is associative;
   // `sum >> 16` are "accumulated carries" across summations, and we apply them all at once.
   while (sum >> 16)
     sum = (sum & 0xffff) + (sum >> 16);
   return ~sum;
+}
+
+unsigned short ip::checksum(const void *h, unsigned len) {
+  unsigned sum = checksum_add(0, h, len);
+  return checksum_fold(sum);
 }
 
 void udp::read(const char *p, size_t len, int error) {
@@ -254,13 +259,10 @@ unsigned short udp::checksum(ip::address src, ip::address dst, const void *udp, 
 
   sum += (src & 0xffff) + (src >> 16);
   sum += (dst & 0xffff) + (dst >> 16);
-  sum += protocol::UDP;
+  sum += htons(protocol::UDP);
   sum += htons(udp_len);
-  sum = checksum_add(sum, udp, udp_len);
-  
-  while (sum >> 16)
-    sum = (sum & 0xffff) + (sum >> 16);
-  sum = ~sum;
+  sum = ip::checksum_add(sum, udp, udp_len);
+  sum = ip::checksum_fold(sum);
 
   // UDP rule: checksum of zero is transmitted as all ones.
   // This is because zero is interpreted as not using checksums.
@@ -288,7 +290,7 @@ void icmp::read(const char *p, size_t len) {
     }
     break;
   case 11: // Timeout.
-    error = ETIMEOUT;
+    error = ETIMEDOUT;
     break;
   default:
     printk("icmp: unknown header type %d, dropped\n", header->type);
@@ -297,15 +299,13 @@ void icmp::read(const char *p, size_t len) {
   ip::read(p, len, error);
 }
 
-void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, port dstport, size_t payload_len) {
+void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, port dstport, size_t payload_len, bool check) {
   auto *h = (udp::header *) p;
   h->dstport = dstport;
   h->srcport = srcport;
   h->checksum = 0;
   h->len = htons(payload_len + sizeof(udp::header));
-
-  (void) src; (void) dst;
-  // h->checksum = htons(udp::checksum(src, dst, h, payload_len));
+  h->checksum = check ? udp::checksum(src, dst, h, payload_len) : 0;
 }
 
 udp_socket_inode::udp_socket_inode():
@@ -373,10 +373,7 @@ ssize_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
 ssize_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) {
   // Allocate a port when there's none.
   if (!srcport) {
-    auto port = htons(allocate());
-    if (!port)
-      return -EADDRINUSE;
-    if (auto ret = bind(src, port); ret < 0)
+    if (auto ret = bind(src, 0); ret < 0)
       return ret;
   }
 
@@ -391,7 +388,7 @@ ssize_t udp_socket_inode::write(size_t, const void *buf, size_t len, int flags) 
     memcpy(data + total, p + off, l);
 
     auto q = data + total - sizeof(udp::header);
-    udp::fill_header(q, src, dst, srcport, dstport, len);
+    udp::fill_header(q, src, dst, srcport, dstport, len, options.checksum);
     int ret = ip::write(q, l + sizeof(udp::header), src, dst, protocol::UDP, flags, options);
     if (ret < 0)
       return off ? off : ret;
@@ -463,6 +460,7 @@ void dhcp::fill_option(unsigned char *&dst, unsigned char type, const char *src,
 void dhcp::daemon() {
   ip::routers.construct();
   ip::dns.construct();
+  demux.construct();
 
   // The IP addresses stay the same after conversion to big-endian, so we omit the conversion here.
   auto sock = new udp_socket_inode();
@@ -556,7 +554,7 @@ discover:
       break;
     
     default:
-      printk("dhcp: warning: unknown option %d\n", type);
+      klog("dhcp: warning: unknown option %d\n", type);
       break;
     }
     opt += len;
@@ -619,7 +617,7 @@ request:
     opt += len;
   }
 
-  printk("lease time: %u\n", lease_time);
+  klog("dhcp: lease time: %u\n", lease_time);
 
   // Fill in route table.
   {

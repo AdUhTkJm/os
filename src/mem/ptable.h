@@ -164,6 +164,7 @@ void free(pa_t pt);
 
 }
 
+#ifdef RV
 struct TLBRefreshGuard {
   va_t flushed;
 
@@ -188,6 +189,22 @@ struct EnableAccessToUserMemory {
     __asm__ volatile("csrw sstatus, %0" :: "r"(sstatus));
   }
 };
+#endif
+#ifdef LA
+struct TLBRefreshGuard {
+  TLBRefreshGuard() {}
+  explicit TLBRefreshGuard(va_t) {}
+  ~TLBRefreshGuard() {
+    __asm__ volatile("dbar 0" ::: "memory");
+  }
+};
+
+// In Loongarch, we can always directly access user memory.
+struct EnableAccessToUserMemory {
+  EnableAccessToUserMemory() {}
+  ~EnableAccessToUserMemory() {}
+};
+#endif
 
 // Read and write to physical memory.
 

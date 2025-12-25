@@ -31,6 +31,8 @@ parser.add_argument("--no-debug", action="store_true")
 parser.add_argument("--gdb", action="store_true")
 parser.add_argument("--smp", action="store_true")
 parser.add_argument("--test", action="store_true")
+parser.add_argument("--unit-test", action="store_true")
+parser.add_argument("--dot", action="store_true")
 
 args = parser.parse_args()
 
@@ -43,13 +45,13 @@ AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
-  "-ffreestanding", "-nostdlib", # "-Wno-parentheses",
+  "-ffreestanding", "-nostdlib",
 ]
 CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", # "-Wno-parentheses",
+  "-fno-threadsafe-statics", "-Wno-invalid-offsetof",
 ]
 # Note this is included in https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html.
 SFLAGS = [
@@ -92,13 +94,16 @@ else:
 if not args.smp:
   flags += ["-DUNIPROCESSOR"]
 
+if args.unit_test:
+  flags += ["-DUNIT_TEST"]
+
 if args.la:
   # Loongarch.
   # For loongarch documentation, see:
   #   https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html
   COMPILER = "loongarch64-unknown-linux-gnu-g++"
   QEMU = "qemu-system-loongarch64"
-  MACHINESPEC = []
+  MACHINESPEC = ["-march=loongarch64", "-mabi=lp64d"]
 else:
   # RISC-V.
   MACHINESPEC = ["-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"]
@@ -350,6 +355,11 @@ if __name__ == "__main__":
     proc.check_call("cd docs && xelatex design.tex", shell=True)
     print("Docs built.")
 
+  if args.dot:
+    proc.check_call("dot -Tpng temp/graph.dot -o temp/graph.png", shell=True)
+    print("Dot converted.")
+    exit(0)
+
   if args.mount:
     proc.run(f"sudo mount -o loop build/rootfs/rootfs.ext2 mnt", shell=True)
     exit(0)
@@ -369,14 +379,11 @@ f"""
 -machine virt -bios default -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
--drive file={BUILD_DIR}/rootfs/rootfs.ext2,if=none,format=raw,id=x0 \
--device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.2 \
+-drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0 \
+-device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 \
 -drive file=testsuite/sdcard-rv.img,if=none,format=raw,id=x1 \
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
-\
--drive file=scripts/rootfs.ext2,if=none,format=raw,id=x2 \
--device virtio-blk-device,drive=x2,bus=virtio-mmio-bus.0 \
 \
 -device virtio-net-device,netdev=net -netdev user,id=net \
 -d guest_errors -D qemu.log \

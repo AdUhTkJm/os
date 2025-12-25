@@ -107,7 +107,7 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
   uint64_t supported = 0;
   if (features_low & SIZEMAX)
     supported |= SIZEMAX;
-  printk("features: %x, supported: %x\n", features_low, supported);
+  klog("virtio block device: features: %x, supported: %x\n", features_low, supported);
   mmwr(base + DRIVER_FEATURESEL, 0);
   mmwr<uint32_t>(base + DRIVER_FEATURE, supported);
 
@@ -666,7 +666,6 @@ void probe() {
   blk_intr.construct();
   net_intr.construct();
   net_devs.construct();
-  demux.construct();
 
   for (const auto &[name, device] : devs) {
     auto base = device.base;

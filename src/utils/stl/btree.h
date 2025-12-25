@@ -1,62 +1,15 @@
-#ifndef VMA_H
-#define VMA_H
+#ifndef BTREE_H
+#define BTREE_H
 
-#include "ptable.h"
-#include "../fs/vfs.h"
-#include "../utils/log.h"
+#include "utility.h"
 
-#define PROT_READ      0x1
-#define PROT_WRITE     0x2
-#define PROT_EXEC      0x4
-#define MAP_SHARED     0x01
-#define MAP_PRIVATE    0x02
-#define MAP_FIXED      0x10
-#define MAP_ANONYMOUS  0x20
-
-// Kernel internal usage, used for brk().
-#define VMA_IS_HEAP    0x40
-#define VMA_IS_STACK   0x80
-#define VMA_IS_PT_LOAD 0x100
+// This file is actually written after the b-tree in `vma.h`.
+// We delete the specific logic of updating maxgap or maxend here.
 
 namespace os {
 
-template<class T>
-struct less {
-  bool operator()(const T& a, const T& b) const {
-    return a < b;
-  }
-};
-
-}
-
-namespace os::vma {
-
-struct vma_t {
-  uintptr_t begin, end;
-  int prot, flags;
-  file *backup;
-  size_t offset, maxread;
-
-  vma_t(): backup(nullptr) {}
-  vma_t(uintptr_t begin, uintptr_t end, int prot, int flags);
-  vma_t(uintptr_t begin, uintptr_t end, int prot, int flags, file *backup, size_t offset, size_t maxread);
-  vma_t(const vma_t &other);
-  vma_t(vma_t &&other);
-  ~vma_t();
-
-  vma_t &operator=(const vma_t &other);
-
-  bool mergeable(const vma_t &other) const;
-};
-
-// See https://www.cl.cam.ac.uk/teaching/2324/Algorithm1/content/slides22.pdf
-// Cambridge Algorithm 2 course, Part IA.
-// We specialized it for the need of VMA.
-template<int Order> requires(Order % 2 == 0)
+template<class K, class V, int Order> requires(Order % 2 == 0)
 class btree {
-  using K = va_t;
-  using V = vma_t;
-
   int sz = 0;
 
   struct node {
@@ -66,8 +19,6 @@ class btree {
     node *ch[Order];    // Children.
     K k[Order - 1];     // Keys.
     V v[Order - 1];     // Values.
-    size_t maxend;      // Max ending point in children.
-    size_t maxgap;      // Max gap in children.
     int count = 0;
     bool leaf;
 
@@ -101,57 +52,6 @@ class btree {
     while (!x->leaf)
       x = x->ch[0];         // Then always go left.
     return x;
-  }
-
-#ifndef NDEBUG
-  // Checks that `n` never violates invariant.
-  void check(node *n) {
-    if (n != root && (n->count < t - 1 || n->count >= Order)) {
-      dump();
-      assert(false && "btree: invariant broken");
-    }
-  }
-#endif
-
-  // Updates the `max` values, whenever a node itself or its children changes.
-  // We don't need to be recursive, as all children are already up to date.
-  void update_impl(node *n) {
-    if (!n)
-      return;
-#ifndef NDEBUG
-    check(n);
-#endif
-
-    size_t end = 0, gap = 0;
-    
-    for (int i = 0; i < n->count; i++) {
-      end = max(end, n->v[i].end);
-      if (n->leaf && i > 0)
-        n->maxgap = max(n->maxgap, n->k[i] - n->v[i - 1].end);
-
-      if (!n->leaf) {
-        end = max(end, n->ch[i]->maxend);
-        // We know `ch[i]` is left of `k[i]`, and therefore its end might not reach `k[i]`'s end.
-        // There might be a gap, and we calculate its length.
-        gap = max(gap, max(n->ch[i]->maxgap, n->k[i] - n->ch[i]->maxend));
-        // Similarly, we calculate the length of the right node here.
-        gap = max(gap, n->ch[i + 1]->minimal() - n->v[i].end);
-      }
-    }
-    
-    // We didn't update the last child in the previous loop; do it here.
-    if (!n->leaf) {
-      end = max(end, n->ch[n->count]->maxend);
-      gap = max(gap, n->ch[n->count]->maxgap);
-    }
-
-    n->maxend = end;
-    n->maxgap = gap;
-  }
-
-  template<class ...Args>
-  void update(Args... args) {
-    (update_impl(args), ...);
   }
 
   // Now `x` is full, so it has M - 1 keys.
@@ -194,8 +94,6 @@ class btree {
       p->ch[j + 1] = p->ch[j];
     p->ch[i + 1] = z;
     p->count++;
-
-    update(x, z, p);
   }
 
   // Fill the keys of x->ch[i], so that it has enough elements (>= Order / 2 + 1) for deletion.
@@ -229,8 +127,6 @@ class btree {
 
       l->count--;
       r->count++;
-
-      update(l, r, x);
       return;
     }
     
@@ -261,14 +157,11 @@ class btree {
 
       l->count++;
       r->count--;
-
-      update(l, r, x);
       return;
     }
     
     // Neither of left and right sibling have enough keys.
     // In this case, merging them will never exceed the capacity (Order - 1).
-    assert(x->count > 0);
     merge(x, i < x->count ? i : i - 1);
   }
 
@@ -278,7 +171,6 @@ class btree {
       i--;
     if (i >= 0 && x->k[i] == key) {
       x->v[i] = value;
-      update(x);
       return;
     }
     i++;
@@ -311,50 +203,6 @@ class btree {
       }
       insert_impl(x->ch[i], key, value);
     }
-    update(x);
-  }
-
-  va_t find_gap_impl(node *n, size_t len) const {
-    if (n->maxgap < len)
-      return 0;
-
-    for (int i = 0; i < n->count; i++) {
-      if (!n->leaf && n->ch[i]->maxgap >= len)
-        return find_gap_impl(n->ch[i], len);
-
-      if (n->leaf && i > 0) {
-        size_t gap = n->k[i] - n->v[i - 1].end;
-        if (gap >= len)
-          return n->v[i - 1].end;
-      }
-    }
-    // Don't forget the final one.
-    if (!n->leaf)
-      return find_gap_impl(n->ch[n->count], len);
-    
-    return 0;
-  }
-
-  void find_overlap_impl(node *n, va_t start, va_t end, vector<va_t> &result) const {
-    if (!n || n->maxend <= start)
-      return;
-
-    for (int i = 0; i < n->count; i++) {
-      if (!n->leaf)
-        find_overlap_impl(n->ch[i], start, end, result);
-      
-      // If this node's start is already bigger than `end`, then its left child
-      // might be OK, but its right child will always be too big.
-      if (n->k[i] >= end)
-        return;
-
-      if (n->k[i] < end && n->v[i].end > start)
-        result.push_back(n->k[i]);
-    }
-
-    // Check rightmost child.
-    if (!n->leaf)
-      find_overlap_impl(n->ch[n->count], start, end, result);
   }
 
   // Merge p->k[i] and its two children, p->k[i] and p->k[i + 1].
@@ -389,37 +237,6 @@ class btree {
     p->count--;
     
     delete r;
-    update(l, p);
-  }
-
-  va_t id(node *x) {
-    return (va_t) x - 0xffff'ffff'c000'0000;
-  }
-
-  void dump_node(node *x) {
-    printk("  n%p [label=\"", id(x));
-
-    for (int i = 0; i < x->count; i++) {
-      printk("<f%d> %d", i, x->k[i]);
-      if (i + 1 < x->count)
-        printk(" | ");
-    }
-    printk("\"];\n");
-
-    if (!x->leaf) {
-      for (int i = 0; i <= x->count; i++)
-        dump_node(x->ch[i]);
-    }
-  }
-
-  void dump_edge(node *x) {
-    if (x->leaf)
-      return;
-
-    for (int i = 0; i <= x->count; i++) {
-      printk("  n%p -> n%p;\n", id(x), id(x->ch[i]));
-      dump_edge(x->ch[i]);
-    }
   }
 
   void erase_impl(node *n, K key) {
@@ -436,7 +253,6 @@ class btree {
         }
         n->count--;
         sz--;
-        update(n);
         return;
       }
       
@@ -463,7 +279,6 @@ class btree {
         merge(n, i);
         erase_impl(l, key);
       }
-      update(n);
       return;
     }
 
@@ -481,7 +296,6 @@ class btree {
     // To avoid complicated reasoning, we just re-search the key.
     for (i = 0; i < n->count && n->k[i] < key; i++);
     erase_impl(n->ch[i], key);
-    update(n);
   }
 
   void clear(node *x) {
@@ -626,17 +440,6 @@ public:
     }
   }
 
-  // Returns a starting address with a gap at least `len`.
-  va_t find_gap(size_t len) const {
-    return find_gap_impl(root, len);
-  }
-
-  vector<va_t> find_overlap(va_t start, va_t end) const {
-    vector<va_t> result;
-    find_overlap_impl(root, start, end, result);
-    return result;
-  }
-
   void clear() {
     clear(root);
     root = nullptr;
@@ -664,53 +467,6 @@ public:
   }
 
   int size() { return sz; }
-
-#ifndef NDEBUG
-  // Dump a .dot file for visualization.
-  void dump() {
-    printk("digraph btree { \n  node [shape=record]\n");
-    dump_node(root);
-    dump_edge(root);
-    printk("}\n");
-  }
-#endif
-};
-
-// Map according to the current process's VMA.
-// Terminates the process when the pointer is not in any VMA.
-void map_current(void *va);
-void map_current(void *va, pte_t *pte);
-
-// Map a range. Only maps the addresses that are currently unmapped.
-// If `write` is set to true, also maps COW pages in the range.
-void map_current(void *from, void *to, bool write = false);
-
-struct addrspace {
-  vector<vma_t> vmas;
-
-  void split_at(size_t i, va_t addr);
-  result merge_at(size_t i);
-  
-  vma_t &operator[](size_t index) { return vmas[index]; }
-  const vma_t &operator[](size_t index) const { return vmas[index]; }
-
-  void push(const vma_t &vma);
-  bool has(va_t addr) const;
-
-  // Finds the insertion place of `addr`, i.e. the first vma that is
-  // greater than `addr`.
-  // If `addr` is already contained, return that index.
-  size_t find(va_t addr) const;
-  
-  vma_t &at(va_t addr) { return vmas[find(addr)]; }
-  const vma_t &at(va_t addr) const { return vmas[find(addr)]; }
-  void clear() { vmas.clear(); }
-
-  vma_t *begin() { return vmas.begin(); }
-  vma_t *end() { return vmas.end(); }
-  size_t size() const { return vmas.size(); }
-
-  void resize(size_t sz) { vmas.resize(sz); }
 };
 
 }

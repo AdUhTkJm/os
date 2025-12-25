@@ -35,7 +35,7 @@ int wait_queue::wake_all() {
   return woken;
 }
 
-int wait_queue::wake(int n) {
+int wait_queue::wake(int n, bool can_preempt) {
   lock.acquire();
   int woken = 0;
   for (auto it = q.begin(); it != q.end(); ++it) {
@@ -51,7 +51,8 @@ int wait_queue::wake(int n) {
   }
   lock.release();
   
-  scheduler.maybe_preempt();
+  if (can_preempt)
+    scheduler.maybe_preempt();
   return woken;
 }
 

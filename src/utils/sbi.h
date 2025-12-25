@@ -38,12 +38,9 @@ typedef struct {
 
 C sbiret_t sbicall(reg_t a0, reg_t a1, reg_t a2, reg_t a3, reg_t a4, reg_t a5, reg_t a6, reg_t a7);
 
+#if defined(__riscv) || IN_VSCODE
 C inline sbiret_t sbi_console_write(reg_t len, reg_t s) {
   return sbicall(len, s, 0, 0, 0, 0, SBI_DBCN_CONSOLE_WRITE);
-}
-
-C inline sbiret_t sbi_console_write_byte(reg_t byte) {
-  return sbicall(byte, 0, 0, 0, 0, 0, SBI_DBCN_CONSOLE_WRITE);
 }
 
 C inline sbiret_t sbi_set_timer(reg_t value) {
@@ -54,6 +51,25 @@ C [[noreturn]] inline void sbi_system_reset() {
   sbicall(0, 0, 0, 0, 0, 0, SBI_SYSTEM_RESET);
   __builtin_unreachable();
 }
+#endif
+
+#if defined(__loongarch__)
+// These emulate the functionality of SBI.
+C inline sbiret_t sbi_console_write(reg_t len, reg_t s) {
+  auto str = (char *) (s + 0xffff'ffc0'0000'0000);
+  for (long i = 0; i < len; i++)
+    *(volatile char *) 0xffff'ffc0'1000'0000 = str[i];
+  return { .err = 0, .ret = 0 };
+}
+
+C inline sbiret_t sbi_set_timer(reg_t) {
+  return { .err = 0, .ret = -1 };
+}
+
+C [[noreturn]] inline void sbi_system_reset() {
+  __builtin_unreachable();
+}
+#endif
 
 #ifndef __cplusplus
 #undef inline

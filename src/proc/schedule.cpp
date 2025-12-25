@@ -54,7 +54,12 @@ void scheduler_t::dispatch_impl() {
   // If there's no ongoing syscall, then just directly jump to end,
   // and return from this interrupt.
   lock.release();
+#ifdef RV
   __asm__ volatile("j __handler_end");
+#endif
+#ifdef LA
+  __asm__ volatile("b __handler_end");
+#endif
   __builtin_unreachable();
 }
 

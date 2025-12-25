@@ -19,15 +19,8 @@ using namespace os;
 static_assert(is_same_v<int64_t, long>);
 static_assert(is_same_v<size_t, unsigned long>);
 
-#ifdef LA
-[[always_inline, gnu::no_instrument_function]]
-static void map_1g(pa_t pa, va_t va) {
-  CSRW(tlbehi, LA_TLBEHI_VPPA(va));
-  CSRW(tlblo0, LA_TLBLO_PPN(pa) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0);
-  CSRW(tlblo1, 0);
-  CSRW(tlbidx, IDX_1G_PAGE);
-  __asm__ volatile("tlbwr");
-}
+#ifdef UNIT_TEST
+void test();
 #endif
 
 /*
@@ -65,22 +58,42 @@ void kernel_main() {
 #endif
 
 #ifdef LA
-  for (unsigned long i = 0; i < 16; i++)
-    map_1g(i << 30, as_va(i << 30));
-  map_1g(0x9000'0000ul, 0x9000'0000ul)
-  unsigned long crmd; CSRR(crmd, crmd);
-  crmd &= ~LA_CRMD_DA;
-  crmd |= LA_CRMD_PG;
+#define MAP_1G(pa, va) \
+  CSRW(tlbehi, TLBEHI_VPPA(va)); \
+  CSRW(tlblo0, TLBLO_PPN(pa) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0); \
+  CSRW(tlblo1, 0); \
+  CSRW(tlbidx, 30ul << 24); \
+  __asm__ volatile("tlbwr");
+
+  for (unsigned long i = 0; i < 16; i++) {
+    MAP_1G((i << 30), as_va(i << 30))
+  }
+  MAP_1G(0x9000'0000ul, 0x9000'0000ul);
+#undef MAP_1G
+
+  unsigned long crmd;
+  CSRR(crmd, crmd);
+  crmd &= ~CRMD_DA;
+  crmd |= CRMD_PG;
   CSRW(crmd, crmd);
   __asm__ volatile("jirl $zero, %0, 0\n" :: "r"(as_va(0x9000'2000)));
   __builtin_unreachable();
 #endif
 }
 
+#ifdef RV
 void idle() {
   for (;;)
     __asm__ volatile("wfi");
 }
+#endif
+
+#ifdef LA
+void idle() {
+  for (;;)
+    __asm__ volatile("idle 0");
+}
+#endif
 
 bool os::onboot = true;
 // Used in interrupt.h. Tick length in nanoseconds.
@@ -166,6 +179,12 @@ void main_high() {
   os::plic::init();
   os::mount_dev();
   os::mount_tmp();
+
+  // At this time we're already prepared enough to execute unit test.
+#ifdef UNIT_TEST
+  test();
+  sbi_system_reset();
+#endif
   
   os::virtio::probe();
 

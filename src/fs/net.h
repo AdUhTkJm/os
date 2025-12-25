@@ -28,6 +28,9 @@ inline constexpr unsigned htonl(unsigned x) {
   return to_big_endian(x);
 }
 
+inline constexpr unsigned short ntohs(unsigned short x) { return htons(x); }
+inline constexpr unsigned ntohl(unsigned x) { return htonl(x); }
+
 // Protocol numbers, from https://www.iana.org/assignments/protocol-numbers/protocol-numbers.xhtml
 enum protocol : unsigned char {
   HOPOPT = 0,
@@ -111,6 +114,13 @@ struct header {
   address src, dst;
 };
 
+struct pseudo_header {
+  ip::address src, dst;
+  unsigned char zero;
+  unsigned char prot;
+  unsigned short len;
+};
+
 static_assert(sizeof(header) == 20);
 
 void fill_header(char *p, address dst, address src, unsigned short len, protocol prot);
@@ -118,6 +128,8 @@ inline void fill_header(char *p, address dst, unsigned short len, protocol prot)
   return fill_header(p, dst, src, len, prot);
 }
 
+unsigned checksum_add(unsigned sum, const void *h, unsigned len);
+unsigned short checksum_fold(unsigned sum);
 unsigned short checksum(const void *h, unsigned len = sizeof(header));
 
 constexpr size_t MTU = 1500;
@@ -187,7 +199,7 @@ static_assert(sizeof(header) == 8);
 
 constexpr size_t MTU = ip::MTU - sizeof(header);
 
-void fill_header(char *p, ip::address src, ip::address dst, port srcport, port dstport, size_t payload_len);
+void fill_header(char *p, ip::address src, ip::address dst, port srcport, port dstport, size_t payload_len, bool check);
 
 unsigned short checksum(ip::address src, ip::address dst, const void *udp, unsigned payload_len);
 void read(const char *p, size_t len, int error = 0);

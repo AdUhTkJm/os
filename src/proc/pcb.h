@@ -29,6 +29,7 @@ enum thread_state {
   Init, Running, Sleeping, Ready, Zombie, Dead
 };
 
+#ifdef RV
 struct trapframe {
   reg_t regs[30]; // zero and sp are not stored.
   reg_t sscratch; // this is the user sp.
@@ -36,6 +37,16 @@ struct trapframe {
   reg_t sstatus;
   char pad[8];
 };
+#endif
+#ifdef LA
+struct trapframe {
+  reg_t regs[30];
+  reg_t sscratch; // Actually, this is user sp. We didn't store it in `regs` above.
+  reg_t sepc;     // Actually, this is `era` in Loongarch.
+  reg_t prmd;
+  reg_t euen;
+};
+#endif
 
 // This is to resume at the place exactly AFTER the call to suspend().
 // The code would not expect we preserve caller-saved registers, so don't preserve them.

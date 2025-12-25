@@ -42,16 +42,16 @@ inline void enable_preempt() {
 #if defined(__loongarch__)
 inline void disable_preempt() {
   unsigned crmd;
-  CSRR(crmd, crmd);
-  crmd &= ~CRMD_IE;
-  CSRW(crmd, crmd);
+  __asm__ volatile("csrrd %0, 0" : "=r"(crmd));
+  crmd &= ~(1 << 2);
+  __asm__ volatile("csrwr %0, 0" :: "r"(crmd));
 }
 
 inline void enable_preempt() {
   unsigned crmd;
-  CSRR(crmd, crmd);
-  crmd |= CRMD_IE;
-  CSRW(crmd, crmd);
+  __asm__ volatile("csrrd %0, 0" : "=r"(crmd));
+  crmd |= (1 << 2);
+  __asm__ volatile("csrwr %0, 0" :: "r"(crmd));
 }
 
 #endif
@@ -167,7 +167,7 @@ struct wait_queue {
   void prepare(wait_entry &entry);
   void finish(wait_entry &entry);
   int wake_all();
-  int wake(int n = 1);
+  int wake(int n = 1, bool can_preempt = true);
   void wake(wait_entry &entry, bool can_preempt = true);
 };
 

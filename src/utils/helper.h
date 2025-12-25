@@ -93,7 +93,7 @@ typedef enum {
 
 #define TLBEHI_VPPA_SHIFT 13
 /* Note this doesn't shift-out the final zeroes, unlike ptable.h. */
-#define TLBEHI_VPPA(x) ((x) & (~((1ul << TLBEHI_VPPN_SHIFT) - 1)))
+#define TLBEHI_VPPA(x) ((x) & (~((1ul << TLBEHI_VPPA_SHIFT) - 1)))
 
 #define TLBLO_PPN_SHIFT 12
 #define TLBLO_PPN(x) ((x) & (~((1UL << TLBLO_PPN_SHIFT) - 1)))
@@ -131,6 +131,13 @@ C void hexdump(const void *ptr, size_t len);
 #ifdef LA
 #define CSRW(reg, value) __asm__ volatile("csrwr %0, %1" :: "r"(value), "i"(loongarch_csrs_t::reg))
 #define CSRR(reg, value) __asm__ volatile("csrrd %0, %1" : "=r"(value) : "i"(loongarch_csrs_t::reg))
+
+#define MV(reg, value) __asm__ volatile ("or $" #reg ", %0, $zero" :: "r"(value))
+#define RD(reg, value) __asm__ volatile ("or %0, $" #reg ", $zero" : "=r"(value))
+
+#define FENCE __asm__ volatile("dbar 0" ::: "memory")
+#define RFENCE FENCE
+#define WFENCE FENCE
 #endif
 
 extern char __text_begin[], __text_end[];

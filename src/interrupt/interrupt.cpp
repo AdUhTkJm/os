@@ -696,9 +696,11 @@ HANDLE(rseq, _) {
   return -ENOSYS;
 }
 
+#ifdef RV
 HANDLE(riscv_hwprobe, _) {
   return -ENOSYS;
 }
+#endif
 
 HANDLE(times, buf) {
   copy_to_user((void *) buf, &pcb->times, sizeof(tms));
@@ -1318,9 +1320,14 @@ SYSHANDLE_END
 namespace os {
 
 [[gnu::no_instrument_function]] void interrupt_handler(reg_t scause, reg_t stval, void *sepc) {
+#ifdef RV
   reg_t sstatus;
   CSRR(sstatus, sstatus);
   bool from_kernel = sstatus & (1 << 8);
+#endif
+#ifdef LA
+  bool from_kernel = true; // Placeholder for now
+#endif
 
   auto tcb = active();
   auto pcb = tcb->pcb;

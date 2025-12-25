@@ -306,6 +306,7 @@ void terminate(pcb_t *pcb, int ret) {
     scheduler.erase(active);
 }
 
+#ifdef RV
 static void first_time_setup(tcb_t *tcb) {
   auto pcb = tcb->pcb;
   tcb->status = Running;
@@ -337,6 +338,34 @@ void trap_return_setup(tcb_t *tcb) {
   auto pcb = tcb->pcb;
   setroot(pcb->pid, pcb->pt_root);
 }
+#endif
+
+#ifdef LA
+static void first_time_setup(tcb_t *tcb) {
+  auto pcb = tcb->pcb;
+  tcb->status = Running;
+
+  auto trap = (trapframe *) tcb->ksp;
+
+  trap->sepc = tcb->pc;
+  trap->sscratch = tcb->usp;
+
+  reg_t prmd = 0;
+  prmd |= (3 << 0);   // PRMD.PPLV
+  prmd |= (1 << 2);   // PRMD.PIE
+  trap->prmd = prmd;
+  trap->euen = 0;     // No FP yet.
+}
+
+void trap_return_setup(tcb_t *tcb) {
+  [[unlikely]] if (tcb->status == Init) {
+    first_time_setup(tcb);
+    return;
+  }
+
+  tcb->status = Running;
+}
+#endif
 
 // Taken from <sched.h>
 

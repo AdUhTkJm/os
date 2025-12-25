@@ -10,54 +10,83 @@ void build_page_list();
 void main_high();
 
 namespace {
-  using namespace os;
-  using namespace os::pt;
 
-  pa_t copy_impl(pte_t *pt, int lvl) {
-    pa_t root = pframe_zeroed();
-    unsigned end = 512;
-    if (lvl == 2) {
-      // Only recurse into the bottom 256 entries.
-      // The upper half are OS pages and are shared across all processes.
-      memcpy((pte_t*) as_va(root) + 256, pt + 256, PAGE_SIZE / 2);
-      end = 256;
-    }
+using namespace os;
+using namespace os::pt;
 
-    auto va = (pte_t *) as_va(root);
-    for (unsigned i = 0; i < end; i++) {
-      if (!is_valid(pt[i]))
-        continue;
-      if (is_leaf(pt[i])) {
-        va[i] = pt[i];
-        if (pt[i] & PTE_U)
-          pincref(PTE_TO_PA(pt[i]));
-        continue;
-      }
-      auto pa = copy_impl((pte_t*) PTE_TO_VA(pt[i]), lvl - 1);
-      va[i] = (PA_AS_PPN(pa) << PTE_PPN_OFFSET) | PTE_FLAGS(pt[i]);
-    }
-    return root;
+pa_t copy_impl(pte_t *pt, int lvl) {
+  pa_t root = pframe_zeroed();
+  unsigned end = 512;
+  if (lvl == 2) {
+    // Only recurse into the bottom 256 entries.
+    // The upper half are OS pages and are shared across all processes.
+    memcpy((pte_t*) as_va(root) + 256, pt + 256, PAGE_SIZE / 2);
+    end = 256;
   }
 
-  void free_impl(pte_t *pt, int lvl) {
-    unsigned end = lvl == 2 ? 256 : 512;
-    // No more child nodes to free.
-    if (lvl == 0)
-      return;
-    for (unsigned i = 0; i < end; i++) {
-      if (is_leaf(pt[i]) || !is_valid(pt[i]))
-        continue;
-      free_impl((pte_t *) PTE_TO_VA(pt[i]), lvl - 1);
-      pfree(PTE_TO_PA(pt[i]));
+  auto va = (pte_t *) as_va(root);
+  for (unsigned i = 0; i < end; i++) {
+    if (!is_valid(pt[i]))
+      continue;
+    if (is_leaf(pt[i])) {
+      va[i] = pt[i];
+      if (pt[i] & PTE_U)
+        pincref(PTE_TO_PA(pt[i]));
+      continue;
     }
+    auto pa = copy_impl((pte_t*) PTE_TO_VA(pt[i]), lvl - 1);
+    va[i] = (PA_AS_PPN(pa) << PTE_PPN_OFFSET) | PTE_FLAGS(pt[i]);
   }
+  return root;
+}
+
+void free_impl(pte_t *pt, int lvl) {
+  unsigned end = lvl == 2 ? 256 : 512;
+  // No more child nodes to free.
+  if (lvl == 0)
+    return;
+  for (unsigned i = 0; i < end; i++) {
+    if (is_leaf(pt[i]) || !is_valid(pt[i]))
+      continue;
+    free_impl((pte_t *) PTE_TO_VA(pt[i]), lvl - 1);
+    pfree(PTE_TO_PA(pt[i]));
+  }
+}
+
+#ifdef LA
+// Try map RISC-V page table into Loongarch TLB arguments.
+// Since Loongarch is agnostic to software page table, we can simply use the same PTE as RV does.
+static unsigned long make_tlbelo(pa_t pa, int flags, int plv) {
+  unsigned long elo = 0;
+
+  elo |= (pa >> 12) << 12;     // PPN
+  elo |= TLBLO_V;
+  elo |= (flags & PTE_W) ? (1ul << 1) : 0; // D
+  elo |= (plv & 0x3) << 2;     // PLV
+  elo |= (flags & PTE_R) ? (1ul << 4) : 0;
+  elo |= (flags & PTE_W) ? (1ul << 5) : 0;
+  elo |= (flags & PTE_X) ? (1ul << 6) : 0;
+  elo |= (flags & PTE_G) ? (1ul << 7) : 0;
+  elo |= (0 << 4);             // MAT = cached
+
+  return elo;
+}
+#endif
+
 }
 
 namespace os {
 
 using namespace pt;
 
-int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
+#ifdef RV
+int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root)
+#endif
+#ifdef LA
+// In loongarch, we need to manually fill TLB.
+static int pmap_software(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root)
+#endif
+{
   os::TLBRefreshGuard guard(va);
 
   // The flags must occupy bits 0.. PTE_PPN_OFFSET-1.
@@ -159,6 +188,50 @@ int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
 
   return 0;
 }
+
+#ifdef LA
+int pmap(pa_t pa, va_t va, int mode, int flags, pte_t *root) {
+  // Populate software page table.
+  pmap_software(pa, va, mode, flags, root);
+  // We should only map the page into TLB for current process.
+  [[unlikely]] if (to_pa(root) != active()->pcb->pt_root)
+    return 0;
+
+  // Prepare LoongArch TLB entry.
+  int ps;
+  switch (mode) {
+    case MAP_4KB: ps = 12; break;
+    case MAP_2MB: ps = 21; break;
+    case MAP_1GB: ps = 30; break;
+    default: return -EINVAL;
+  }
+
+  // Enforce 39-bit VA.
+  va &= ((1ULL << 39) - 1);
+
+  unsigned long vppn = va >> ps;
+
+  unsigned long asid;
+  CSRR(asid, asid);
+
+  // TLBEHI = VPPN | ASID.
+  unsigned long tlbehi = (vppn << ps) | (asid & 0x3ff);
+  unsigned long elo0 = make_tlbelo(pa, flags, (flags & PTE_U) ? 3 : 0);
+
+  CSRW(tlbehi, tlbehi);
+  // Let them be the same.
+  CSRW(tlblo0, elo0);
+  CSRW(tlblo1, elo0);
+
+  // Page size goes into TLBIDX.
+  CSRW(tlbidx, ps << 24);
+
+  __asm__ volatile("invtlb 0, %0, %1" :: "r"(va), "r"(asid));
+  __asm__ volatile("tlbfill");
+  __asm__ volatile("dbar 0");
+  return 0;
+}
+#endif
 
 int pmap(pa_t pa, va_t va, int mode, unsigned flags) {
   return pmap(pa, va, mode, flags, pt_root());
@@ -295,9 +368,12 @@ void free(pa_t root) {
 
 }
 
+#ifdef RV
+// No need to do this in Loongarch. We rely on TLB refill exceptions.
 void setroot(int asid, pa_t pt_root) {
   TLBRefreshGuard guard;
   CSRW(satp, SATP_MODE_SV39 | ((unsigned long) (asid & 0xff) << 44) | (pt_root >> 12));
 }
+#endif
 
 }

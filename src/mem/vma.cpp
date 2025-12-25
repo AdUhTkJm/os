@@ -13,13 +13,15 @@ void map_single(void *va, pte_t *root) {
   int origflags = pte_flags(va_page);
 
   if (!pcb->vma.has(addr)) {
-    // Examine scause to determine.
+    // Examine scause to print a better debug message. This is mainly for RISC-V.
+#ifdef RV
     int scause; CSRR(scause, scause);
     auto type = scause == 12 ? "execute" : scause == 13 ? "load" : scause == 15 ? "store" : nullptr;
     if (type) {
       va_t sepc = ((trapframe *) tcb->ksp)->sepc;
       printk("Unmapped address %p on %s, requested from instruction %p of process %d. Terminate the process.\n", va, type, sepc, pcb->pid);
     } else
+#endif
       printk("Unmapped address %p. Terminate the process.\n", va);
     os::terminate(tcb, -127);
     return;

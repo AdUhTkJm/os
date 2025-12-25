@@ -3,6 +3,7 @@
 #include "../fs/vfs.h"
 #include "../fs/devfs.h"
 #include "../fs/net.h"
+#include "../fs/tcp.h"
 #include "../proc/schedule.h"
 #include "../driver/tty/tty.h"
 #include "../driver/virtio/virtio.h"
@@ -130,6 +131,19 @@ int fcntl(int fd, int ty, int arg) {
     return 0;
   case F_GETFD:
     return *pcb->ftbl->get_desc(fd);
+  case F_GETFL: {
+    auto f = pcb->ftbl->at(fd);
+    if (!f)
+      return -EBADF;
+    return f->flags;
+  }
+  case F_SETFL: {
+    auto f = pcb->ftbl->at(fd);
+    if (!f)
+      return -EBADF;
+    f->flags = arg;
+    return 0;
+  }
   case F_DUPFD:
     return pcb->ftbl->allocate_from(file, arg);
   case F_DUPFD_CLOEXEC: {
@@ -378,12 +392,20 @@ int socket(int domain, int type, int protocol) {
   type &= ~SOCK_NONBLOCK;
 
   switch (type) {
+  case SOCK_STREAM: {
+    if (protocol != 0 && protocol != TCP)
+      return -EINVAL;
+
+    auto node = new tcp_socket_inode;
+    auto f = new file(new dentry("", node, nullptr), O_RDWR | flags);
+    return pcb->ftbl->allocate(f);
+  }
   case SOCK_DGRAM: {
     if (protocol != 0 && protocol != UDP)
       return -EINVAL;
 
     auto node = new udp_socket_inode;
-    auto f = new file(new dentry("<sock>", node, nullptr), O_RDWR | flags);
+    auto f = new file(new dentry("", node, nullptr), O_RDWR | flags);
     return pcb->ftbl->allocate(f);
   }
   default:
@@ -410,15 +432,20 @@ int bind(int fd, void *_addr, unsigned len) {
     return -EINVAL;
   }
 
-  // Now this might be TCP inode or UDP inode.
-  // But we only have UDP now.
   if (auto udp = dyn_cast<udp_socket_inode>(file->node())) {
     if (len < sizeof(sockaddr_in))
       return -EINVAL;
 
     auto info = *(sockaddr_in *) addr;
-    udp->bind(info.sin_addr.s_addr, info.sin_port);
-    return 0;
+    return udp->bind(info.sin_addr.s_addr, info.sin_port);
+  }
+  
+  if (auto tcp = dyn_cast<tcp_socket_inode>(file->node())) {
+    if (len < sizeof(sockaddr_in))
+      return -EINVAL;
+
+    auto info = *(sockaddr_in *) addr;
+    return tcp->bind(info.sin_addr.s_addr, info.sin_port);
   }
 
   printk("bind: not udp inode\n");
@@ -443,15 +470,19 @@ int connect(int fd, void *_addr, unsigned len) {
     return -EINVAL;
   }
 
-  // Now this might be TCP inode or UDP inode.
-  // But we only have UDP now.
   if (auto udp = dyn_cast<udp_socket_inode>(file->node())) {
     if (len < sizeof(sockaddr_in))
       return -EINVAL;
 
     auto info = *(sockaddr_in *) addr;
-    udp->connect(info.sin_addr.s_addr, info.sin_port);
-    return 0;
+    return udp->connect(info.sin_addr.s_addr, info.sin_port);
+  }
+  if (auto tcp = dyn_cast<tcp_socket_inode>(file->node())) {
+    if (len < sizeof(sockaddr_in))
+      return -EINVAL;
+
+    auto info = *(sockaddr_in *) addr;
+    return tcp->connect(info.sin_addr.s_addr, info.sin_port);
   }
 
   printk("connect: not udp inode\n");

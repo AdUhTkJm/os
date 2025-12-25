@@ -7,6 +7,23 @@
 
 namespace os {
 
+// Reserved kernel virtual memory size.
+constexpr size_t VM_SIZE = 1_gb;
+constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
+
+// The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
+// When we enable DEBUG_MEMORY, the meta becomes incredibly large.
+#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
+constexpr va_t MAX_PA_SIZE = 128_mb;
+#else
+constexpr va_t MAX_PA_SIZE = 2_gb;
+#endif
+
+// This amount of 4KB frames from __kernel_base will be managed by
+// the free-list allocator, mainly for bootstrapping.
+// All other regions will be managed by the bitmap allocator.
+constexpr va_t FREE_LIST_SIZE = 0x1000;
+
 // Gives a free 4KB physical frame.
 pa_t pframe();
 // Gives a zeroed free 4KB physical frame.

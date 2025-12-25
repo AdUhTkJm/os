@@ -34,15 +34,17 @@
 #define F_DUPFD 0
 #define F_GETFD 1
 #define F_SETFD 2
+#define F_GETFL 3
+#define F_SETFL 4
 #define F_DUPFD_CLOEXEC 1030 /* Duplicate file descriptor with close-on-exit set.  */
 
 #define DT_UNKNOWN	0
 #define DT_FIFO	1
-#define DT_CHR		2
-#define DT_DIR		4
-#define DT_BLK		6
-#define DT_REG		8
-#define DT_LNK		10
+#define DT_CHR	2
+#define DT_DIR	4
+#define DT_BLK	6
+#define DT_REG	8
+#define DT_LNK	10
 #define DT_SOCK 12
 #define DT_WHT	14
 

@@ -6,23 +6,6 @@
 
 using namespace os;
 
-// Reserved kernel virtual memory size.
-constexpr size_t VM_SIZE = 1_gb;
-constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
-
-// The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
-// When we enable DEBUG_MEMORY, the meta becomes incredibly large.
-#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
-constexpr va_t MAX_PA_SIZE = 128_mb;
-#else
-constexpr va_t MAX_PA_SIZE = 2_gb;
-#endif
-
-// This amount of 4KB frames from __kernel_base will be managed by
-// the free-list allocator, mainly for bootstrapping.
-// All other regions will be managed by the bitmap allocator.
-constexpr va_t FREE_LIST_SIZE = 0x1000;
-
 namespace {
 
 struct frame_t {
@@ -281,7 +264,7 @@ void slab_free(void *p, int i) {
 
 }
 
-#if defined(DEBUG_MEMORY_EXPENSIVE) && defined(FUNC_INSTRUMENT)
+#if (defined(DEBUG_MEMORY_EXPENSIVE) || defined(UNIT_TEST)) && defined(FUNC_INSTRUMENT)
 [[gnu::no_instrument_function]] void check_slab_freelist() {
   for (unsigned i = 0; i < size_count; i++) {
     for (auto slb = slabs[i].head; slb; slb = slb->next) {
