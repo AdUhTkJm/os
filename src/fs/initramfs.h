@@ -43,8 +43,9 @@ public:
 
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
+  int truncate(size_t) override { return -EACCES; }
   int create(const string &name, filetype ty, int) override;
-  int unlink(const string &) override { return -EROFS; }
+  int unlink(const string &) override { return -EACCES; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
   // We don't support symlinks for now.

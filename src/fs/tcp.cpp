@@ -54,6 +54,7 @@ void tcp::read(const char *p, size_t len, int error) {
 
 // Avoid `mod` on every iteration step.
 void tcp_socket_inode::buffer::write(const void *buf, unsigned len) {
+  assert(size <= cap - len);
   auto src = (const char *) buf;
   unsigned chunk = min((unsigned) len, cap - tail);
   memcpy(data + tail, src, chunk);
@@ -70,27 +71,25 @@ void tcp_socket_inode::buffer::write(const void *buf, unsigned len) {
 }
 
 void tcp_socket_inode::buffer::consume(void *buf, unsigned len) {
-  auto dst = (char *) buf;
-  unsigned chunk = min((unsigned) len, cap - head);
-  memcpy(dst, data + head, chunk);
-  
-  if (len > chunk) {
-    memcpy(dst + chunk, data, len - chunk);
-    head = len - chunk;
-  } else
-    head += len;
-  
-  [[unlikely]] if (head == cap)
-    head = 0;
-  size -= len;
+  peek(buf, 0, len);
+  discard(len);
 }
 
-void tcp_socket_inode::buffer::peek(void *buf, unsigned len) const {
+void tcp_socket_inode::buffer::peek(void *buf, unsigned offset, unsigned len) const {
   auto dst = (char *) buf;
-  unsigned chunk = min((unsigned) len, cap - head);
-  memcpy(dst, data + head, chunk);
+  offset = (offset + head) % cap;
+  unsigned chunk = min((unsigned) len, cap - offset);
+  memcpy(dst, data + offset, chunk);
   if (len > chunk)
     memcpy(dst + chunk, data, len - chunk);
+}
+
+void tcp_socket_inode::buffer::discard(unsigned len) {
+  assert(size >= len);
+  head += len;
+  if (head >= cap)
+    head -= cap;
+  size -= len;
 }
 
 tcp::port tcp_socket_inode::allocate() {
@@ -113,11 +112,13 @@ tcp_socket_inode::tcp_socket_inode():
   inode_impl(&sockfs, 0, 0, 0666, Socket), state(tcp::state::CLOSED) {
   rxbuf.data = new char[rxbuf.cap = 65535];
   txbuf.data = new char[txbuf.cap = 65535];
+  scratch = new char[mss + total];
 }
 
 tcp_socket_inode::~tcp_socket_inode() {
   delete[] rxbuf.data;
   delete[] txbuf.data;
+  delete[] scratch;
 }
 
 int tcp_socket_inode::bind(ip::address addr, tcp::port port) {
@@ -139,16 +140,19 @@ int tcp_socket_inode::bind(ip::address addr, tcp::port port) {
 
 void tcp_socket_inode::receive(packet &&data) {
   printk("receive:\n");
-  hexdump(data.c_str(), data.size());
+  hexdump(data.c_str(), min(64ul, data.size()));
   lock.acquire();
   
   if (state != tcp::ESTABLISHED)
+    // We're not expecting messages, but headers.
+    // consume() would strip them, so we'd rather store the original packet.
     recv = os::move(data);
   else
     consume(data.c_str(), data.size());
 
   lock.release();
 
+  printk("wake\n");
   readwait.wake_all();
 }
 
@@ -160,73 +164,82 @@ void tcp_socket_inode::receive(int error) {
   readwait.wake_all();
 }
 
-ssize_t tcp_socket_inode::send(const buffer &buf, size_t len, unsigned char flags) {
-  // TCP cannot transmit a message this long.
-  if (len > 65515)
-    return -EINVAL;
-  if (state != tcp::ESTABLISHED)
-    return -ENOTCONN;
-
+ssize_t tcp_socket_inode::send(const buffer &buf, unsigned offset, unsigned len, unsigned char flags) {
   // Create a large enough buffer.
-  unique_ptr<char[]> buffer(new char[len + total]);
-  char *p = buffer.get() + total;
-  buf.peek(p, len);
+  char *p = scratch + total;
+  buf.peek(p, offset, len);
   p -= sizeof(tcp::header);
   
-  tcp::fill_header(p, src, dst, srcport, dstport, htonl(seq), htonl(ack), flags, htons(rxwindow), 0);
-  ip::write(p, len + sizeof(tcp::header), src, dst, protocol::TCP, 0, options);
-  seq += len;
-  return len;
+  tcp::fill_header(p, src, dst, srcport, dstport, htonl(seq), htonl(ack), flags, htons(rxwindow()), len);
+  return ip::write(p, len + sizeof(tcp::header), src, dst, protocol::TCP, 0, options);
 }
 
 void tcp_socket_inode::consume(const char *p, size_t len) {
   // Verify packet.
   const auto *header = (const tcp::header *) p;
+  // Incoming sequence number, not "is-eq".
+  unsigned iseq = ntohl(header->seq);
+  unsigned iack = ntohl(header->ack);
   // Calculate payload length.
   len -= header->offset * 4;
   p += header->offset * 4;
-  if (len > rxbuf.size) {
+  if (len > rxwindow()) {
     // The packet should be no longer than advertised window; drop this packet.
     printk("tcp: warning: packet malformed, dropped\n");
     return;
   }
   
+  bool pureack = false;
+
   lock.acquire();
-  if (header->flags & tcp::FIN) {
-    fin = true;
-    state = tcp::state::FIN_WAIT_1;
-    printk("tcp: TODO: fin received\n");
-    lock.release();
-    return;
+  if (header->flags & tcp::ACK) {
+    if (iack > acked) {
+      txbuf.discard(iack - acked);
+      acked = iack;
+      writewait.wake_all();
+      txwindow = ntohs(header->window);
+    }
+    // Otherwise, this is a duplicate ACK. Safe to do nothing - but what else to do?
   }
 
   // We received in-order data.
-  if (header->seq == ack) {
+  if (iseq == ack) {
     rxbuf.write(p, len);
     ack += len;
+    pureack = true;
     // Try to consume out-of-order buffer.
-    while (true) {
+    for (;;) {
       auto *str = ooo.find(ack); 
       if (!str)
         break;
 
       rxbuf.write(str->c_str(), str->size());
+      ooo.erase(ack);
       ack += str->size();
-      ooo.erase(seq); 
     }
   }
 
   // We received out-of-order data.
-  else if (header->seq > ack)
-    ooo.insert(header->seq, string(p, len));
+  else if (iseq > ack)
+    ooo.insert(iseq, string(p, len));
 
-  // We can ignore duplicate data when header->seq < ack.
+  // We can ignore duplicate data when iseq < ack.
+
+  // Deal with FIN. This changes `ack` so must be handled after receiving data.
+  if (header->flags & tcp::FIN) {
+    ack++;
+    state = tcp::state::CLOSE_WAIT;
+    pureack = true;
+  }
   lock.release();
 
   // Send an ACK.
-  char ackbuf[total];
-  char *q = ackbuf + total - sizeof(tcp::header);
-  tcp::fill_header(q, src, dst, srcport, dstport, seq, ack, tcp::ACK, 0, 0);
+  if (pureack) {
+    char ackbuf[total];
+    char *q = ackbuf + total - sizeof(tcp::header);
+    tcp::fill_header(q, src, dst, srcport, dstport, htonl(seq), htonl(ack), tcp::ACK, htons(rxwindow()), 0);
+    ip::write(q, sizeof(tcp::header), src, dst, protocol::TCP, 0, options);
+  }
 }
 
 ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) {
@@ -237,7 +250,7 @@ ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) 
 
   wait_entry entry;
   lock.acquire();
-  while (rxbuf.size == 0 && !fin) {
+  while (rxbuf.size == 0 && state == tcp::state::ESTABLISHED) {
     if (nonblock) {
       lock.release();
       return -EAGAIN;
@@ -251,6 +264,7 @@ ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) 
 
     lock.acquire();
     readwait.finish(entry);
+    printk("resume\n");
 
     if (rxerr) {
       int err = rxerr;
@@ -260,8 +274,8 @@ ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) 
     }
   }
 
-  // We received FIN. It is EOF now.
-  if (rxbuf.size == 0 && fin) {
+  // We received FIN and no more data will come. It is EOF now.
+  if (rxbuf.size == 0 && state != tcp::state::ESTABLISHED) {
     lock.release();
     return 0;
   }
@@ -269,7 +283,6 @@ ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) 
   size_t n = min((unsigned) len, rxbuf.size);
   rxbuf.consume(buf, n);
 
-  rxwindow = rxbuf.cap - rxbuf.size;
   lock.release();
   return n;
 }
@@ -311,18 +324,21 @@ ssize_t tcp_socket_inode::write(size_t offset, const void *buf, size_t len, int 
 
   // Try send out a packet.
   for (;;) {
-    unsigned unacked = seq - unack;
-    unsigned window = txwindow - unacked;
-    unsigned unsent = txbuf.size - unacked;
-    unsigned tosend = min(mss, min(window, unsent));
+    unsigned inflight = seq - acked;
+    unsigned short window = txwindow - inflight;
+    unsigned short unsent = txbuf.size - inflight;
+    unsigned short tosend = min(mss, min(window, unsent));
     if (tosend <= 0)
       break;
 
-    unsigned char flags = 0;
+    unsigned char flags = tcp::ACK;
     // We've sent all of our data, so we request a push.
     if (unsent == tosend)
       flags |= tcp::PSH;
-    send(txbuf, unacked, flags);
+    
+    synchronized _(lock);
+    if (auto ret = send(txbuf, inflight, tosend, flags); ret < 0)
+      return ret;
     seq += tosend;
   }
   return l;
@@ -344,20 +360,39 @@ int tcp_socket_inode::connect(ip::address addr, tcp::port port) {
   dstport = port;
   seq = rand();
   ack = 0;
-  rxwindow = 65535;
 
   // Receive the SYN + ACK package. Do a timed wait.
   int timeouts[] = { 1, 3, 7, 15, 30, 60 };
   auto tcb = active();
   wait_entry entry;
   bool received = false;
-  char p[total];
+  char p[total + 4];
   // Always leave some space to let IP/Ethernet directly write before p, without copying.
-  auto q = p + total - sizeof(tcp::header);
+  // Form the SYN package. We don't use fill_header() helper, because we aren't using a 20-byte header here.
+  auto q = p + total - 24;
+  auto header = (tcp::header *) q;
+  header->srcport = srcport;
+  header->dstport = dstport;
+  header->seq = htonl(seq);
+  header->__resv = 0;
+  header->offset = 6; // We're including options.
+  header->ack = 0;
+  header->window = htons(rxwindow());
+  header->flags = tcp::SYN;
+  header->urgent_ptr = 0;
+  header->checksum = 0;
+  // MSS (option 2): 0x05b4 (1460 bytes)
+  q[20] = 0x02; q[21] = 0x04; q[22] = 0x05; q[23] = 0xb4;
+  // Don't forget the pseudo-header.
+  unsigned sum = 0;
+  ip::pseudo_header h { .src = src, .dst = dst, .zero = 0, .prot = TCP, .len = htons(24) };
+  sum = ip::checksum_add(sum, &h, 12);
+  sum = ip::checksum_add(sum, q, 24);
+  header->checksum = ip::checksum_fold(sum);
+
   for (auto time : timeouts) {
-    // Send the SYN package.
-    tcp::fill_header(q, src, dst, srcport, dstport, htonl(seq), 0, tcp::SYN, htons(rxwindow), 0);
-    ip::write(q, sizeof(tcp::header), src, dst, protocol::TCP, 0, options);
+    // (Re)send the SYN packet.
+    ip::write(q, 24, src, dst, protocol::TCP, 0, options);
     state = tcp::state::SYN_SENT;
 
     lock.acquire();
@@ -396,11 +431,29 @@ int tcp_socket_inode::connect(ip::address addr, tcp::port port) {
       continue;
     }
 
-    // This is alright.
+    // This is alright. Let's fill in our data.
     ack = ntohl(header->seq) + 1;
     txwindow = ntohs(header->window);
     received = true;
 
+    // Look at options, if present.
+    auto end = recv.c_str() + recv.size();
+    for (auto p = (const char *) (header + 1); p < end;) {
+      unsigned char option = *p;
+      unsigned char len = *(p + 1);
+      p += 2;
+      switch (option) {
+      case 2: // MSS size
+        if (len != 4)
+          continue;
+        
+        mss = min(mss, htons(*(unsigned short *) p));
+        p += 2;
+        break;
+      default:
+        printk("tcp: unknown option: %d\n", option);
+      }
+    }
     lock.release();
     break;
   }
@@ -408,12 +461,14 @@ int tcp_socket_inode::connect(ip::address addr, tcp::port port) {
   if (!received)
     // Failed.
     return -ETIMEDOUT;
+
+  // The SYN packet consumes a sequence number.
+  ++seq;
   
-  // Send the final ACK package.
-  tcp::fill_header(q, src, dst, srcport, dstport, htonl(++seq), htonl(ack), tcp::ACK, htons(rxwindow), 0);
+  // Send the final ACK package. It doesn't consume a sequence number.
+  tcp::fill_header(q, src, dst, srcport, dstport, htonl(seq), htonl(ack), tcp::ACK, htons(rxwindow()), 0);
   ip::write(q, sizeof(tcp::header), src, dst, protocol::TCP, 0, options);
-  hexdump(q, sizeof(tcp::header));
-  unack = seq;
+  acked = seq;
   state = tcp::state::ESTABLISHED;
   return 0;
 }
@@ -424,6 +479,15 @@ void tcp_socket_inode::onclose(int) {
   case tcp::BOUND:
     state = tcp::CLOSED;
     break;
+  case tcp::CLOSE_WAIT: {
+    char p[total];
+    char *q = p + total - sizeof(tcp::header);
+    tcp::fill_header(q, src, dst, srcport, dstport, htonl(seq), htonl(ack), tcp::FIN, htons(rxwindow()), 0);
+    ip::write(q, sizeof(tcp::header), src, dst, protocol::TCP, 0, options);
+    seq++;
+    state = tcp::LAST_ACK;
+    break;
+  }
   default:
     printk("unknown state %d\n", state);
   }

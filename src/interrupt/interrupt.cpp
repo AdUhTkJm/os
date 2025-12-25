@@ -109,7 +109,7 @@ HANDLE(lseek, fd, offset, _whence) {
     return -EINVAL;
   
   f->seek(offset, whence);
-  return 0;
+  return f->offset;
 }
 
 HANDLE(read, fd, _buf, len) {
@@ -168,8 +168,7 @@ HANDLE(write, fd, _buf, len) {
   auto buf = copy_from_user((void*) _buf, len);
   if (!buf)
     return -EFAULT;
-  auto ret = file->write(buf->get(), len);
-  return ret;
+  return file->write(buf->get(), len);
 }
 
 HANDLE(writev, fd, iov, cnt) {
@@ -208,6 +207,27 @@ HANDLE(writev, fd, iov, cnt) {
   }
 
   return total;
+}
+
+HANDLE(truncate, _path, len) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return path;
+
+  int fd = pcb->open_file(path->get(), O_WRONLY);
+  if (fd < 0)
+    return fd;
+
+  auto file = pcb->ftbl->at(fd);
+  return file->node()->truncate(len);
+}
+
+HANDLE(ftruncate, fd, len) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  return file->node()->truncate(len);
 }
 
 HANDLE(mkdirat, dirfd, _path, mode) {

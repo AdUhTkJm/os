@@ -197,6 +197,7 @@ public:
   virtual ~inode();
   virtual ssize_t read(size_t offset, void* buf, size_t len, int flags) = 0;
   virtual ssize_t write(size_t offset, const void* buf, size_t len, int flags) = 0;
+  virtual int truncate(size_t len) { (void) len; return -EINVAL; }
 
   // Creates a new, empty file.
   // The `mode` is the access mode.
@@ -385,8 +386,8 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   long inum() const override { return (long) this; } \
 
 #define SYMLINK_INODE_DEFAULT_IMPL \
-  ssize_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(long(s.size()) - long(offset), long(len)); memcpy(buf, s.c_str() + offset, l); return l; } \
   ssize_t write(size_t, const void*, size_t, int) override { return -EACCES; } \
+  ssize_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(long(s.size()) - long(offset), long(len)); memcpy(buf, s.c_str() + offset, l); return l; } \
   int create(const string &, filetype, int) override { return -ENOTDIR; } \
   int unlink(const string &) override { return -ENOTDIR; } \
   inode *lookup(const string &) override { return nullptr; } \
@@ -394,6 +395,7 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   long inum() const override { return (long) this; } \
 
 #define DIR_INODE_DEFAULT_IMPL \
+  int truncate(size_t) override { return -EISDIR; } \
   ssize_t read(size_t, void *, size_t, int) override { return -EISDIR; } \
   ssize_t write(size_t, const void *, size_t, int) override { return -EISDIR; } \
   optional<string> readlink() override { return nullopt; } \

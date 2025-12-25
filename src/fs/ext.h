@@ -90,6 +90,14 @@ class ext_inode : public os::inode_impl<ext_inode> {
 
   int set_pointer(unsigned index, size_t value);
 
+  int truncate_ext4(size_t len);
+  int truncate_ext2(size_t len);
+
+  // Free `[first, last]` at indirect level `level`, current indirect block `block`, logical block number `base`.
+  int erase_ext2(unsigned block, unsigned base, unsigned first, unsigned last, int level);
+  // Free the entire subtree.
+  int erase_ext2(unsigned block, int level);
+
   vector<unsigned long> find_path(unsigned index);
   // Split node at level `level`, by inserting an extent `ext` into it.
   expected<extent_idx> split(const vector<unsigned long> &path, int level, int pos, const extent &ext);
@@ -117,6 +125,7 @@ public:
 
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
+  int truncate(size_t len) override;
   int create(const string &name, filetype ty, int mode) override;
   int unlink(const string &name) override;
   inode *lookup(const string &name) override;

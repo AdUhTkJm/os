@@ -33,6 +33,7 @@ enum error_code {
   EROFS = 30,
   EPIPE = 32,
   ERANGE = 34,
+  ENAMETOOLONG = 36,
   ENOSYS = 38,
   ELOOP = 40,
   EADDRINUSE = 98,

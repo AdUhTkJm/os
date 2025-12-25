@@ -27,6 +27,12 @@ ssize_t tmpfs_inode::write(size_t offset, const void *buf, size_t len, int flags
   return len;
 }
 
+int tmpfs_inode::truncate(size_t len) {
+  meta.atime = meta.mtime = now();
+  data.resize(len);
+  return 0;
+}
+
 int tmpfs_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;

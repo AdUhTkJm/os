@@ -24,6 +24,7 @@ public:
   filesystems(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
   ssize_t read(size_t, void *, size_t, int) override;
   ssize_t write(size_t, const void *, size_t, int) override { return -EACCES; }
+  int truncate(size_t) override { return -EACCES; }
 };
 
 class process : public inode_impl<process> {

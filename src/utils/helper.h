@@ -147,6 +147,9 @@ extern char __bss_begin[], __bss_end[];
 extern char __stack_top[];
 extern char __kernel_begin[], __kernel_end[];
 
+// Just all zeroes.
+inline const char zeroes[4096] {};
+
 extern reg_t rdtime();
 
 #endif

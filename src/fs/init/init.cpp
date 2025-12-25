@@ -246,7 +246,7 @@ extern "C" void _start() {
 #ifdef TEST
     const char *test = 
       //"cd /mnt/glibc/ && sh ./busybox_testcode.sh";
-      "cd mnt && mkdir tmp && cd tmp && echo a > a.txt";
+      "cd root && wget 10.0.2.2:8080 && cat index.html && echo 'done'";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };

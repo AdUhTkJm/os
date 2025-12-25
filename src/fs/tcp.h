@@ -67,12 +67,13 @@ class tcp_socket_inode : public inode_impl<tcp_socket_inode> {
 
   // Remember to convert them on send:
   //
-  // `ack` is the offset of the next byte we expect to receive, plus the initial sequence number.
-  __little unsigned ack, rxwindow;
-  // `seq` is the offset of the next byte we'll transmit, plus the initial sequence number.
-  __little unsigned unack, seq, txwindow;
-  // TODO: parse from option
-  __little unsigned mss = 1536;
+  // `ack` is the offset of the next byte we expect to receive, i.e. the `ack` field in header.
+  __little unsigned ack;
+  // `seq` is the offset of the next byte we'll transmit, i.e. the `seq` field in header.
+  // `acked` is the last byte we've acked. Note this is different from `ack`.
+  __little unsigned acked, seq, txwindow;
+  unsigned short mss = 1460;
+  unsigned short rxwindow() { return rxbuf.cap - rxbuf.size; }
 
   option options;
   bool fin = false;
@@ -80,9 +81,11 @@ class tcp_socket_inode : public inode_impl<tcp_socket_inode> {
   using packet = string;
   spinlock lock;
   int rxerr = 0;
-  // Raw packet. Mainly for 
+  // Raw packet, for handshaking.
   packet recv;
   wait_queue readwait, writewait;
+  // A scratch buffer to hold the connection.
+  char *scratch;
 
   // The out-of-order packet queue. It has to be sorted, so we use a B-tree here.
   os::btree<unsigned, packet, 8> ooo;
@@ -93,14 +96,14 @@ class tcp_socket_inode : public inode_impl<tcp_socket_inode> {
     unsigned head = 0, tail = 0, size = 0, cap;
 
     void consume(void *buf, unsigned len);
-    void peek(void *buf, unsigned len) const;
+    void peek(void *buf, unsigned offset, unsigned len) const;
     void write(const void *buf, unsigned len);
     void discard(unsigned len);
   } rxbuf, txbuf;
 
   static tcp::port allocate();
   // Sends a single packet.
-  ssize_t send(const buffer &buf, size_t len, unsigned char flags);
+  ssize_t send(const buffer &buf, unsigned offset, unsigned len, unsigned char flags);
   
   void receive(packet &&data);
   void receive(int error);

@@ -136,6 +136,7 @@ public:
   null_inode();
   ssize_t read(size_t, void *, size_t, int) override { return 0; }
   ssize_t write(size_t, const void*, size_t len, int) override { return len; }
+  int truncate(size_t) override { return 0; }
 };
 
 extern static_storage<console_inode> console;

@@ -37,41 +37,41 @@ size_t ext_inode::locate_ext2(size_t byte) {
   auto block_size = fs->blksz;
   size_t cnt = byte / block_size;
   // Size of each array pointed by the indirect pointers.
-  auto size = block_size / sizeof(int);
+  const auto N = block_size / sizeof(int);
   if (cnt < 12)
     return meta.directptr[cnt];
 
   // We're in the range of single-indirect pointer.
-  unique_ptr<unsigned[]> ptrs(new unsigned[block_size / sizeof(unsigned)]);
+  unsigned *ptrs;
   cnt -= 12;
-  if (cnt < size) {
-    fs->device->read(fs->offset(meta.indirect1), ptrs.get(), block_size, flags);
+  if (cnt < N) {
+    ptrs = (unsigned *) read_block(meta.indirect1);
     return ptrs[cnt];
   }
 
   // Second indirect pointer here.
-  cnt -= size;
-  if (cnt < size * size) {
-    fs->device->read(fs->offset(meta.indirect2), ptrs.get(), block_size, flags);
-    size_t b1 = ptrs[cnt / size];
+  cnt -= N;
+  if (cnt < N * N) {
+    ptrs = (unsigned *) read_block(meta.indirect2);
+    size_t b1 = ptrs[cnt / N];
     if (!b1)
       return 0;
-    fs->device->read(fs->offset(b1), ptrs.get(), block_size, flags);
-    return ptrs[cnt % size];
+    ptrs = (unsigned *) read_block(b1);
+    return ptrs[cnt % N];
   }
 
-  cnt -= size * size;
-  if (cnt < size * size * size) {
-    fs->device->read(fs->offset(meta.indirect3), ptrs.get(), block_size, flags);
-    size_t b2 = ptrs[cnt / (size * size)];
+  cnt -= N * N;
+  if (cnt < N * N * N) {
+    ptrs = (unsigned *) read_block(meta.indirect3);
+    size_t b2 = ptrs[cnt / (N * N)];
     if (!b2)
       return 0;
-    fs->device->read(fs->offset(b2), ptrs.get(), block_size, flags);
-    size_t b1 = ptrs[(cnt / size) % size];
+    ptrs = (unsigned *) read_block(b2);
+    size_t b1 = ptrs[(cnt / N) % N];
     if (!b1)
       return 0;
-    fs->device->read(fs->offset(b1), ptrs.get(), block_size, flags);
-    return ptrs[cnt % size];
+    ptrs = (unsigned *) read_block(b1);
+    return ptrs[cnt % N];
   }
 
   // This is out of range.
@@ -149,7 +149,7 @@ size_t ext_inode::locate(size_t byte) {
 int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
   auto fs = static_cast<ext*>(this->fs);
   unsigned block_size = fs->blksz;
-  auto size = block_size / sizeof(int);
+  const auto N = block_size / sizeof(int);
   if (index < 12) {
     meta.directptr[index] = value;
     return 0;
@@ -159,7 +159,7 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
   unique_ptr<char[]> zeroes_p(new char[block_size]);
   char *zeroes = zeroes_p.get();
   memset(zeroes, 0, block_size);
-  if (index < size) {
+  if (index < N) {
     // Allocate the single-indirect block if it's not present.
     if (meta.indirect1 == 0) {
       unsigned b = fs->balloc();
@@ -178,8 +178,8 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
     return 0;
   }
 
-  index -= size;
-  if (index < size * size) {
+  index -= N;
+  if (index < N * N) {
     // Allocate the double-indirect block if it's not present.
     if (meta.indirect2 == 0) {
       unsigned b = fs->balloc();
@@ -192,7 +192,7 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
 
     // Find the L1 block.
     unsigned l1;
-    size_t l1pos = fs->offset(meta.indirect2) + (index / size) * sizeof(int);
+    size_t l1pos = fs->offset(meta.indirect2) + (index / N) * sizeof(int);
     fs->device->read(l1pos, &l1, sizeof(int), flags);
     if (l1 == 0) {
       l1 = fs->balloc();
@@ -207,13 +207,13 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
     unsigned b = fs->balloc();
     if (b == -1u)
       return -ENOSPC;
-    size_t l0pos = fs->offset(l1) + (index % size) * sizeof(int);
+    size_t l0pos = fs->offset(l1) + (index % N) * sizeof(int);
     fs->device->write(l0pos, &b, sizeof(int), flags);
     return 0;
   }
 
-  index -= size * size;
-  if (index < size * size * size) {
+  index -= N * N;
+  if (index < N * N * N) {
     // Allocate the triple-indirect block if it's not present.
     if (meta.indirect3 == 0) {
       unsigned b = fs->balloc();
@@ -226,7 +226,7 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
 
     // Find the L2 block.
     unsigned l2;
-    size_t l2pos = fs->offset(meta.indirect3) + (index / (size * size)) * sizeof(int);
+    size_t l2pos = fs->offset(meta.indirect3) + (index / (N * N)) * sizeof(int);
     fs->device->read(l2pos, &l2, sizeof(int), flags);
     if (l2 == 0) {
       l2 = fs->balloc();
@@ -239,7 +239,7 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
 
     // Find the L1 block.
     unsigned l1;
-    size_t l1pos = fs->offset(meta.indirect3) + ((index / size) % size) * sizeof(int);
+    size_t l1pos = fs->offset(meta.indirect3) + ((index / N) % N) * sizeof(int);
     fs->device->read(l1pos, &l1, sizeof(int), flags);
     if (l1 == 0) {
       l1 = fs->balloc();
@@ -254,7 +254,7 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
     unsigned b = fs->balloc();
     if (b == -1u)
       return -ENOSPC;
-    size_t l0pos = fs->offset(l1) + (index % size) * sizeof(int);
+    size_t l0pos = fs->offset(l1) + (index % N) * sizeof(int);
     fs->device->write(l0pos, &b, sizeof(int), flags);
     return 0;
   }
@@ -522,14 +522,17 @@ int ext_inode::set_pointer(unsigned index, size_t value) {
 }
 
 int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
+  if (name.size() > 255)
+    return -ENAMETOOLONG;
+
   auto fs = static_cast<ext*>(this->fs);
   size_t blksz = fs->blksz;
-  flags = 0;
 
   for (size_t off = 0; off < meta.sz; off += blksz) {
     size_t b = locate(off);
+    // Holes are generally not allowed for directories.
     if (!b)
-      continue;
+      fs->on_corrupt();
 
     char *block = read_block_mutable(b);
 
@@ -537,11 +540,13 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
     while (pos < blksz) {
       // The old entry. We traverse through the entry list.
       auto *de = (direntry *) (block + pos);
+      if (de->size < sizeof(direntry) || de->size % 4 != 0 || pos + de->size > blksz)
+        fs->on_corrupt();
 
-      size_t len = roundup<4>(de->size);
+      size_t len = de->inum ? roundup<4>(sizeof(direntry) + de->namelen) : 0;
       // This is a full entry that occupies the rest of the block.
       // We shrink the previous entry and then create a new one.
-      // (Even when inum == 0, the size should also be correct, and the logic is unified.)
+      // (Even when inum == 0, the size should also be correct, and the logic is unified.
       if (de->size - len >= roundup<4>(sizeof(direntry) + name.size())) {
         de->size = len;
 
@@ -566,6 +571,9 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
   if (!newblk)
     return -ENOSPC;
 
+  if (auto ret = set_pointer(meta.sz / blksz, newblk); ret < 0)
+    return ret;
+
   auto sz = (unsigned long) meta.sz + blksz;
   if (fs->size_64) {
     sz += ((unsigned long) meta.acl << 32);
@@ -576,9 +584,6 @@ int ext_inode::add_dirent(const string &name, uint32_t inum, uint8_t type) {
     return -ENOSPC;
   else
     meta.sz = sz;
-
-  if (auto ret = set_pointer(meta.sz / blksz, newblk); ret < 0)
-    return ret;
 
   auto block = read_block_mutable(newblk);
   memset(block, 0, blksz);
@@ -766,12 +771,13 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
   auto node = fs->get();
 
   auto pcb = active()->pcb;
-
+  memset(&node->meta, 0, sizeof(node->meta));
+  node->meta.sz = 0;
   node->meta.type = fromtype(ty) | mode;
   node->meta.uid = pcb->uid;
   node->meta.gid = pcb->gid;
   node->meta.lnkcnt = (ty == Dir) ? 2 : 1;
-  node->meta.ctime = now() / 1_s;
+  node->meta.ctime = node->meta.mtime = node->meta.atime = now() / 1_s;
   fs->update_meta(node);
 
   // Metadata always get updated in add_dirent().
@@ -970,6 +976,125 @@ optional<string> ext_inode::readlink() {
   auto value = string(content, meta.sz);
   delete[] content;
   return value;
+}
+
+int ext_inode::erase_ext2(unsigned block, int level) {
+  if (block == 0)
+    return 0;
+
+  auto fs = (ext *) this->fs;
+  if (level == 0) {
+    fs->free_block(block);
+    return 1;
+  }
+
+  auto page = (unsigned *) read_block(block);
+  if (!page)
+    return -EIO;
+
+  for (int i = fs->blksz / sizeof(unsigned); i >= 0; i--) {
+    if (!page[i])
+      continue;
+    if (auto ret = erase_ext2(page[i], level - 1); ret < 0)
+      return ret;
+  }
+
+  fs->free_block(block);
+  return 0;
+}
+
+int ext_inode::erase_ext2(unsigned block, unsigned base, unsigned first, unsigned last, int level) {
+  if (block == 0)
+    return 0;
+
+  auto fs = (ext *)this->fs;
+  const size_t N = fs->blksz / sizeof(unsigned);
+
+  size_t span = 1;
+  for (int i = 0; i < level; i++)
+    span *= N;
+
+  size_t end = base + span - 1;
+
+  // No overlap. Return.
+  if (last < base || first > end)
+    return 0;
+
+  // Fully covered. Free entire subtree.
+  if (first <= base && end <= last) {
+    if (auto ret = erase_ext2(block, level); ret < 0)
+      return ret;
+    return span;
+  }
+
+  // Partial overlap. For level-0 nodes, there shouldn't be "partial".
+  assert(level != 0);
+
+  auto page = (unsigned *) read_block(block);
+  if (!page)
+    return -EIO;
+
+  int freed = 0;
+  bool all_zero = false;
+
+  for (size_t i = 0; i < N; i++) {
+    if (!page[i])
+      continue;
+
+    int ret = erase_ext2(page[i], end + i * (span / N), first, last, level - 1);
+    if (ret < 0)
+      return ret;
+
+    freed += ret;
+    // The child is fully freed.
+    if (ret == int(span / N))
+      page[i] = 0, all_zero = true;
+  }
+
+  if (all_zero)
+    fs->free_block(block);
+
+  return freed;
+}
+
+int ext_inode::truncate_ext2(size_t len) {
+  auto fs = (ext *) this->fs;
+
+  // Shrink case.
+  if (len < meta.sz) {
+    size_t begin = (len + fs->blksz - 1) / fs->blksz;
+    size_t end = (meta.sz + fs->blksz - 1) / fs->blksz - 1;
+
+    // Remove all blocks in [begin, end].
+    const int N = fs->blksz / sizeof(unsigned);
+    erase_ext2(meta.indirect3, 12 + N + N * N, begin, end, 0);
+    erase_ext2(meta.indirect2, 12 + N, begin, end, 0);
+    erase_ext2(meta.indirect1, 12, begin, end, 0);
+    for (int i = 12; i >= 0; i--)
+      erase_ext2(meta.directptr[i], i, begin, end, 0);
+
+    meta.sz = len;
+    fs->update_meta(this);
+    return 0;
+  }
+
+  // Grow case. `write` and `read` will handle holes.
+  meta.sz = len;
+  return 0;
+}
+
+int ext_inode::truncate_ext4(size_t) {
+  assert(false && "ext4: no truncate yet"); // TODO
+}
+
+int ext_inode::truncate(size_t len) {
+  if (type == Dir)
+    return -EISDIR;
+  meta.ctime = meta.mtime = now() / 1_s;
+
+  if (meta.flags & EXT4_INODE_EXTENTS)
+    return truncate_ext4(len);
+  return truncate_ext2(len);
 }
 
 // Currently we're assuming ext2 header starts at sector 2. This isn't always the case; read sectors 0 & 1 to know.
@@ -1179,7 +1304,7 @@ void ext::erase(inode *n) {
     free_blocks(node, node->meta.indirect2, 2);
     free_blocks(node, node->meta.indirect3, 3);
   } else {
-    panic("no extent yet");
+    panic("no extent yet"); // TODO
   }
 
   // Free the inode.
@@ -1203,7 +1328,8 @@ void ext::update_meta(ext_inode *node) {
 
   size_t table = read_64(gd.inode_table, gd.inode_table_hi);
   size_t offset = table * blksz + index * superblock.inode_size;
-  device->write(offset, &node->meta, superblock.inode_size, 0);
+  device->write(offset, &node->meta, sizeof(node->meta), 0);
+  device->write(offset + sizeof(node->meta), zeroes, superblock.inode_size - sizeof(node->meta), 0);
 }
 
 void ext::free_inode(size_t inum) {
