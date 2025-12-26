@@ -74,8 +74,8 @@ class expected {
   bool has_value;
   alignas(T) char data[sizeof(T)];
 
-  T* ptr() { return reinterpret_cast<T*>(data); }
-  const T* ptr() const { return reinterpret_cast<const T*>(data); }
+  T *ptr() { return reinterpret_cast<T*>(data); }
+  const T *ptr() const { return reinterpret_cast<const T*>(data); }
 public:
   expected(const expected&) = delete;
   expected& operator=(const expected&) = delete;

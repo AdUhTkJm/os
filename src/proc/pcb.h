@@ -117,6 +117,9 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   sigset pending = 0;     // Pending signals, for this thread.
   sigset sigwait = 0;     // Signals that the process is waiting for.
   long timeout = 0;       // Timeout to last sleep.
+#ifndef NDEBUG
+  hashmap<wait_entry*, wait_queue*> entr;
+#endif
 
   pcb_t *pcb;             // Parent process.
 
@@ -156,7 +159,7 @@ struct pcb_t {
   os::tty::tty *tty;      // Terminal typewriter.
   wait_queue wait;        // Threads suspended in wait() system call.
   spinlock waitlock;      // Lock associated with `wait`.
-  rlimit rlims[4];        // Resource limits.
+  rlimit rlims[9];        // Resource limits.
   tms times {};           // For times() system call. TODO: update on every tick.
   long last_schedule;     // The timestamp of last schedule.
   struct itimer {

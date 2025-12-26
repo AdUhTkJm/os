@@ -30,8 +30,7 @@ pa_t copy_impl(pte_t *pt, int lvl) {
       continue;
     if (is_leaf(pt[i])) {
       va[i] = pt[i];
-      if (pt[i] & PTE_U)
-        pincref(PTE_TO_PA(pt[i]));
+      pincref(PTE_TO_PA(pt[i]));
       continue;
     }
     auto pa = copy_impl((pte_t*) PTE_TO_VA(pt[i]), lvl - 1);
@@ -42,13 +41,11 @@ pa_t copy_impl(pte_t *pt, int lvl) {
 
 void free_impl(pte_t *pt, int lvl) {
   unsigned end = lvl == 2 ? 256 : 512;
-  // No more child nodes to free.
-  if (lvl == 0)
-    return;
   for (unsigned i = 0; i < end; i++) {
-    if (is_leaf(pt[i]) || !is_valid(pt[i]))
+    if (!is_valid(pt[i]))
       continue;
-    free_impl((pte_t *) PTE_TO_VA(pt[i]), lvl - 1);
+    if (!is_leaf(pt[i]))
+      free_impl((pte_t *) PTE_TO_VA(pt[i]), lvl - 1);
     pfree(PTE_TO_PA(pt[i]));
   }
 }

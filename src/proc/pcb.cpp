@@ -70,7 +70,7 @@ process_file_table::process_file_table(const process_file_table &other): open(ot
 
 void pcb_t::clear() {
   setroot(pid, __kernel_pt_root);
-  { 
+  {
     pt::free(pt_root);
     pt_root = __kernel_pt_root;
   }
@@ -99,6 +99,11 @@ int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode, in
 }
 
 int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mode, inode::filetype type) {
+  // Check maximum allowed files.
+  size_t max = rlims[RLIMIT_OFILE].rlim_cur;
+  if (max != 0 && ftbl->size() >= max)
+    return -EPERM;
+
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
   bool write = can_write(flags);
@@ -259,7 +264,8 @@ void init(tcb_t *tcb) {
 
 void terminate(tcb_t *tcb, int ret) {
   auto pcb = tcb->pcb;
-  printk("terminate pid %d (tid %d)\n", pcb->pid, tcb->tid);
+
+  assert(tcb->entr.size() == 0);
 
   if (pcb->threads.size() == 1) {
     assert(pcb->threads.front() == tcb);
@@ -436,6 +442,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
       
       pte &= ~PTE_W;
       pte |= PTE_COW;
+      pincref(PTE_TO_PA(pte));
     });
 
     // Deep-copy the page table.
@@ -520,6 +527,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
   auto tcb = active();
   auto pcb = tcb->pcb;
+  assert(pcb->threads.size() == 1);
 
   // First check whether this is an ELF. If it isn't, we must not change anything.
   int fd = pcb->open_file(path, O_RDONLY);

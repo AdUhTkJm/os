@@ -646,8 +646,11 @@ int sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsign
     return -EFAULT;
   
   // Now let's see the inode type.
-  // TODO: if it's a connection type, then it shouldn't connect.
   if (dest) {
+    // If it's a connection type, then it shouldn't connect.
+    if (auto tcp = dyn_cast<tcp_socket_inode>(file->node()); tcp && tcp->get_state() != tcp::ESTABLISHED)
+      return -ENOTCONN;
+
     if (auto ret = connect(fd, dest, addrlen); ret < 0)
       return ret;
   }
@@ -702,31 +705,38 @@ int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
   if (pid == 0)
     pid = pcb->pid;
 
-  switch (resource) {
-  case RLIMIT_STACK: {
-    auto before = pcb->rlims[RLIMIT_STACK];
+  if (resource < 0 || (unsigned) resource >= sizeof(pcb->rlims) / sizeof(rlimit))
+    return -EINVAL;
+  
+  auto before = pcb->rlims[resource];
+  if (newrlim) {
+    auto plim = copy_from_user(newrlim, sizeof(rlimit));
+    if (!plim)
+      return -EFAULT;
 
-    if (newrlim) {
-      auto plim = copy_from_user(newrlim, sizeof(rlimit));
-      if (!plim)
-        return -EFAULT;
+    auto rlim = *(rlimit *) plim->get();
+    if (before.rlim_max != 0 && (rlim.rlim_max > before.rlim_max || rlim.rlim_cur > rlim.rlim_max || rlim.rlim_cur == 0))
+      return -EPERM;
 
-      auto rlim = *(rlimit *) plim->get();
-      if (rlim.rlim_max > pcb->rlims[RLIMIT_STACK].rlim_max || rlim.rlim_cur > rlim.rlim_max)
-        return -EPERM;
-
-      pcb->rlims[RLIMIT_STACK] = rlim;
-      // TODO: actually reduce stack size
-    }
-
-    if (oldrlim)
-      copy_to_user(oldrlim, &before, sizeof(rlimit));
-    return 0;
+    pcb->rlims[resource] = rlim;
   }
+
+  if (newrlim) switch (resource) {
+  case RLIMIT_STACK: {
+    // TODO: actually reduce stack size
+    break;
+  }
+  case RLIMIT_OFILE:
+    // No special action needed.
+    break;
   default:
     printk("prlimit: unknown resource = %d\n", resource);
     return -EINVAL;
   }
+
+  if (oldrlim)
+    copy_to_user(oldrlim, &before, sizeof(rlimit));
+  return 0;
 }
 
 int nanosleep(int clock, int flags, void *rqtp, void *rmtp) {

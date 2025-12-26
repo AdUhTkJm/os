@@ -23,8 +23,6 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
     return -ENOEXEC;
 
   auto loadbase = interp_pos;
-  
-  unique_ptr<char> interp = nullptr;
 
   for (unsigned i = 0; i < header.e_phnum; i++) {
     program_header phdr;

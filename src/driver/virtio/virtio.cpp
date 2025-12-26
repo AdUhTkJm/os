@@ -267,7 +267,9 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   };
   if (lba + len >= cap) {
     printk("virtio: warning: reading sector %ld - %ld on a device with only %ld sectors\n", lba, lba + len, cap);
+#ifdef FUNC_INSTRUMENT
     stack::dump();
+#endif
     return -EIO;
   }
   
@@ -340,13 +342,13 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   // We have to follow the layout specified by 5.2.6.4 for legacy drivers.
   pa_t req = pframe();
   pa_t buf = pmalloc(roundup<PAGE_SIZE>(512 * len) / PAGE_SIZE);
+  pa_t status = pframe();
   *(request_legacy*) as_va(req) = {
     .type = 1, /* Write */
     .reserved = 0,
     .sector = lba,
   };
   
-  int status = 0xff;
   memcpy((void *) as_va(buf), buffer, 512 * len);
 
   descriptor d[3];
@@ -367,7 +369,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   d1.flags = vq::descflags::HAS_NEXT;
   d1.next = d[2];
 
-  d2.addr = to_pa(&status);
+  d2.addr = status;
   d2.len = 1;
   d2.flags = vq::descflags::WRITEONLY;
   d2.next = 0;
@@ -381,7 +383,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   pfree(buf);
   pfree(req);
-  return status;
+  return mmrd<unsigned char>(status);
 }
 
 int block_device::read(uint64_t lba, void *buffer, int len) {

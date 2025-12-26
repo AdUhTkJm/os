@@ -287,12 +287,26 @@ HANDLE(sendfile, out, in, offptr, len) {
     offset = *(size_t*) p->get();
   }
 
-  unique_ptr<char[]> buf(new char[len]);
+  char buf[1024];
   int before = fin->seek(offset, file::begin);
 
-  long read = fin->read(buf.get(), len);
-  size_t written = fout->write(buf.get(), min(len, read));
-  
+  size_t written = 0;
+  while (len >= 0) {
+    long read = fin->read(buf, min(len, 1024l));
+    if (read < 0)
+      return written ? written : read;
+    // EOF.
+    if (read == 0)
+      break;
+
+    long ret = fout->write(buf, min(len, read));
+    if (ret < 0)
+      return written ? written : ret;
+    
+    len -= read;
+    written += read;
+  }
+
   // We don't modify file position when offset is specified.
   if (offptr)
     fin->seek(before, file::begin);

@@ -7,6 +7,12 @@
 
 namespace os {
 
+struct pframe_meta {
+  // 0 for normal memory; non-zero value `i` for slabs[i].
+  unsigned char type;
+  unsigned char refcnt;
+};
+
 // Reserved kernel virtual memory size.
 constexpr size_t VM_SIZE = 1_gb;
 constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
@@ -73,6 +79,11 @@ template<size_t Align> requires (Align < sizeof(size_t))
 void *vmalloc(size_t len) {
   return vmalloc<sizeof(size_t)>(len);
 }
+
+#ifndef NDEBUG
+pframe_meta *inspect_meta();
+size_t off(pa_t pa);
+#endif
 
 }
 

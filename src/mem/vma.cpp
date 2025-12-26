@@ -38,6 +38,8 @@ void map_single(void *va, pte_t *root) {
   if (origflags != -1 && (origflags & PTE_COW)) {
     // This is a copy-on-write segment. We copy the original contents.
     memcpy((void *) as_va(pa), va_page, PAGE_SIZE);
+    // The original pa must be freed.
+    pfree(to_pa(va_page));
     // Remap the memory and let it point to the new pa.
     os::pmap(pa, va_page, MAP_4KB, flags | PTE_W, root);
     return;

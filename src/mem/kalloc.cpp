@@ -27,12 +27,6 @@ os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
 
 uintptr_t physbegin, physend;
 
-struct pframe_meta {
-  // 0 for normal memory; non-zero value `i` for slabs[i].
-  unsigned char type;
-  unsigned char refcnt;
-};
-
 #ifndef IN_VSCODE
 pframe_meta meta[MAX_PA_SIZE / PAGE_SIZE];
 #else
@@ -291,9 +285,14 @@ void slab_free(void *p, int i) {
 
 namespace os {
 
-void pincref(pa_t p) {
-  size_t pos = (p - physbegin) / PAGE_SIZE;
+size_t off(pa_t pa) {
+  auto pos = (pa - physbegin) / PAGE_SIZE;
   assert(pos < META_SIZE);
+  return pos;
+}
+
+void pincref(pa_t p) {
+  size_t pos = off(p);
   meta[pos].refcnt++;
 }
 
@@ -343,18 +342,21 @@ void pfree(pa_t p) {
     return;
   assert(p % PAGE_SIZE == 0);
   
-  auto pos = (p - physbegin) / PAGE_SIZE;
-  assert(pos < META_SIZE);
+  auto pos = off(p);
+  
 #if defined(DEBUG_MEMORY)
   if (meta[pos].refcnt == 0) {
     printk("%p double-freed\n", p);
     panic("memory: pfree");
   }
-  memset((void *) as_va(p), 0xCC, PAGE_SIZE);
 #endif
   
   if (--meta[pos].refcnt > 0)
     return;
+
+#if defined(DEBUG_MEMORY)
+  memset((void *) as_va(p), 0xCC, PAGE_SIZE);
+#endif
 
   // This region is managed by free list allocator.
   physavail++;
@@ -367,9 +369,7 @@ void pfree(pa_t p) {
   }
 
   // This is managed by the bitmap allocator.
-  auto base = (uintptr_t) p;
-  auto index = (base - physbegin) / PAGE_SIZE;
-  pmmap[index] = 0;
+  pmmap[off(p)] = 0;
 }
 
 pa_t pmalloc(int pagecnt) {
@@ -386,6 +386,7 @@ pa_t pmalloc(int pagecnt) {
   assert(index + pagecnt < META_SIZE);
   for (size_t i = index; i < index + pagecnt; i++)
     meta[i].refcnt++;
+  printk("pmalloc: %d\n", pagecnt);
   return index * PAGE_SIZE + physbegin;
 }
 
@@ -415,8 +416,7 @@ void vfree(void *p) {
 #endif
   if (!p)
     return;
-  auto pos = (to_pa(p) - physbegin) / PAGE_SIZE;
-  assert(pos < META_SIZE);
+  auto pos = off(to_pa(p));
   if (auto type = meta[pos].type) {
 #ifdef DEBUG_MEMORY
     if (*(unsigned long *) ((va_t) p - 8) != CANARY_BEGIN)
@@ -463,6 +463,10 @@ size_t pavail() {
 
 size_t ptotal() {
   return (physend - physbegin) / PAGE_SIZE;
+}
+
+pframe_meta *inspect_meta() {
+  return meta;
 }
 
 }

@@ -130,6 +130,8 @@ public:
 
   int bind(ip::address addr, tcp::port port);
   int connect(ip::address addr, tcp::port port);
+
+  tcp::state get_state() const { return state; }
 };
 
 }

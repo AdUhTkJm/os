@@ -119,9 +119,12 @@ void scheduler_t::wakeup(tcb_t *tcb, bool can_preempt) {
 }
 
 void scheduler_t::tick() {
-  for (auto entry : napping.q) {
+  for (auto entry = napping.q.front(); entry != nullptr;) {
+    auto next = entry->next;
     if (--entry->tcb->timeout <= 0)
-      napping.wake(*entry);
+      napping.wake(*entry, /*can_preempt=*/ false);
+
+    entry = next;
   }
   for (auto pcb : *itimer_real) {
     auto &itimer = pcb->itimers[ITIMER_REAL];
@@ -129,6 +132,7 @@ void scheduler_t::tick() {
       pcb->send_signal(SIGALRM);
       if (itimer.interval != 0)
         itimer.timeout = itimer.interval;
+      // TODO: otherwise, remove.
     }
   }
 }

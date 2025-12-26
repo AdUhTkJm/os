@@ -9,6 +9,11 @@ void wait_queue::prepare(wait_entry &entry) {
   if (!entry.queued) {
     entry.queued = true;
     q.push_back(&entry);
+    
+#ifndef NDEBUG
+    entry.tcb->entr.insert(&entry, this);
+#endif
+
     scheduler.prepare_to_sleep();
   }
 }
@@ -17,6 +22,11 @@ void wait_queue::finish(wait_entry &entry) {
   synchronized _(lock);
   if (entry.queued) {
     q.erase(&entry);
+    
+#ifndef NDEBUG
+    entry.tcb->entr.erase(&entry);
+#endif
+
     entry.queued = false;
   }
 }

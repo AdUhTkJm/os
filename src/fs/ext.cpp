@@ -263,12 +263,11 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
 vector<unsigned long> ext_inode::find_path(unsigned tgt) {
   vector<unsigned long> path;
   auto fs = static_cast<ext*>(this->fs);
-  auto header = (extent_header *) meta.directptr;
-  unique_ptr<char[]> buf(new char[fs->blksz]);
+  auto header = (const extent_header *) meta.directptr;
   uint64_t block = 0;
   int last_depth = -1;
 
-  for (auto idx = (extent_idx *) (header + 1);;) {
+  for (auto idx = (const extent_idx *) (header + 1);;) {
     path.push_back(block);
     if (header->magic != 0xf30a)
       fs->on_corrupt();
@@ -281,7 +280,7 @@ vector<unsigned long> ext_inode::find_path(unsigned tgt) {
     last_depth = header->depth;
 
     // We must recurse.
-    extent_idx *node = nullptr;
+    const extent_idx *node = nullptr;
 
     // Find the index entry containing the target block.
     for (int i = 0; i < header->entries; ++i) {
@@ -298,19 +297,8 @@ vector<unsigned long> ext_inode::find_path(unsigned tgt) {
     if (block == 0)
       fs->on_corrupt();
 
-    fs->device->read(fs->offset(block), buf.get(), fs->blksz, flags);
-    header = (extent_header *) buf.get();
+    header = (extent_header *) read_block(block);
     idx = (extent_idx *) (header + 1);
-
-    if (fs->do_crc) {
-      auto crc = *(unsigned *)(buf.get() + fs->blksz - 12);
-      auto computed = this->crc(header);
-      printk("do crc: %d vs %d\n", crc, computed);
-      if (crc != computed) {
-        printk("ext: crc mismatch: %p != %p", crc, computed);
-        fs->on_corrupt();
-      }
-    }
   }
 }
 
@@ -1127,9 +1115,9 @@ int ext_inode::truncate(size_t len) {
 // Currently we're assuming ext2 header starts at sector 2. This isn't always the case; read sectors 0 & 1 to know.
 ext::ext(block_inode *device): device(device) {
   constexpr auto sbsz = sizeof(struct superblock);
-  unique_ptr<char[]> block(new char[sbsz]);
-  device->read(1024, block.get(), sbsz, 0);
-  memcpy(&superblock, block.get(), sbsz);
+  char block[sbsz];
+  device->read(1024, block, sbsz, 0);
+  memcpy(&superblock, block, sbsz);
   // Leave ext2 in an uninitialized state. In this state, this->root is nullptr,
   // so it's easy to detect an error.
   if (superblock.magic != 0xef53)
