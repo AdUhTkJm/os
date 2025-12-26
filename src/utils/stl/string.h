@@ -131,6 +131,16 @@ public:
     return s;
   }
 
+  string &operator+=(int other) {
+    return *this = *this + other;
+  }
+
+  string operator+(int other) const {
+    char buf[12];
+    itoa(other, buf, 10);
+    return *this + buf;
+  }
+
   void push_back(char v) {
     *this += string(&v, 1);
   }

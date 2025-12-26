@@ -40,6 +40,7 @@ pframe_meta meta[MAX_PA_SIZE / PAGE_SIZE];
 // An array of length 4194304 will have dramatic performance drop.
 pframe_meta meta[1];
 #endif
+constexpr auto META_SIZE = sizeof(meta) / sizeof(pframe_meta);
 bool pminit;
 
 // Finds `total` consecutive virtual pages.
@@ -157,19 +158,26 @@ void mark_reserved() {
   });
   physavail += min(physend - physbegin, MAX_PA_SIZE) / PAGE_SIZE;
 
-  auto rsv = fdt::reserved();
+  
+  for (auto *rsvmap = (fdt::memrsv*) ((char *) fdt::pfdt + to_big_endian(fdt::pfdt->off_mem_rsvmap));; rsvmap++) {
+    if (rsvmap->address == 0 && rsvmap->size == 0)
+      break;
+
+    auto begin = rsvmap->address, size = rsvmap->size;
+    
+    auto start = (begin - physbegin) / PAGE_SIZE;
+    auto end = start + roundup<PAGE_SIZE>(size) / PAGE_SIZE;
+    pmmap.set(start, end);
+    physavail -= (end - start);
+  }
   // Don't touch the space of the free-list allocator.
   // Also don't touch the kernel itself.
   auto endpa = (pa_t) (__kernel_end - KERNEL_OFFSET);
-  rsv.push_back({ 0x8000'0000, endpa - 0x8000'0000 });
-  rsv.push_back({ endpa, FREE_LIST_SIZE * PAGE_SIZE });
-
-  for (const auto &[begin, size] : rsv) {
-    auto start_page = (begin - physbegin) / PAGE_SIZE;
-    auto end_page = start_page + roundup<PAGE_SIZE>(size) / PAGE_SIZE;
-    pmmap.set(start_page, end_page);
-    physavail -= (end_page - start_page);
-  }
+  
+  auto start = (0x8000'0000 - physbegin) / PAGE_SIZE;
+  auto end = (endpa + FREE_LIST_SIZE * PAGE_SIZE - physbegin) / PAGE_SIZE;
+  pmmap.set(start, end);
+  physavail -= (end - start);
 }
 
 struct slab : intrusive_list_node<slab> {
@@ -201,7 +209,7 @@ bool push_slab(int i) {
 
   // Mark the belonging of the page.
   auto pos = (to_pa(page) - physbegin) / PAGE_SIZE;
-  assert(pos <= sizeof(meta) / sizeof(pframe_meta));
+  assert(pos <= META_SIZE);
   meta[pos].type = i;
 
   slab *slb = (slab *) page;
@@ -285,7 +293,7 @@ namespace os {
 
 void pincref(pa_t p) {
   size_t pos = (p - physbegin) / PAGE_SIZE;
-  assert(pos < sizeof(meta) / sizeof(pframe_meta));
+  assert(pos < META_SIZE);
   meta[pos].refcnt++;
 }
 
@@ -312,7 +320,10 @@ pa_t pframe() {
   }
 
   auto pos = (pa - physbegin) / PAGE_SIZE;
-  assert(pos < sizeof(meta) / sizeof(pframe_meta));
+  if (pos >= META_SIZE) {
+    printk("pa = %p, physbegin = %p, pos = %ld (max: %ld)\n", pa, physbegin, pos, META_SIZE);
+    assert(false);
+  }
   meta[pos].refcnt++;
 #if defined(DEBUG_MEMORY)
   memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
@@ -333,7 +344,7 @@ void pfree(pa_t p) {
   assert(p % PAGE_SIZE == 0);
   
   auto pos = (p - physbegin) / PAGE_SIZE;
-  assert(pos < sizeof(meta) / sizeof(pframe_meta));
+  assert(pos < META_SIZE);
 #if defined(DEBUG_MEMORY)
   if (meta[pos].refcnt == 0) {
     printk("%p double-freed\n", p);
@@ -372,7 +383,7 @@ pa_t pmalloc(int pagecnt) {
   if (index == -1ul)
     panic("pmalloc: out of memory");
   pmmap.set(index, index + pagecnt);
-  assert(index + pagecnt < sizeof(meta) / sizeof(pframe_meta));
+  assert(index + pagecnt < META_SIZE);
   for (size_t i = index; i < index + pagecnt; i++)
     meta[i].refcnt++;
   return index * PAGE_SIZE + physbegin;
@@ -405,7 +416,7 @@ void vfree(void *p) {
   if (!p)
     return;
   auto pos = (to_pa(p) - physbegin) / PAGE_SIZE;
-  assert(pos < sizeof(meta) / sizeof(pframe_meta));
+  assert(pos < META_SIZE);
   if (auto type = meta[pos].type) {
 #ifdef DEBUG_MEMORY
     if (*(unsigned long *) ((va_t) p - 8) != CANARY_BEGIN)

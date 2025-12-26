@@ -44,7 +44,11 @@ int tmpfs_inode::create(const string &name, filetype ty, int mode) {
   node->gid = tcb->pcb->gid;
   node->mode = mode;
   children[name] = node;
-  meta.atime = meta.mtime = now();
+  if (ty == Dir) {
+    node->children[".."] = this;
+    node->children["."] = node;
+  }
+  node->meta.ctime = node->meta.atime = node->meta.mtime = meta.atime = meta.mtime = now();
   return 0;
 }
 
@@ -53,6 +57,27 @@ int tmpfs_inode::unlink(const string &name) {
     return -ENOENT;
 
   auto node = children[name];
+  if (node->type == Dir)
+    return -EPERM;
+  node->unlinked();
+
+  children.erase(name);
+  meta.atime = meta.mtime = now();
+  return 0;
+}
+
+int tmpfs_inode::rmdir(const string &name) {
+  if (!children.count(name))
+    return -ENOENT;
+  if (name == "." || name == "..")
+    return -EINVAL;
+
+  auto node = children[name];
+  if (node->type != Dir)
+    return -ENOTDIR;
+  if (node->children.size() > 2)
+    return -EPERM;
+
   node->unlinked();
 
   children.erase(name);

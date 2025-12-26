@@ -47,11 +47,10 @@ class devroot : public inode_impl<devroot> {
 public:
   DIR_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
+  READONLY_DIRECTORY;
 
   // Is it really read-only?
   devroot(class fs *fs);
-  int create(const string &, inode::filetype, int) override { return -EROFS; }
-  int unlink(const string &) override { return -EROFS; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
 

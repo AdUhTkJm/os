@@ -361,12 +361,7 @@ ssize_t udp_socket_inode::read(size_t, void *buf, size_t len, int flags) {
       return -EAGAIN;
     }
 
-    readwait.prepare(entry);
-    rxlock.release();
-    if (suspend() != 0)
-      return -EINTR;
-    rxlock.acquire();
-    readwait.finish(entry);
+    hangon(readwait, rxlock, entry);
   }
 }
 

@@ -324,12 +324,13 @@ HANDLE(faccessat, dirfd, _path, mode) {
 
 HANDLE(utimensat, dirfd, _path, times, flags) {
   bool follow = !(flags & AT_SYMLINK_NOFOLLOW);
+  bool emptypath = flags & AT_EMPTY_PATH;
+
   auto path = copy_from_user((char *) _path);
-  if (!path)
+  if (!path || ((!*path) && !emptypath))
     return -EFAULT;
   
   bool relative = (*path)[0] != '/';
-  bool emptypath = flags & AT_EMPTY_PATH;
   file *file = nullptr;
   inode *node;
   if (!emptypath) {
@@ -429,6 +430,85 @@ HANDLE(fchdir, fd) {
     return -EBADF;
   pcb->pwd = file->entry;
   return 0;
+}
+
+HANDLE(fchown, fd, uid, gid) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  auto node = file->node();
+  if (node->uid != pcb->uid && pcb->uid != 0)
+    return -EPERM;
+  if (uid != -1)
+    node->uid = uid;
+  if (gid != -1)
+    node->gid = gid;
+  
+  return node->onchown();
+}
+
+HANDLE(fchownat, dirfd, _path, uid, gid, flags) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  int openflags = 0;
+  if (flags & AT_SYMLINK_NOFOLLOW)
+    openflags |= O_NOFOLLOW;
+  bool relative = (*path)[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
+    : pcb->open_file(path->get(), O_PATH | openflags);
+  if (fd < 0)
+    return fd;
+  auto node = pcb->ftbl->at(fd)->node();
+  if (node->uid != pcb->uid && pcb->uid != 0)
+    return -EPERM;
+  if (uid != -1)
+    node->uid = uid;
+  if (gid != -1)
+    node->gid = gid;
+  
+  auto ret = node->onchown();
+  pcb->close_file(fd);
+  return ret;
+}
+
+HANDLE(fchmod, fd, mode) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  if (mode >= 07777)
+    return -EINVAL;
+
+  auto node = file->node();
+  if (node->uid != pcb->uid && pcb->uid != 0)
+    return -EPERM;
+
+  node->mode = mode;
+  return node->onchmod();
+}
+
+HANDLE(fchmodat, dirfd, _path, mode, flags) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return -EFAULT;
+  int openflags = 0;
+  if (flags & AT_SYMLINK_NOFOLLOW)
+    openflags |= O_NOFOLLOW;
+  bool relative = (*path)[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
+    : pcb->open_file(path->get(), O_PATH | openflags);
+  if (fd < 0)
+    return fd;
+  auto node = pcb->ftbl->at(fd)->node();
+  if (node->uid != pcb->uid && pcb->uid != 0)
+    return -EPERM;
+
+  node->mode = mode;
+  auto ret = node->onchown();
+  pcb->close_file(fd);
+  return ret;
 }
 
 // These two system calls only exist in RISC-V.
@@ -536,10 +616,20 @@ HANDLE(unlinkat, dirfd, _path, flags) {
     return -EBADF;
 
   // We cannot unlink a directory.
+  auto dir = file->entry->parent->node;
+  bool rmdir = flags & AT_REMOVEDIR;
+  if (rmdir) {
+    if (int ret = dir->rmdir(file->entry->name); ret < 0)
+      return ret;
+    
+    // Forget it in dcache.
+    vfs::invalidate(file->entry->parent->node, file->entry->name);
+    return 0;
+  }
+
   if (file->node()->type == inode::Dir)
     return -EISDIR;
 
-  auto dir = file->entry->parent->node;
   if (!writable(pcb->uid, pcb->gid, dir))
     return -EACCES;
 
@@ -1025,7 +1115,10 @@ HANDLE(rt_sigtimedwait, sig, info, timeout) {
   tcb->sigresume = -1;
   tcb->sigwait = wait;
   tcb->sleep(tm);
-  return tcb->sigresume != -1 ? tcb->sigresume : -EAGAIN;
+  
+  auto ret = tcb->sigresume != -1 ? tcb->sigresume : -EAGAIN;
+  tcb->sigresume = -1;
+  return ret;
 }
 
 HANDLE(kill, pid, sig) {
@@ -1143,10 +1236,10 @@ retry:
   // Recovered from sleeping by timeout.
   if (ret == 0)
     return 0;
-  // Recovered from sleeping by something other than interrupt.
+  // Recovered from sleeping by something other than signal.
   if (ret == 1)
     goto retry;
-  // Recovered from sleeping by interrupt.
+  // Recovered from sleeping by signal.
   return -EINTR;
 }
 
@@ -1186,8 +1279,8 @@ HANDLE(rt_sigaction, sig, act, oldact) {
   return 0;
 }
 
-HANDLE(futex, uaddr, op, val, timeout) {
-  return detail::futex((void *) uaddr, op, val, (void *) timeout);
+HANDLE(futex, uaddr, op, val, timeout, val2, val3) {
+  return detail::futex((void *) uaddr, op, val, (void *) timeout, val2, val3);
 }
 
 HANDLE(wait4, pid, wstatus, options, rusage) {

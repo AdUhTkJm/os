@@ -14,10 +14,17 @@ namespace {
 
 using namespace os;
 
-int futex_wait(void *addr, int expected, void *timeout) {
-  if (timeout)
-    printk("futex_wait: no timeout now\n");
-  
+int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
+  size_t timeout = 1800'0000'0000'0000'0000ul;
+  if (timeout) {
+    auto tp = copy_from_user((void *) _timeout, sizeof(timespec));
+    if (!tp)
+      return -EFAULT;
+
+    auto ts = *(timespec *) tp->get();
+    timeout = ts.tv_nsec + ts.tv_sec * 1_s;
+  }
+
   auto p = copy_from_user(addr, 4);
   if (!p)
     return -EFAULT;
@@ -45,8 +52,17 @@ int futex_wait(void *addr, int expected, void *timeout) {
     return -EAGAIN;
   }
 
+  futex_wait_entry entry;
+  entry.mask = mask;
+  auto tcb = active();
   for (;;) {
-    q->wait.wait(q->lock);
+    q->wait.prepare(entry);
+    q->lock.release();
+    
+    auto ret = tcb->sleep(timeout);
+
+    q->lock.acquire();
+    q->wait.finish(entry);
     
     auto p = copy_from_user(addr, 4);
     if (!p) {
@@ -54,15 +70,25 @@ int futex_wait(void *addr, int expected, void *timeout) {
       return -EFAULT;
     }
     u = *(int *) p->get();
-    if (u != expected)
-      break;
-  }
+    if (u != expected) {
+      q->lock.release();
+      return 0;
+    }
 
-  q->lock.release();
-  return 0;
+    if (ret == -EINTR) {
+      q->lock.release();
+      return -EINTR;
+    }
+
+    // Timeout expired.
+    if (ret == 0) {
+      q->lock.release();
+      return -ETIMEDOUT;
+    }
+  }
 }
 
-int futex_wake(void *addr, int count) {
+int futex_wake(void *addr, int count, unsigned mask = -1) {
   futex_key key((va_t) addr);
   if (key.type == futex_key::BAD)
     return -EFAULT;
@@ -77,7 +103,7 @@ int futex_wake(void *addr, int count) {
   futexes.lock.release();
 
   q->lock.acquire();
-  int woken = q->wait.notify(count);
+  int woken = q->wait.wake(count, mask);
   q->lock.release();
   return woken;
 }
@@ -338,8 +364,12 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
 
     pcb->wait.prepare(entry);
     lock.release();
-    if (suspend() != 0)
+    // It is normal to receive a SIGCHLD, in which case we shouldn't return -EINTR.
+    if (suspend() != 0 && tcb->sigresume != SIGCHLD) {
+      pcb->wait.finish(entry);
       return -EINTR;
+    }
+
     lock.acquire();
     pcb->wait.finish(entry);
   }
@@ -526,10 +556,13 @@ int syslog(int type, char *buf, unsigned long len) {
   }
 }
 
-int futex(void *addr, int op, int val, void *timeout) {
+int futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsigned long val3) {
   // We can ignore this - it's for optimization.
   if (op & FUTEX_PRIVATE_FLAG)
     op &= ~FUTEX_PRIVATE_FLAG;
+
+  bool realtime = op & FUTEX_CLOCK_REALTIME;
+  op &= ~FUTEX_CLOCK_REALTIME;
 
   if ((va_t) addr % 4 != 0)
     return -EINVAL;
@@ -538,6 +571,7 @@ int futex(void *addr, int op, int val, void *timeout) {
     return -EFAULT;
   int u = *(int *) p->get();
 
+  (void) val2;
   switch (op) {
   case FUTEX_WAIT:
     return futex_wait(addr, val, timeout);
@@ -545,8 +579,19 @@ int futex(void *addr, int op, int val, void *timeout) {
   case FUTEX_WAKE:
     return futex_wake(addr, val);
 
+  case FUTEX_WAIT_BITSET:
+    if (val3 == 0)
+      return -EINVAL;
+    return futex_wait(addr, val, timeout, val3);
+
+  case FUTEX_WAKE_BITSET:
+    if (val3 == 0)
+      return -EINVAL;
+    return futex_wake(addr, val, val3);
+
   default:
     printk("unknown futex op: %d\n", op);
+    return -EINVAL;
   }
   return 0;
 }

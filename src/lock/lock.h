@@ -173,4 +173,14 @@ struct wait_queue {
 
 }
 
+#define hangon(wait, lock, entry) \
+  wait.prepare(entry); \
+  lock.release(); \
+  if (suspend() != 0) {\
+    wait.finish(entry); \
+    return -EINTR; \
+  } \
+  lock.acquire(); \
+  wait.finish(entry); \
+
 #endif

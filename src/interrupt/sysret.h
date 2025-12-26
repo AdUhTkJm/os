@@ -11,6 +11,7 @@
 // From <fcntl.h>
 #define AT_FDCWD -100
 #define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_REMOVEDIR		0x200
 #define AT_EMPTY_PATH		0x1000
 #define UTIME_NOW  ((1l << 30) - 1l)
 #define UTIME_OMIT ((1l << 30) - 2l)

@@ -172,9 +172,10 @@ va_t pcb_t::brk(va_t addr) {
 }
 
 void tcb_t::send_signal(int sig) {
-  if (mask[sig])
+  if (mask[sig] || status == Zombie)
     return;
   pending.add(sig);
+  sigresume = sig;
   if (status == Sleeping)
     scheduler.wakeup(this);
 }
@@ -182,16 +183,15 @@ void tcb_t::send_signal(int sig) {
 void pcb_t::send_signal(int sig) {
   // We find one eligible thread.
   for (auto x : threads) {
-    if (x->mask[sig])
+    if (x->mask[sig] || x->status == Zombie)
       continue;
-    if (x->status == Sleeping) {
-      x->pending.add(sig);
+    x->pending.add(sig);
+    x->sigresume = sig;
+    if (x->status == Sleeping)
       scheduler.wakeup(x, /*can_preempt=*/ false);
-      return;
-    }
+    return;
   }
   pending.add(sig);
-  // TODO: When to retry delivery?
 }
 
 int tcb_t::sleep(size_t nano) {
@@ -259,6 +259,8 @@ void init(tcb_t *tcb) {
 
 void terminate(tcb_t *tcb, int ret) {
   auto pcb = tcb->pcb;
+  printk("terminate pid %d (tid %d)\n", pcb->pid, tcb->tid);
+
   if (pcb->threads.size() == 1) {
     assert(pcb->threads.front() == tcb);
     terminate(pcb, ret);
@@ -284,17 +286,10 @@ void terminate(pcb_t *pcb, int ret) {
   pcb->children.clear();
   pcb->ret = ret;
 
-  // Wake up parent for wait() system call.
-  pcb->zombie = true;
-  if (pcb->parent)
-    pcb->parent->wait.wake_all();
-
-  // Send a signal to parent.
-  pcb->parent->send_signal(SIGCHLD);
-
   pcb->clear();
   pidmap->erase(pcb->pid);
 
+  // Erase all remaining threads.
   auto active = os::active();
   bool has_active = false;
   for (auto t : pcb->threads) {
@@ -304,6 +299,14 @@ void terminate(pcb_t *pcb, int ret) {
     }
     scheduler.erase(t);
   }
+
+  // Wake up parent for wait() system call.
+  pcb->zombie = true;
+  if (pcb->parent)
+    pcb->parent->wait.wake_all();
+
+  // Send a signal to parent.
+  pcb->parent->send_signal(SIGCHLD);
   if (has_active)
     // Note: this does not return. It will dispatch a new thread.
     scheduler.erase(active);

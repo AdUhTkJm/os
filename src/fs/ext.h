@@ -109,6 +109,7 @@ class ext_inode : public os::inode_impl<ext_inode> {
   int add_dirent(const string &name, unsigned inum, unsigned char type);
 
   unsigned crc(const extent_header *extent_block) const;
+  int remove(const string &name, bool dir);
 public:
   using inode_impl::inode_impl;
   ext_inode(class fs *fs, const struct meta &meta, long inum);
@@ -127,12 +128,16 @@ public:
   ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
   int truncate(size_t len) override;
   int create(const string &name, filetype ty, int mode) override;
-  int unlink(const string &name) override;
+  int unlink(const string &name) override { return remove(name, false); }
+  int rmdir(const string &name) override { return remove(name, true); }
   inode *lookup(const string &name) override;
   vector<item> list() override;
   optional<string> readlink() override;
   inode::meta get_meta() override;
   void set_meta(const inode::meta &meta) override;
+
+  int onchmod() override;
+  int onchown() override;
 
   size_t size() const override { return meta.sz; }
   long inum() const override { return _inum; }

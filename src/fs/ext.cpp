@@ -156,9 +156,6 @@ int ext_inode::set_pointer_ext2(unsigned index, size_t value) {
   }
   index -= 12;
 
-  unique_ptr<char[]> zeroes_p(new char[block_size]);
-  char *zeroes = zeroes_p.get();
-  memset(zeroes, 0, block_size);
   if (index < N) {
     // Allocate the single-indirect block if it's not present.
     if (meta.indirect1 == 0) {
@@ -604,7 +601,7 @@ ssize_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
   auto fs = static_cast<ext*>(this->fs);
   this->flags = flags;
 
-  size_t size = fs->blksz;
+  const auto N = fs->blksz;
   size_t pos = offset;
   size_t end = min((size_t) meta.sz, offset + len);
   ssize_t read = 0;
@@ -616,14 +613,14 @@ ssize_t ext_inode::read(size_t offset, void *buf, size_t len, int flags) {
 
     if (b == -1ul)
       return read ? read : -ENOSPC;
-    size_t chunk = min(size - pos % size, end - pos);
+    size_t chunk = min(N - pos % N, end - pos);
 
     char *p = (char *) buf + read;
 
     // Sparse hole.
     if (b == 0)
       memset(p, 0, chunk);
-    else if (auto ret = fs->device->read(fs->offset(b) + pos % size, p, chunk, flags); ret < 0)
+    else if (auto ret = fs->device->read(fs->offset(b) + pos % N, p, chunk, flags); ret < 0)
       return read ? read : ret;
 
     pos += chunk;
@@ -675,10 +672,7 @@ ssize_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) 
         return ret;
 
       // Zero the new block.
-      unique_ptr<char[]> zero(new char[fs->blksz]);
-      memset(zero.get(), 0, fs->blksz);
-      fs->device->write(fs->offset(newblk), zero.get(), fs->blksz, 0);
-
+      fs->device->write(fs->offset(newblk), zeroes, fs->blksz, 0);
       b = newblk;
     }
     size_t chunk = min(size - pos % size, end - pos);
@@ -806,7 +800,7 @@ void ext_inode::set_meta(const inode::meta &meta) {
   this->meta.mtime = meta.mtime / 1_s;
 }
 
-int ext_inode::unlink(const string &name) {
+int ext_inode::remove(const string &name, bool dir) {
   if (type != Dir)
     return -ENOTDIR;
 
@@ -844,8 +838,15 @@ int ext_inode::unlink(const string &name) {
     // The node itself must also be unlinked.
     // The file system caches all inodes, so that the same inode on disk will result in the same inode in memory.
     auto inode = fs->read_from_inum(entry->inum);
-    if (inode->type == Dir)
+    if (!dir && inode->type == Dir)
       return -EPERM;
+    if (dir) {
+      if (inode->type != Dir)
+        return -ENOTDIR;
+      // We have to check that this directory is indeed empty.
+      if (inode->list().size() > 2)
+        return -EPERM;
+    }
     
     // Now we unlink it: merge the length to previous header.
     bool first = offset == 0;
@@ -864,10 +865,18 @@ int ext_inode::unlink(const string &name) {
     }
 
     // Forget it in dcache. This isn't done here; see (the unique) caller, handler of `unlinkat`.
-    inode->meta.lnkcnt--;
-    
-    fs->update_meta(inode);
-    inode->unlinked();
+    if (!dir) {
+      inode->meta.lnkcnt--;
+      fs->update_meta(inode);
+      inode->unlinked();
+    } else {
+      // We are also removing `.` and `..`.
+      inode->meta.lnkcnt -= 2;
+      meta.lnkcnt--;
+      fs->update_meta(inode);
+      inode->unlinked();
+      inode->unlinked();
+    }
     fs->update_meta(this);
     return 0;
   }
@@ -931,6 +940,18 @@ static inode::filetype direntry_to_type(unsigned char ty) {
   default:
     return (inode::filetype) -1;
   }
+}
+
+int ext_inode::onchmod() {
+  meta.type = mode | fromtype(type);
+  ((ext *) fs)->update_meta(this);
+  return 0;
+}
+
+int ext_inode::onchown() {
+  meta.uid = uid, meta.gid = gid;
+  ((ext *) fs)->update_meta(this);
+  return 0;
 }
 
 vector<inode::item> ext_inode::list() {

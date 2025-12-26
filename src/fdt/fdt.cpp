@@ -34,17 +34,6 @@ void check() {
     panic("device tree version too low");
 }
 
-vector<memrsv> reserved() {
-  vector<memrsv> result;
-  for (auto *rsvmap = (memrsv*) ((char *) pfdt + to_big_endian(pfdt->off_mem_rsvmap));; rsvmap++) {
-    if (rsvmap->address == 0 && rsvmap->size == 0)
-      break;
-
-    result.push_back(*rsvmap);
-  }
-  return result;
-}
-
 header *pos() {
   return pfdt;
 }

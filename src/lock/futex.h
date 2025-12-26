@@ -26,9 +26,28 @@ struct futex_key {
   bool operator==(const futex_key &other) const;
 };
 
+struct futex_wait_entry : intrusive_list_node<futex_wait_entry> {
+  tcb_t *tcb;
+  unsigned mask;
+  bool queued = false;
+};
+
+struct futex_wait_queue {
+  spinlock lock;
+  os::intrusive_list<futex_wait_entry> q;
+
+  void prepare(futex_wait_entry &entry);
+  void finish(futex_wait_entry &entry);
+  int wake(int n, unsigned mask);
+};
+
 struct futex_queue {
-  mutex lock;
-  condvar wait;
+  spinlock lock;
+  futex_wait_queue wait;
+
+  futex_queue() = default;
+  futex_queue(const futex_queue &other) = delete;
+  futex_queue &operator=(const futex_queue &other) = delete;
 };
 
 // No need to define some special hash function.

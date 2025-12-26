@@ -253,14 +253,7 @@ ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) 
       return -EAGAIN;
     }
 
-    readwait.prepare(entry);
-    lock.release();
-
-    if (suspend() != 0)
-      return -EINTR;
-
-    lock.acquire();
-    readwait.finish(entry);
+    hangon(readwait, lock, entry);
     printk("resume\n");
 
     if (rxerr) {

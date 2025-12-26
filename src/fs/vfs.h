@@ -203,6 +203,7 @@ public:
   // The `mode` is the access mode.
   virtual int create(const string &name, filetype ty, int mode) = 0;
   virtual int unlink(const string &name) = 0;
+  virtual int rmdir(const string &name) = 0;
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
   virtual optional<string> readlink() = 0;
@@ -222,7 +223,8 @@ public:
   virtual void wake_read() {}
   virtual void wake_write() {}
 
-  virtual void onchmod() {}
+  virtual int onchmod() { return 0; }
+  virtual int onchown() { return 0; }
   virtual void onclose(int openflags) { (void) openflags; }
 
   struct item {
@@ -379,6 +381,7 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
 #define FILE_INODE_DEFAULT_IMPL \
   int create(const string &, filetype, int) override { return -ENOTDIR; } \
   int unlink(const string &) override { return -ENOTDIR; } \
+  int rmdir(const string &) override { return -ENOTDIR; } \
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
   optional<string> readlink() override { return nullopt; } \
@@ -390,6 +393,7 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   ssize_t read(size_t offset, void *buf, size_t len, int) override { auto s = *readlink(); auto l = min(long(s.size()) - long(offset), long(len)); memcpy(buf, s.c_str() + offset, l); return l; } \
   int create(const string &, filetype, int) override { return -ENOTDIR; } \
   int unlink(const string &) override { return -ENOTDIR; } \
+  int rmdir(const string &) override { return -ENOTDIR; } \
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
   long inum() const override { return (long) this; } \
@@ -405,6 +409,15 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
 #define META_DEFAULT_IMPL \
   inode::meta get_meta() override { return meta; } \
   void set_meta(const inode::meta &meta) override { this->meta = meta; } \
+
+#define READONLY_DIRECTORY \
+  int create(const string &, filetype, int) override { return -EACCES; } \
+  int unlink(const string &) override { return -EACCES; } \
+  int rmdir(const string &) override { return -EACCES; }
+
+#define READONLY_FILE \
+  ssize_t write(size_t, const void *, size_t, int) override { return -EACCES; } \
+  int truncate(size_t) override { return -EACCES; }
 
 }
 

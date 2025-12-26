@@ -21,7 +21,7 @@ int socket(int domain, int type, int protocol);
 int bind(int fd, void *sockaddr, unsigned len);
 int connect(int fd, void *sockaddr, unsigned len);
 int syslog(int type, char *buf, unsigned long size);
-int futex(void *uaddr, int op, int val, void *timeout);
+int futex(void *uaddr, int op, int val, void *timeout, unsigned long val2, unsigned long val3);
 int setsockopt(int fd, int level, int optname, void *optval, int optlen);
 int getsockopt(int fd, int level, int optname, void *optval, int *optlen);
 int sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigned addrlen);

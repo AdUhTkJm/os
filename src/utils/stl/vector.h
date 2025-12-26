@@ -14,14 +14,14 @@ public:
   vector(): cap(0), sz(0), dat(nullptr) {}
   vector(V v, size_t sz): sz(sz) {
     cap = roundup<4>(sz);
-    dat = new (safe) V[cap];
+    dat = new (safe) V[cap]();
     for (size_t i = 0; i < sz; i++)
       dat[i] = v;
   }
   explicit vector(size_t sz): vector(V(), sz) {}
   ~vector() { delete[] dat; }
   vector(const vector &other): cap(other.cap), sz(other.sz) {
-    dat = new (safe) V[cap];
+    dat = new (safe) V[cap]();
     for (size_t i = 0; i < sz; i++)
       dat[i] = other[i];
   }
@@ -35,7 +35,7 @@ public:
     delete[] dat;
     sz = other.sz;
     cap = other.cap;
-    dat = new V[cap];
+    dat = new (safe) V[cap]();
     for (size_t i = 0; i < sz; i++)
       dat[i] = other[i];
     return *this;
@@ -68,7 +68,7 @@ public:
     if (newcap <= cap)
       return;
 
-    V *newdata = new (safe) V[newcap];
+    V *newdata = new (safe) V[newcap]();
     for (size_t i = 0; i < sz; i++)
       newdata[i] = dat[i];
     delete[] dat;

@@ -15,7 +15,7 @@ bool sigset::operator[](int signum) const {
 }
 
 int sigset::next(const sigset &ignored) const {
-  for (unsigned i = 0; i < sizeof(sig); i++) {
+  for (unsigned i = 1; i < sizeof(sig) * 8; i++) {
     if ((*this)[i] && !ignored[i])
       return i;
   }

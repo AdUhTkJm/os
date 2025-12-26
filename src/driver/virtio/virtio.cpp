@@ -315,8 +315,10 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   // Tell device that a new request has come.
   WFENCE;
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-  if (suspend() != 0)
+  if (suspend() != 0) {
+    wait.finish(entry);
     return -EINTR;
+  }
 
   lock.acquire();
   wait.finish(entry);
@@ -583,13 +585,7 @@ int net_device::write(const void *buf, int len, bool block) {
         return -ENOSPC;
       }
 
-      txwait.prepare(entry);
-      lock.release();
-      if (suspend() != 0)
-        return -EINTR;
-
-      lock.acquire();
-      txwait.finish(entry);
+      hangon(txwait, lock, entry);
       continue;
     }
     

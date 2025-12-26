@@ -13,9 +13,41 @@ ssize_t filesystems::read(size_t offset, void *buf, size_t len, int) {
   return l;
 }
 
+// We do want to use string-plus-int here. Moreover, gcc does not know these pragmas.
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wstring-plus-int"
+#endif
+
+ssize_t pid::oom_score_adj::read(size_t offset, void *buf, size_t len, int) {
+  if (offset >= 2)
+    return 0;
+
+  auto l = min(len, 2ul);
+  memcpy(buf, "0\n" + offset, l);
+  return l;
+}
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
+
+process::process(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb),
+  exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)) {
+  exe->ref();
+  oom->ref();
+}
+
+process::~process() {
+  exe->drop();
+  oom->drop();
+}
+
 inode *process::lookup(const string &name) {
   if (name == "exe")
-    return pcb->execpath.size() ? new link(fs, pcb->execpath) : nullptr;
+    return exe;
+  if (name == "oom_score_adj")
+    return oom;
   
   printk("process: unknown name: %s\n", name.c_str());
   return nullptr;
@@ -24,16 +56,56 @@ inode *process::lookup(const string &name) {
 vector<inode::item> process::list() {
   vector<inode::item> result;
   if (pcb->execpath.size())
-    result.push_back({ 0, "exe", File });
+    result.push_back({ exe->inum(), "exe", File });
+  result.push_back({ oom->inum(), "oom_score_adj", File });
   return result;
 }
+
+ssize_t meminfo::read(size_t offset, void *buf, size_t len, int) {
+  // TODO: What about a string stream?
+  string value("MemTotal: ");
+  value += ptotal() * 4; // This is returned in pages (4 kb).
+  value += " kB\n";
+
+  value += "MemFree: ";
+  value += pavail() * 4;
+  value += " kB\n";
+
+  value += "MemAvail: ";
+  value += pavail() * 4;
+  value += " kB\n";
+
+  value += "Cached: ";
+  value += 0;
+  value += " kB\n";
+
+  value += "SwapTotal: ";
+  value += 0;
+  value += " kB\n";
+
+  value += "SwapFree: ";
+  value += 0;
+  value += " kB\n";
+
+  auto l = min(value.size() - offset, len);
+  memcpy(buf, value.c_str() + offset, l);
+  return l;
+};
 
 }
 
 namespace os {
 
 procroot::procroot(class fs *fs):
-  inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)) {}
+  inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)), meminfo(new proc::meminfo(fs)) {
+  filesystems->ref();
+  meminfo->ref();
+}
+
+procroot::~procroot() {
+  filesystems->drop();
+  meminfo->drop();
+}
 
 inode *procroot::lookup(const string &name) {
   meta.atime = now();
@@ -46,6 +118,8 @@ inode *procroot::lookup(const string &name) {
 
     return pnodes[pid] = new proc::process(fs, (*pidmap)[pid]);
   }
+  if (name == "meminfo")
+    return meminfo;
   
   // Try convert the string into number.
   unsigned long res = 0; unsigned i = 0;
@@ -73,6 +147,7 @@ vector<inode::item> procroot::list() {
   meta.atime = now();
   vector<item> result;
   result.push_back({ filesystems->inum(), "filesystems", File });
+  result.push_back({ meminfo->inum(), "meminfo", File });
   result.push_back({ active()->pcb->pid, "self", Dir });
   char buf[13];
   for (auto [pid, _] : *pidmap) {

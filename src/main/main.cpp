@@ -148,6 +148,14 @@ void main_high() {
   // Set up free list allocator.
   os::init_freelist_kalloc();
 
+  // Verify FDT.
+  pa_t pfdt = *(pa_t *) as_va(0x80202010);
+  int hart_id = *(uint64_t *) as_va(0x80202008);
+  fdt::read(hart_id, pfdt);
+  fdt::check();
+  
+  os::init_bitmap_kalloc();
+
   // Set up (boot-time) kernel stack.
   boot_pcb.construct();
   boot_tcb.construct();
@@ -160,14 +168,6 @@ void main_high() {
   scheduler.active = boot_tcb.get();
 
   onboot = false;
-
-  // Verify FDT.
-  pa_t pfdt = *(pa_t *) as_va(0x80202010);
-  int hart_id = *(uint64_t *) as_va(0x80202008);
-  fdt::read(hart_id, pfdt);
-  fdt::check();
-  
-  os::init_bitmap_kalloc();
 
   // Initialize global vfs structure.
   vfs::init();

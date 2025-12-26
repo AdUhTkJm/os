@@ -3,10 +3,6 @@
 
 #include "vfs.h"
 
-#define READONLY_DIRECTORY \
-  int create(const string &, filetype, int) override { return -EACCES; } \
-  int unlink(const string &) override { return -EACCES; }
-
 namespace os {
 
 class net_device;
@@ -20,24 +16,22 @@ class filesystems : public inode_impl<filesystems> {
 public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
+  READONLY_FILE;
 
   filesystems(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
   ssize_t read(size_t, void *, size_t, int) override;
-  ssize_t write(size_t, const void *, size_t, int) override { return -EACCES; }
-  int truncate(size_t) override { return -EACCES; }
 };
 
-class process : public inode_impl<process> {
+class meminfo : public inode_impl<meminfo> {
   inode::meta meta;
-  pcb_t *pcb;
+  string value;
 public:
-  DIR_INODE_DEFAULT_IMPL;
+  FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
-  READONLY_DIRECTORY;
+  READONLY_FILE;
 
-  process(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb) {}
-  inode *lookup(const string &name) override;
-  vector<item> list() override;
+  meminfo(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
+  ssize_t read(size_t, void *, size_t, int) override;
 };
 
 class link : public inode_impl<link> {
@@ -52,10 +46,46 @@ public:
   size_t size() const override { return lnk.size(); };
 };
 
+// Things inside `/proc/[pid]/`.
+namespace pid {
+
+// No idea what's this; Just return 0 as Linux typically does.
+class oom_score_adj : public inode_impl<oom_score_adj> {
+  inode::meta meta;
+  pcb_t *pcb;
+public:
+  FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_FILE;
+
+  oom_score_adj(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0444, File), pcb(pcb) {}
+  ssize_t read(size_t, void *, size_t, int) override;
+};
+
+}
+
+class process : public inode_impl<process> {
+  inode::meta meta;
+  pcb_t *pcb;
+  link *exe;
+  inode *oom;
+public:
+  DIR_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_DIRECTORY;
+
+  process(class fs *fs, pcb_t *pcb);
+  ~process();
+  inode *lookup(const string &name) override;
+  vector<item> list() override;
+};
+
 }
 
 class procroot : public inode_impl<procroot> {
   proc::filesystems *filesystems;
+  proc::meminfo *meminfo;
+
   os::hashmap<int, proc::process*> pnodes;
   inode::meta meta;
 public:
@@ -64,6 +94,7 @@ public:
   READONLY_DIRECTORY;
 
   procroot(class fs *fs);
+  ~procroot();
   inode *lookup(const string &name) override;
   vector<item> list() override;
 };

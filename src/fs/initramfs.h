@@ -46,6 +46,7 @@ public:
   int truncate(size_t) override { return -EACCES; }
   int create(const string &name, filetype ty, int) override;
   int unlink(const string &) override { return -EACCES; }
+  int rmdir(const string &) override { return -EACCES; }
   inode *lookup(const string &name) override;
   vector<item> list() override;
   // We don't support symlinks for now.

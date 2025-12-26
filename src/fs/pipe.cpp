@@ -30,8 +30,10 @@ ssize_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
     read_wait.prepare(entry);
     CONCURRENCY_LOG("read: suspend\n");
     lock.release();
-    if (suspend() != 0)
+    if (suspend() != 0) {
+      read_wait.finish(entry);
       return -EINTR;
+    }
     lock.acquire();
     CONCURRENCY_LOG("read: resume\n");
     read_wait.finish(entry);
@@ -81,8 +83,10 @@ ssize_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags)
     write_wait.prepare(entry);
     CONCURRENCY_LOG("write: suspend\n");
     lock.release();
-    if (suspend() != 0)
+    if (suspend() != 0) {
+      write_wait.finish(entry);
       return -EINTR;
+    }
     lock.acquire();
     CONCURRENCY_LOG("write: resume\n");
     write_wait.finish(entry);

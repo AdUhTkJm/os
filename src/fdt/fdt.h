@@ -65,9 +65,6 @@ inline void skip_nop(char *&p) {
 
 }
 
-// Read reserved memory.
-vector<memrsv> reserved();
-
 template<class T>
 concept fdt_walker = requires (T t, const char *cdev, const char *cprop, void *property, int len) {
   { t(cdev, cprop, property, len) } -> same_as<WalkResult>;
