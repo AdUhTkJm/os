@@ -4,6 +4,7 @@
 #include "vfs.h"
 #include "../proc/pcb.h"
 #include "../utils/stl/ring_buffer.h"
+#include "../utils/stl/rbtree.h"
 #include "../driver/tty/tty.h"
 
 namespace os {
@@ -65,17 +66,16 @@ class block_inode : public inode_impl<block_inode> {
   block_device *dev;
   inode::meta meta;
 
-  struct cached_sector {
+  struct cached_sector : rb_node<unsigned, cached_sector> {
     // We allocate a physical page for it.
     // If we just write `data[4096]`, then there will be ~4KB of padding introduced by VM allocator.
     unsigned char *data = 0;
     bool dirty = false;
-    bool valid = false;
   };
   // TODO: change into LRU
-  os::hashmap<unsigned, cached_sector> cache;
+  os::rb_tree<unsigned, cached_sector> cache;
 
-  expected<cached_sector*> load_page(unsigned page, bool force_reload = false);
+  cached_sector *load_page(unsigned page, bool force_reload = false);
   void flush_page(unsigned page);
 public:
   FILE_INODE_DEFAULT_IMPL;

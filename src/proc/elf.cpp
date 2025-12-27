@@ -44,10 +44,10 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma::vma_t vma = {
-        aligned, end, prot, MAP_PRIVATE | VMA_IS_PT_LOAD,
+        aligned, end, prot, MAP_PRIVATE,
         ldso, phdr.p_offset - off, phdr.p_filesz + off
       };
-      pcb->vma.push(vma);
+      pcb->vma.insert(vma);
     }
   }
 
@@ -81,6 +81,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   struct auxv auxv;
   
   unique_ptr<char> interp = nullptr;
+  size_t loadmax = 0;
 
   for (unsigned i = 0; i < header.e_phnum; i++) {
     program_header phdr;
@@ -96,6 +97,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
       va_t aligned = rounddown<PAGE_SIZE>(va);
       auto off = va - aligned;
       va_t end = roundup<PAGE_SIZE>(va + phdr.p_memsz);
+      loadmax = max(loadmax, end);
 
       // Check whether program header is mapped inside this region.
       if (phdr.p_offset <= header.e_phoff && phdr.p_offset + phdr.p_filesz > header.e_phoff)
@@ -106,10 +108,10 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
       if (phdr.p_flags & PF_W) prot |= PROT_WRITE;
       if (phdr.p_flags & PF_X) prot |= PROT_EXEC;
       vma::vma_t vma {
-        aligned, end, prot, MAP_PRIVATE | VMA_IS_PT_LOAD,
+        aligned, end, prot, MAP_PRIVATE,
         content, phdr.p_offset - off, phdr.p_filesz + off
       };
-      pcb->vma.push(vma);
+      pcb->vma.insert(vma);
     }
 
     if (phdr.p_type == PT_INTERP) {
@@ -144,8 +146,20 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
 
   auxv.entry = loadbase + header.e_entry;
   auxv.phnum = header.e_phnum;
-
-  init_user(tcb);
+  
+  pcb->vma.heap_begin = loadmax;
+  pcb->vma.heap_end = loadmax + PAGE_SIZE;
+  // Insert a heap and a user stack out there.
+  pcb->vma.insert(vma::vma_t {
+    loadmax, loadmax + PAGE_SIZE,
+    PROT_READ | PROT_WRITE, MAP_PRIVATE
+  });
+  // Allocate a stack. Note it grows downwards.
+  pcb->vma.insert(vma::vma_t {
+    stack_top - user_stack_size, tcb->usp = stack_top,
+    PROT_READ | PROT_WRITE, MAP_PRIVATE
+  });
+  pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = user_stack_size;
   tcb->status = Init;
   tcb->pc = pc;
   return auxv;

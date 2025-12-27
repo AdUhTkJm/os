@@ -18,8 +18,6 @@ extern int timer_tick;
 extern size_t realtime;
 // Default to zero (UTC).
 timezone zone;
-// Total amount of (virtually) shared memory.
-size_t pshared;
 
 // Returns current timestamp.
 size_t os::now() {
@@ -658,7 +656,7 @@ HANDLE(unlinkat, dirfd, _path, flags) {
 }
 
 HANDLE(brk, addr) {
-  return pcb->brk(addr);
+  return pcb->vma.brk(addr);
 }
 
 HANDLE(dup, fd) {
@@ -727,6 +725,30 @@ HANDLE(set_tid_address, _) {
 
 HANDLE(getrandom, _) {
   return -ENOSYS; // TODO
+}
+
+// We only have a single CPU.
+HANDLE(sched_getaffinity, pid, size, mask) {
+  if (size < 4)
+    return -EINVAL;
+
+  int kset = 1;
+  copy_to_user((void *) mask, &kset, sizeof(int));
+  return 0;
+}
+
+HANDLE(sched_setaffinity, pid, size, mask) {
+  if (size < 4)
+    return -EINVAL;
+  
+  
+  auto maskp = copy_from_user((void *) mask, sizeof(int));
+  if (!maskp)
+    return -EFAULT;
+
+  if (*(int *) maskp->get() != 1)
+    return -EINVAL;
+  return 0;
 }
 
 HANDLE(setpgid, pid, pgid) {
@@ -995,48 +1017,7 @@ HANDLE(settimeofday, tv, tz) {
 }
 
 HANDLE(mmap, addr, len, prot, flags, fd, offset) {
-  bool shared = flags & MAP_SHARED;
-  bool priv = flags & MAP_PRIVATE;
-  if ((!shared && !priv) || len == 0)
-    return -EINVAL;
-
-  bool fixed = flags & MAP_FIXED;
-  bool anon = flags & MAP_ANONYMOUS;
-
-  va_t start;
-  if (!fixed) {
-    start = 0x6000'0000;
-    for (const auto &vma : pcb->vma) {
-      if (vma.flags & VMA_IS_STACK)
-        continue;
-      start = max(start, vma.end);
-    }
-    start = rounddown<PAGE_SIZE>(start);
-  } else
-    start = rounddown<PAGE_SIZE>(addr);
-  va_t end = roundup<PAGE_SIZE>(start + len);
-  
-  file *backup = nullptr;
-  if (!anon && !pcb->ftbl->count(fd))
-    return -EBADF;
-  if (!anon) {
-    backup = pcb->ftbl->at(fd);
-    bool readable = (backup->flags & 3) != O_WRONLY;
-    bool writable = (backup->flags & 3) != O_RDONLY;
-    if (!readable || (shared && !writable))
-      return -EACCES;
-  } else if (shared)
-    backup = new file(new dentry("<anon>", tmpfs->get(), nullptr), O_RDWR);
-  
-  if (shared) {
-    pshared += end - start;
-    backup->node()->cache = new page_cache(backup->node());
-  }
-
-  // Now allocate near this cap. Note that this has to be page-aligned.
-  vma::vma_t vma(start, end, prot, flags, backup, offset, len);
-  pcb->vma.push(vma);
-  return vma.begin;
+  return detail::mmap(addr, len, prot, flags, fd, offset);
 }
 
 HANDLE(mprotect, start, len, prot) {

@@ -156,6 +156,9 @@ void main_high() {
   
   os::init_bitmap_kalloc();
 
+  // Initialize VMA (TODO: zero-page optimization).
+  os::vma::init();
+
   // Set up (boot-time) kernel stack.
   boot_pcb.construct();
   boot_tcb.construct();

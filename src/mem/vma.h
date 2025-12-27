@@ -13,11 +13,6 @@
 #define MAP_FIXED      0x10
 #define MAP_ANONYMOUS  0x20
 
-// Kernel internal usage, used for brk().
-#define VMA_IS_HEAP    0x40
-#define VMA_IS_STACK   0x80
-#define VMA_IS_PT_LOAD 0x100
-
 namespace os {
 
 template<class T>
@@ -59,6 +54,7 @@ class btree {
 
   int sz = 0;
 
+public:
   struct node {
     // Remember that #children = #keys + 1. Here `count` is the number of keys.
     // The maximum number of keys is Order - 1, while the minimum number of keys is ceil(Order / 2) - 1.
@@ -66,23 +62,19 @@ class btree {
     node *ch[Order];    // Children.
     K k[Order - 1];     // Keys.
     V v[Order - 1];     // Values.
+    size_t minstart;    // Min starting point in children.
     size_t maxend;      // Max ending point in children.
     size_t maxgap;      // Max gap in children.
     int count = 0;
     bool leaf;
 
     node(bool leaf): leaf(leaf) {}
-    // The minimum begin in children. No extra maintaining; it is already sorted.
-    K minimal() {
-      if (leaf)
-        return k[0];
-      return ch[0]->minimal();
-    }
   } *root = nullptr;
   
   // The minimum number of keys is t - 1, and the minimum number of children is t.
   static constexpr int t = Order / 2;
-  
+
+private:
   // Actually, this works exactly like a sorted tree;
   // Just that each time we pick the rightmost (largest) child.
   //
@@ -105,9 +97,12 @@ class btree {
 
 #ifndef NDEBUG
   // Checks that `n` never violates invariant.
+  // Note that it is not true that after every operation the invariant is maintained;
+  // Specially, when the tree depth increases, `n == root` is not true yet, while the new root has only 1 child.
   void check(node *n) {
     if (n != root && (n->count < t - 1 || n->count >= Order)) {
       dump();
+      printk("node: count = %d\n", n->count);
       assert(false && "btree: invariant broken");
     }
   }
@@ -118,24 +113,25 @@ class btree {
   void update_impl(node *n) {
     if (!n)
       return;
-#ifndef NDEBUG
-    check(n);
-#endif
 
     size_t end = 0, gap = 0;
+    n->minstart = n->leaf ? n->k[0] : n->ch[0]->minstart;
     
     for (int i = 0; i < n->count; i++) {
       end = max(end, n->v[i].end);
       if (n->leaf && i > 0)
-        n->maxgap = max(n->maxgap, n->k[i] - n->v[i - 1].end);
+        gap = max(n->maxgap, n->k[i] - n->v[i - 1].end);
 
       if (!n->leaf) {
         end = max(end, n->ch[i]->maxend);
+        gap = max(gap, n->ch[i]->maxgap);
         // We know `ch[i]` is left of `k[i]`, and therefore its end might not reach `k[i]`'s end.
         // There might be a gap, and we calculate its length.
-        gap = max(gap, max(n->ch[i]->maxgap, n->k[i] - n->ch[i]->maxend));
+        assert(n->k[i] >= n->ch[i]->maxend);
+        gap = max(gap, n->k[i] - n->ch[i]->maxend);
         // Similarly, we calculate the length of the right node here.
-        gap = max(gap, n->ch[i + 1]->minimal() - n->v[i].end);
+        assert(n->ch[i + 1]->minstart >= n->v[i].end);
+        gap = max(gap, n->ch[i + 1]->minstart - n->v[i].end);
       }
     }
     
@@ -152,6 +148,24 @@ class btree {
   template<class ...Args>
   void update(Args... args) {
     (update_impl(args), ...);
+  }
+
+  void update_path_impl(node *n, va_t key) {
+    if (!n)
+      return;
+
+    // Check whether the key is present.
+    int i = 0;
+    for (; i < n->count && key >= n->k[i]; i++) {
+      if (n->k[i] == key) {
+        update_impl(n);
+        return;
+      }
+    }
+
+    // Descend into the child if not found in this node.
+    update_path_impl(n->ch[i], key);
+    update_impl(n);
   }
 
   // Now `x` is full, so it has M - 1 keys.
@@ -295,47 +309,63 @@ class btree {
       // We've guaranteed this won't overflow, since when we descend,
       // we'll split children as needed.
       x->count++;
-    } else {
-      // Found a full child, split it to continue.
-      if (x->ch[i]->count == 2 * t - 1) {
-        split(x, i, x->ch[i]);
-        // If we end up in the right child (newly split one),
-        // we must move `i` to the right.
-        if (x->k[i] < key)
-          i++;
-        // If we just moved up the median here, then we must change it and not descend.
-        else if (x->k[i] == key) {
-          x->v[i] = value;
-          return;
-        }
-      }
-      insert_impl(x->ch[i], key, value);
+      update(x);
+      return;
     }
+    
+    // Found a full child, split it to continue.
+    if (x->ch[i]->count == 2 * t - 1) {
+      split(x, i, x->ch[i]);
+      // If we end up in the right child (newly split one),
+      // we must move `i` to the right.
+      if (x->k[i] < key)
+        i++;
+      // If we just moved up the median here, then we must change it and not descend.
+      else if (x->k[i] == key) {
+        x->v[i] = value;
+        update(x);
+        return;
+      }
+    }
+    insert_impl(x->ch[i], key, value);
     update(x);
   }
 
-  va_t find_gap_impl(node *n, size_t len) const {
-    if (n->maxgap < len)
+  va_t find_gap_impl(node *n, size_t len, size_t min = 0) const {
+    if (n->maxgap < len || n->maxend < min)
       return 0;
 
     for (int i = 0; i < n->count; i++) {
-      if (!n->leaf && n->ch[i]->maxgap >= len)
-        return find_gap_impl(n->ch[i], len);
+      // Three cases, corresponding to the cases in update().
+      if (!n->leaf) {
+        if (n->ch[i]->maxgap >= len && n->ch[i]->maxend >= min) {
+          if (auto va = find_gap_impl(n->ch[i], len, min))
+            return va;
+        }
+
+        size_t start = max(min, n->k[i]);
+        if (n->k[i] >= start + len)
+          return start;
+
+        start = max(n->v[i].end, min);
+        if (n->ch[i+1]->minstart >= start + len)
+          return start;
+      }
 
       if (n->leaf && i > 0) {
-        size_t gap = n->k[i] - n->v[i - 1].end;
-        if (gap >= len)
-          return n->v[i - 1].end;
+        size_t start = max(n->v[i - 1].end, min);
+        if (n->k[i] >= start + len)
+          return start;
       }
     }
     // Don't forget the final one.
-    if (!n->leaf)
-      return find_gap_impl(n->ch[n->count], len);
-    
+    if (!n->leaf && n->ch[n->count]->maxend >= min)
+      return find_gap_impl(n->ch[n->count], len, min);
+
     return 0;
   }
 
-  void find_overlap_impl(node *n, va_t start, va_t end, vector<va_t> &result) const {
+  void find_overlap_impl(node *n, va_t start, va_t end, vector<vma_t*> &result) const {
     if (!n || n->maxend <= start)
       return;
 
@@ -349,12 +379,33 @@ class btree {
         return;
 
       if (n->k[i] < end && n->v[i].end > start)
-        result.push_back(n->k[i]);
+        result.push_back(&n->v[i]);
     }
 
     // Check rightmost child.
     if (!n->leaf)
       find_overlap_impl(n->ch[n->count], start, end, result);
+  }
+
+  // Basically the same as above, but early-exits.
+  bool has_overlap_impl(node *n, va_t start, va_t end) const {
+    if (!n || n->maxend <= start)
+      return false;
+
+    for (int i = 0; i < n->count; i++) {
+      if (!n->leaf && has_overlap_impl(n->ch[i], start, end))
+        return true;
+
+      if (n->k[i] >= end)
+        return false;
+
+      if (n->k[i] < end && n->v[i].end > start)
+        return true;
+    }
+
+    if (!n->leaf)
+      return has_overlap_impl(n->ch[n->count], start, end);
+    return false;
   }
 
   // Merge p->k[i] and its two children, p->k[i] and p->k[i + 1].
@@ -400,7 +451,7 @@ class btree {
     printk("  n%p [label=\"", id(x));
 
     for (int i = 0; i < x->count; i++) {
-      printk("<f%d> %d", i, x->k[i]);
+      printk("<f%d> %p", i, x->k[i]);
       if (i + 1 < x->count)
         printk(" | ");
     }
@@ -493,10 +544,46 @@ class btree {
     }
     delete x;
   }
+
+  // Produces a copy of the tree.
+  node *copy_impl(node *x) {
+    if (!x)
+      return nullptr;
+
+    node *n = new node(x->leaf);
+    n->count = x->count;
+    n->minstart = x->minstart;
+    n->maxend = x->maxend;
+    n->maxgap = x->maxgap;
+    for (int i = 0; i < x->count; i++) {
+      n->k[i] = x->k[i];
+      n->v[i] = x->v[i];
+    }
+
+    if (!n->leaf) {
+      for (int i = 0; i <= x->count; i++)
+        n->ch[i] = copy_impl(x->ch[i]);
+    }
+
+    return n;
+  }
+
 public:
   constexpr static int order = Order;
   using key_type = K;
   using value_type = V;
+
+  // Disable copying. It needs walking the entire tree - and it is slow.
+  // This has to be avoided to make `libcbench` run faster.
+  btree(const btree &other) {
+    root = copy_impl(other.root);
+  }
+
+  btree &operator=(const btree &other) {
+    clear();
+    root = copy_impl(other.root);
+    return *this;
+  }
 
   class iterator {
     constexpr static int stack_size = 8;
@@ -584,13 +671,19 @@ public:
     clear();
   }
 
-  void insert(K key, const V &value) {
+  // This will always use `vma.begin` as key.
+  void insert(const V &value) {
     sz++;
+    K key = value.begin;
+
     if (!root) {
       root = new node(true);
       root->k[0] = key;
       root->v[0] = value;
       root->count = 1;
+      root->minstart = value.begin;
+      root->maxend = value.end;
+      root->maxgap = 0;
       return;
     }
 
@@ -627,14 +720,23 @@ public:
   }
 
   // Returns a starting address with a gap at least `len`.
-  va_t find_gap(size_t len) const {
-    return find_gap_impl(root, len);
+  // The address will be >= len.
+  va_t find_gap(size_t len, size_t min = 0) const {
+    return find_gap_impl(root, len, min);
   }
 
-  vector<va_t> find_overlap(va_t start, va_t end) const {
-    vector<va_t> result;
+  void update_path(va_t key) {
+    update_path_impl(root, key);
+  }
+
+  vector<vma_t*> find_overlap(va_t start, va_t end) const {
+    vector<vma_t*> result;
     find_overlap_impl(root, start, end, result);
     return result;
+  }
+
+  bool has_overlap(va_t start, va_t end) const {
+    return has_overlap_impl(root, start, end);
   }
 
   void clear() {
@@ -685,32 +787,34 @@ void map_current(void *va, pte_t *pte);
 // If `write` is set to true, also maps COW pages in the range.
 void map_current(void *from, void *to, bool write = false);
 
+// Initialize VMA.
+void init();
+
 struct addrspace {
-  vector<vma_t> vmas;
+  using map = btree<4>;
+  using node = map::node;
 
-  void split_at(size_t i, va_t addr);
-  result merge_at(size_t i);
-  
-  vma_t &operator[](size_t index) { return vmas[index]; }
-  const vma_t &operator[](size_t index) const { return vmas[index]; }
+  map vmas;
+  va_t heap_begin, heap_end;
+  va_t mmap_begin = 0x6000'0000;
+  mutable vma_t *cache;
 
-  void push(const vma_t &vma);
-  bool has(va_t addr) const;
+  addrspace() = default;
+  ~addrspace() { vmas.clear(); }
 
-  // Finds the insertion place of `addr`, i.e. the first vma that is
-  // greater than `addr`.
-  // If `addr` is already contained, return that index.
-  size_t find(va_t addr) const;
-  
-  vma_t &at(va_t addr) { return vmas[find(addr)]; }
-  const vma_t &at(va_t addr) const { return vmas[find(addr)]; }
+  void split(va_t addr);
+  // Unlike btree::find, this finds the VMA *containing* the address, rather than starting at the address.
+  vma_t *find(va_t addr) const;
+  va_t brk(va_t addr);
+  va_t find_mmap(unsigned long len, va_t hint) const;
+
+  void insert(const vma_t &vma);
+  void erase(va_t begin) { vmas.erase(begin); }
   void clear() { vmas.clear(); }
 
-  vma_t *begin() { return vmas.begin(); }
-  vma_t *end() { return vmas.end(); }
-  size_t size() const { return vmas.size(); }
-
-  void resize(size_t sz) { vmas.resize(sz); }
+  auto find_overlap(va_t begin, va_t end) const {
+    return vmas.find_overlap(begin, end);
+  }
 };
 
 }

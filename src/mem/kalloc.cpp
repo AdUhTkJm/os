@@ -386,7 +386,6 @@ pa_t pmalloc(int pagecnt) {
   assert(index + pagecnt < META_SIZE);
   for (size_t i = index; i < index + pagecnt; i++)
     meta[i].refcnt++;
-  printk("pmalloc: %d\n", pagecnt);
   return index * PAGE_SIZE + physbegin;
 }
 

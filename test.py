@@ -33,6 +33,7 @@ parser.add_argument("--smp", action="store_true")
 parser.add_argument("--test", action="store_true")
 parser.add_argument("--unit-test", action="store_true")
 parser.add_argument("--dot", action="store_true")
+parser.add_argument("--release", action="store_true")
 
 args = parser.parse_args()
 
@@ -68,10 +69,10 @@ SPECIAL_FLAGS = {
 
 flags = []
 
-if not args.no_instrument:
+if not args.no_instrument or args.release:
   flags += ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
 
-if not args.no_debug_memory:
+if not args.no_debug_memory or args.release:
   flags += ["-DDEBUG_MEMORY"]
 
 if args.debug_memory_expensive:
@@ -86,7 +87,7 @@ if not args.log_syscall:
 if args.detect_deadlock:
   flags += ["-DDEADLOCK"]
   
-if args.no_debug:
+if args.no_debug or args.release:
   flags += ["-DNDEBUG"]
 else:
   flags += ["-g"]
@@ -345,7 +346,7 @@ def build():
   })
 
 if __name__ == "__main__":
-  if args.rebuild:
+  if args.rebuild or args.release:
     try: os.remove(BUILD_DIR / ".build_cache.pkl")
     except: pass
     try: os.remove(BUILD_DIR / ".include_cache.pkl")

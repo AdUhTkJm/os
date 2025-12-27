@@ -1,5 +1,6 @@
 #include "sysret.h"
 #include "impl.h"
+#include "../fs/tmpfs.h"
 #include "../fs/vfs.h"
 #include "../fs/devfs.h"
 #include "../fs/net.h"
@@ -182,43 +183,71 @@ int fcntl(int fd, int ty, int arg) {
   }
 }
 
-int mprotect(unsigned long start, unsigned long len, int prot) {
-  auto tcb = active();
-  if (len == 0)
-    return -EINVAL;
-  start = rounddown<PAGE_SIZE>(start);
-  auto finish = roundup<PAGE_SIZE>(start + len);
-  auto pcb = tcb->pcb;
-  if (!pcb->vma.has(start) || !pcb->vma.has(finish))
-    return -ENOMEM;
+int mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset) {
+  auto pcb = active()->pcb;
 
-  auto &vmas = pcb->vma;
-  size_t begin = vmas.find(start);
-  // Check memory contiguity.
-  for (auto i = begin; i < vmas.size() && vmas[i].end < finish; i++) {
-    if (vmas[i].end != vmas[i + 1].begin) 
-      return -ENOMEM;
+  bool shared = flags & MAP_SHARED;
+  bool priv = flags & MAP_PRIVATE;
+  if ((!shared && !priv) || len == 0)
+    return -EINVAL;
+
+  bool fixed = flags & MAP_FIXED;
+  bool anon = flags & MAP_ANONYMOUS;
+
+  va_t start;
+  if (!fixed) {
+    start = pcb->vma.find_mmap(len, addr);
+  } else
+    start = rounddown<PAGE_SIZE>(addr);
+  va_t end = roundup<PAGE_SIZE>(start + len);
+  
+  file *backup = nullptr;
+  if (!anon && !pcb->ftbl->count(fd))
+    return -EBADF;
+  if (!anon) {
+    backup = pcb->ftbl->at(fd);
+    bool readable = (backup->flags & 3) != O_WRONLY;
+    bool writable = (backup->flags & 3) != O_RDONLY;
+    if (!readable || (shared && !writable))
+      return -EACCES;
+  } else if (shared)
+    backup = new file(new dentry("<anon>", tmpfs->get(), nullptr), O_RDWR);
+  
+  if (shared) {
+    pshared += end - start;
+    backup->node()->cache = new page_cache(backup->node());
   }
 
-  // Split the first VMA if needed at `start`. Now we're starting from the VMA to the right,
-  // i.e. from `start` to original `vma.end`.
-  if (vmas[begin].begin < start)
-    vmas.split_at(begin++, start);
+  // Remove everything in start - end.
+  munmap(start, len);
 
-  // Note we don't include `finish` when we're mapping.
-  size_t end = vmas.find(finish - 1);
+  // Now allocate near this cap. Note that this has to be page-aligned.
+  vma::vma_t vma(start, end, prot, flags, backup, offset, len);
+  pcb->vma.insert(vma);
+  return vma.begin;
+}
 
-  // Split the last VMA if needed at `end`. We don't need to update `end`, because this time
-  // the split VMA is to the left.
-  if (vmas[end].begin <= finish && finish < vmas[end].end)
-    vmas.split_at(end, finish);
-
-  // Now all VMAs that need changing are exactly those with indices in [begin, end].
-  // Note this is inclusive on both ends.
-  for (size_t i = begin; i <= end; ++i)
-    vmas[i].prot = prot;
+int mprotect(unsigned long start, unsigned long len, int prot) {
+  if (len == 0)
+    return -EINVAL;
   
-  // Remap existing memory.
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  start = rounddown<PAGE_SIZE>(start);
+  auto finish = roundup<PAGE_SIZE>(start + len);
+
+  pcb->vma.split(start);
+  pcb->vma.split(finish);
+
+  auto overlap = pcb->vma.find_overlap(start, finish);
+  if (overlap.size() == 0)
+    return -ENOMEM;
+
+  for (auto vma : overlap)
+    vma->prot = prot;
+  
+  // Remap existing memory. TODO: change on page table instead!
   for (char *p = (char*) start; p != (char*) finish; p += PAGE_SIZE) {
     auto flags = pte_flags(p);
     if (flags == -1)
@@ -233,33 +262,35 @@ int mprotect(unsigned long start, unsigned long len, int prot) {
   return 0;
 }
 
-int munmap(unsigned long addr, unsigned long len) {
+int munmap(unsigned long start, unsigned long len) {
   // The initial check-and-split process is similar to mprotect.
   // Note we don't need memory contiguity here;
   // Also note the system call requires that `addr` is page-aligned.
-  auto tcb = active();
-  if (len == 0 || addr % PAGE_SIZE != 0)
+  if (len == 0 || start % PAGE_SIZE != 0)
     return -EINVAL;
 
-  auto finish = roundup<PAGE_SIZE>(addr + len);
+  auto tcb = active();
   auto pcb = tcb->pcb;
-  if (!pcb->vma.has(addr) || !pcb->vma.has(finish))
+
+  auto finish = roundup<PAGE_SIZE>(start + len);
+  
+  pcb->vma.split(start);
+  pcb->vma.split(finish);
+
+  auto overlap = pcb->vma.find_overlap(start, finish);
+
+  // The `overlap` vector is a list of pointers. They will be invalidated when we start to erase.
+  vector<va_t> toremove;
+  toremove.reserve(overlap.size());
+  for (auto vma : overlap)
+    toremove.push_back(vma->begin);
+
+  if (overlap.size() == 0)
     return -ENOMEM;
 
-  auto &vmas = pcb->vma;
-  size_t begin = vmas.find(addr);
-  if (vmas[begin].begin < addr)
-    vmas.split_at(begin++, addr);
-
-  size_t end = vmas.find(finish - 1);
-  if (vmas[end].begin <= finish && finish < vmas[end].end)
-    vmas.split_at(end, finish);
-
-  // Now we do the real unmapping. In fact, we only need to remove everything in [begin, end].
-  // Note both ends are inclusive.
-  for (unsigned i = end; i < vmas.size(); i++)
-    vmas[i - (end - begin)] = vmas[i];
-  vmas.resize(vmas.size() - (end - begin));
+  for (auto start : toremove)
+    pcb->vma.erase(start);
+  
   return 0;
 }
 

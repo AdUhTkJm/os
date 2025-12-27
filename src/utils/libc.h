@@ -11,6 +11,7 @@
 
 
 C [[noreturn]] void panic(const char *s);
+#ifndef NDEBUG
 #define __assert0(x, line) do { \
   [[unlikely]] if (!(x)) { \
     panic(__FILE__ ":" #line ": assertion failed: " #x); \
@@ -18,6 +19,9 @@ C [[noreturn]] void panic(const char *s);
 } while (0)
 #define __assert1(x, line) __assert0(x, line)
 #define assert(x) __assert1(x, __LINE__)
+#else
+#define assert(x)
+#endif
 
 C unsigned strlen(const char *s);
 C void *memset(void *p, int v, size_t size);

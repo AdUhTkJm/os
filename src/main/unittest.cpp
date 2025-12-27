@@ -1,50 +1,66 @@
 #include "../mem/vma.h"
 #include "../utils/stl/btree.h"
 
+#ifndef NDEBUG
+
 void test_btree() {
-  os::vma::btree<4> map;
+  os::vma::btree<8> map;
 
   // Insert.
-  for (int i = 1; i < 30; i++)
-    map.insert(i, os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
-
+  for (int i = 1; i < 30; i++) {
+    map.insert(os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
+    map.dump();
+  }
   // Remove.
   for (int i = 1; i < 15; i++)
-    map.erase(i * 2);
+    map.erase(i * 4);
 
   for (int i = 60; i > 30; i--)
-    map.insert(i, os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
+    map.insert(os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
 
-  // Remove until there are only two elements (29, 60).
+  // Remove until there are only two elements (58, 120).
   for (int i = 30; i < 60; i++)
-    map.erase(i);
+    map.erase(i * 2);
 
   for (int i = 0; i < 14; i++)
-    map.erase(i * 2 + 1);
+    map.erase(i * 4 + 2);
 
   // Add a few more.
   for (int i = 10; i < 39; i += 7)
-    map.insert(i, os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
+    map.insert(os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
 
   // Add a little bit more.
   for (int i = 3; i < 171; i += 16)
-    map.insert(i, os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
-  
+    map.insert(os::vma::vma_t(i * 2, i * 2 + 1, 0, 0));
+
   // Test iterators.
   for (const auto &[key, vma] : map)
-    printk("%d ", key);
-  printk("\n");
+    printk("%d: [%d - %d]\n", key, vma.begin, vma.end);
 
   // Test find.
-  os::vma::vma_t *vma = map.find(19);
+  os::vma::vma_t *vma = map.find(38);
+  assert(vma);
   printk("%d - %d\n", vma->begin, vma->end);
   vma = map.find(8);
-  printk("%p\n", vma);
+  assert(!vma);
 
   // Test gaps.
-  printk("gap of 5: %d\n", map.find_gap(5));
+  int gaps[] = { 5, 10, 30, 60, 300 };
+  for (auto gap : gaps)
+    printk("gap of %d: %d\n", gap, map.find_gap(gap));
+
+  printk("has overlap for [34, 199): %d\n", map.has_overlap(34, 199));
+  os::vector<os::vma::vma_t*> vec = map.find_overlap(34, 199);
+  printk("overlap: ");
+  for (auto v : vec)
+    printk("%d ", v->begin);
+  printk("\n");
+
+  printk("has overlap for [77, 102): %d\n", map.has_overlap(77, 102));
 }
 
 void test() {
   test_btree();
 }
+
+#endif

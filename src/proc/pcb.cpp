@@ -155,27 +155,6 @@ int pcb_t::close_file(int fd) {
   return 0;
 }
 
-va_t pcb_t::brk(va_t addr) {
-  auto va = (va_t) addr;
-  auto lowest = stack_top;
-  // Find the lowest VMA that we must not overlap with.
-  // In other words, this is the cap of the address.
-  for (const auto &vma : this->vma) {
-    if (vma.flags & VMA_IS_HEAP || vma.flags & VMA_IS_PT_LOAD)
-      continue;
-    lowest = min(lowest, vma.begin);
-  }
-  for (auto &vma : this->vma) {
-    if (!(vma.flags & VMA_IS_HEAP))
-      continue;
-
-    if (va < vma.begin || va >= lowest)
-      return vma.end;
-    return vma.end = va;
-  }
-  panic("process has no heap!");
-}
-
 void tcb_t::send_signal(int sig) {
   if (mask[sig] || status == Zombie)
     return;
@@ -220,26 +199,6 @@ int nextpid() {
   static int pid = 0;
   synchronized syn(lock);
   return pid++;
-}
-
-void init_user(tcb_t *tcb) {
-  va_t max = 0;
-  auto pcb = tcb->pcb;
-  for (const auto &vma : pcb->vma)
-    max = os::max(vma.end, max);
-  va_t heap_start = os::roundup<PAGE_SIZE>(max);
-
-  // Allocate a heap. It is initially quite small.
-  pcb->vma.push(vma::vma_t {
-    heap_start, heap_start + PAGE_SIZE,
-    PROT_READ | PROT_WRITE, MAP_PRIVATE | VMA_IS_HEAP
-  });
-  // Allocate a stack. Note it grows downwards.
-  pcb->vma.push(vma::vma_t {
-    stack_top - user_stack_size, tcb->usp = stack_top,
-    PROT_READ | PROT_WRITE, MAP_PRIVATE | VMA_IS_STACK
-  });
-  pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = user_stack_size;
 }
 
 void init(tcb_t *tcb) {

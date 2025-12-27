@@ -12,6 +12,7 @@ namespace os::detail {
 
 int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags);
 int fcntl(int fd, int ty, int arg);
+int mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset);
 int mprotect(unsigned long start, unsigned long len, int prot);
 int munmap(unsigned long addr, unsigned long len);
 int ioctl(int fd, int op, void *argp);

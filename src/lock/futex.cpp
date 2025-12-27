@@ -55,13 +55,13 @@ futex_key::futex_key(va_t addr) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  auto i = pcb->vma.find(addr);
-  if (i == pcb->vma.size()) {
+  auto vmap = pcb->vma.find(addr);
+  if (!vmap) {
     type = BAD;
     return;
   }
 
-  const auto &vma = pcb->vma[i];
+  const auto &vma = *vmap;
   if (vma.flags & MAP_SHARED) {
     type = SHARED;
     shared.node = vma.backup->node();

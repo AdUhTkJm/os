@@ -12,7 +12,8 @@ void map_single(void *va, pte_t *root) {
   auto va_page = rounddown<4_kb>(va);
   int origflags = pte_flags(va_page);
 
-  if (!pcb->vma.has(addr)) {
+  auto vmap = pcb->vma.find(addr);
+  if (!vmap) {
     // Examine scause to print a better debug message. This is mainly for RISC-V.
 #ifdef RV
     int scause; CSRR(scause, scause);
@@ -26,10 +27,14 @@ void map_single(void *va, pte_t *root) {
     os::terminate(tcb, -127);
     return;
   }
-  const auto &vma = pcb->vma.at(addr);
+  const auto &vma = *vmap;
+
+  // We use zero-page optimization here. For MAP_ANONYMOUS (i.e. no backup file),
+  // we can allocate a zero-page and copy-on-write.
   pa_t pa = (vma.flags & MAP_SHARED)
     ? to_pa((*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data)
     : os::pframe_zeroed();
+  
   int flags = PTE_V | PTE_U;
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
@@ -129,123 +134,93 @@ bool vma_t::mergeable(const vma_t &other) const {
   return true;
 }
 
-void addrspace::split_at(size_t i, uintptr_t addr) {
-  const vma_t &vma = vmas[i];
-  if (!(vma.begin < addr && addr < vma.end))
+vma_t *addrspace::find(va_t addr) const {
+  if (cache && cache->begin <= addr && addr < cache->end)
+    return cache;
+
+  assert(vmas.root);
+  for (node *cur = vmas.root; cur;) {
+    int i = 0;
+    // This stops at the place where cur->k[i] (i.e. vma begin) >= addr.
+    for (; i < cur->count && addr >= cur->k[i]; i++) {
+      if (addr < cur->v[i].end)
+        return cache = &cur->v[i];
+    }
+
+    if (cur->leaf)
+      break;
+
+    // Now we must descend to the left child of k[i], i.e. ch[i].
+    // All children before it will have a smaller end, because VMAs don't overlap.
+    cur = cur->ch[i];
+  }
+  return nullptr;
+}
+
+void addrspace::insert(const vma_t &vma) {
+  // We must ensure there's no overlap.
+#ifndef NDEBUG
+  if (vmas.has_overlap(vma.begin, vma.end)) {
+    printk("addrspace: insert: found overlap\n");
+    printk("insert: [%p, %p)\nexisting:\n", vma.begin, vma.end);
+    for (auto [_, v] : vmas)
+      printk("[%p, %p)\n", v.begin, v.end);
+    
+    panic("overlap");
+  }
+#endif
+  cache = nullptr;
+  vmas.insert(vma);
+}
+
+va_t addrspace::find_mmap(unsigned long len, va_t hint) const {
+  auto va = vmas.find_gap(len, hint ? hint : mmap_begin);
+  if (va)
+    return va;
+
+  // We might need to start searching from other places.
+  assert(false && "TODO: find mmap: mmap_begin change not implemented");
+}
+
+va_t addrspace::brk(va_t addr) {
+  addr = roundup<PAGE_SIZE>(addr);
+  if (addr <= heap_begin)
+    return heap_end;
+
+  if (addr == heap_end)
+    return heap_end;
+
+  // On expand, we first need to check if there's anything on the way.
+  if (addr >= heap_end && vmas.has_overlap(heap_end, addr))
+    return heap_end;
+
+  vma_t *vma = vmas.find(heap_begin);
+  vma->end = addr;
+  vmas.update_path(vma->begin);
+  return heap_end = addr;
+}
+
+void addrspace::split(va_t addr) {
+  vma_t *vmap = find(addr);
+  if (!vmap)
     return;
 
-  vma_t left = vma;
-  left.end = addr;
+  cache = nullptr;
+  auto copy = *vmap;
+  vmas.erase(copy.begin);
 
-  vma_t right = vma;
-  right.begin = addr;
-  if (vma.backup) {
-    // Adjust offsets for the right piece.
-    size_t lsize = left.end - left.begin;
-    right.offset = vma.offset + lsize;
-    // Adjust bss sizes, if applicable.
-    left.maxread = min(left.maxread, lsize);
-    right.maxread = max(0ul, vma.maxread - lsize);
-  }
+  auto oldend = copy.end, oldread = copy.maxread;
+  size_t firstlen = addr - copy.begin;
 
-  // Replace orig with `left` and insert `right` after it.
-  vmas[i] = os::move(left);
-  vmas.insert(vmas.begin() + i + 1, right);
-}
+  copy.end = addr;
+  copy.maxread = min(copy.maxread, firstlen);
+  vmas.insert(copy);
 
-result addrspace::merge_at(size_t i) {
-  if (i + 1 >= vmas.size())
-    return result::failure;
-  if (!vmas[i].mergeable(vmas[i + 1]))
-    return result::failure;
-  
-  vmas[i].end = vmas[i + 1].end;
-  // If mergeable, then the first segment cannot have .bss.
-  if (vmas[i].backup)
-    vmas[i].maxread += vmas[i + 1].maxread;
-  vmas.erase(vmas.begin() + i + 1);
-  return result::success;
-}
-
-size_t addrspace::find(va_t addr) const {
-  size_t low = 0, high = vmas.size();
-  while (low < high) {
-    size_t mid = (low + high) / 2;
-    if (vmas[mid].begin <= addr) {
-      if (vmas[mid].end > addr)
-        return mid;
-      low = mid + 1;
-    } else {
-      high = mid;
-    }
-  }
-  return low;
-}
-
-// Keep `vmas` sorted.
-void addrspace::push(const vma_t &vma) {
-  auto begin = vma.begin, end = vma.end;
-  size_t i = find(begin);
-
-  // We must split if it's like this:
-  // prev [=======]
-  //          |------- begin
-  if (i > 0) {
-    const auto &prev = vmas[i - 1];
-    if (prev.begin < begin && begin < prev.end) {
-      split_at(i - 1, begin);
-      i++;
-    }
-  }
-
-  // Now there are two cases.
-  // Case 1.
-  //        [========]
-  // |----------| end
-  //    Here we must split end, and we can break.
-  //
-  // Case 2.
-  //    [====]
-  // |---------| end
-  //    In this case, we can simply erase the VMA, since it's completely covered.
-  while (i < vmas.size() && vmas[i].begin < end) {
-    const auto &cur = vmas[i];
-    if (cur.end >= end) {
-      split_at(i, end);
-
-      // Now there is an overlapping part.
-      // There are also two cases:
-      //
-      // Case 1.
-      //        [========]
-      // |----------| end
-      //    We can erase the overlapping part.
-      //
-      // Case 2.
-      //  [=============]
-      //       |----| end
-      //    We shrink the first part, and should insert after that.
-      if (vmas[i].begin < begin)
-        vmas[i++].end = begin;
-      else
-        vmas.erase(vmas.begin() + i);
-      break;
-    }
-    assert(cur.begin >= begin);
-    vmas.erase(vmas.begin() + i);
-  }
-
-  // Finally record the new VMA.
-  vmas.insert(vmas.begin() + i, vma);
-}
-
-bool addrspace::has(va_t addr) const {
-  auto point = find(addr);
-  if (point == vmas.size())
-    return false;
-
-  const auto &vma = vmas[point];
-  return vma.begin <= addr && addr < vma.end;
+  copy.begin = addr;
+  copy.end = oldend;
+  copy.offset += firstlen;
+  copy.maxread = oldread > firstlen ? oldread - firstlen : 0;
+  vmas.insert(copy);
 }
 
 vma_t::~vma_t() {
@@ -281,6 +256,9 @@ vma_t &vma_t::operator=(const vma_t &other) {
   if (backup)
     backup->ref();
   return *this;
+}
+
+void init() {
 }
 
 }

@@ -420,4 +420,9 @@ struct sysinfo {
   unsigned int mem_unit;   /* Memory unit size in bytes */
 };
 
+// From <sched.h>.
+typedef struct {
+  int bits[1024 / sizeof(int)];
+} cpu_set_t;
+
 #endif

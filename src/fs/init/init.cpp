@@ -245,13 +245,14 @@ extern "C" void _start() {
     // Execute the shell.
 #ifdef TEST
     const char *test = 
-      // "cd /mnt/glibc/ && sh ./busybox_testcode.sh && echo 'done'";
-      "cd /mnt/glibc && sh ./libctest_testcode.sh";
+      // "cd /mnt/glibc/ && sh ./busybox_testcode.sh";
+      // "cd /mnt/glibc && sh ./libcbench_testcode.sh";
+      "cd /mnt/glibc && sh ./cyclictest_testcode.sh";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };
 #endif
-    const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "HOME=/root", nullptr }; 
+    const char *envp[] = { "PATH=/bin:/usr/bin:/sbin", "HOME=/root", "LC_ALL=C", "LANG=C", nullptr }; 
     syscall((reg_t) "/bin/sh", (reg_t) argv, (reg_t) envp, execve);
 
     __builtin_unreachable();

@@ -177,9 +177,6 @@ struct pcb_t {
   int close_file(int fd);
 
   void send_signal(int sig);
-
-  // Sets heap end. Returns the new end on success, and old end on failure.
-  va_t brk(va_t addr);
 };
 /*
 Note for ksp:
@@ -195,7 +192,6 @@ static_assert(offsetof(tcb_t, ksp) == 24);
 extern static_storage<hashmap<int, pcb_t*>> pidmap;
 
 void init(tcb_t *tcb);
-void init_user(tcb_t *tcb);
 // We can terminate a thread or a process.
 void terminate(tcb_t *tcb, int ret);
 void terminate(pcb_t *pcb, int ret);

@@ -70,29 +70,31 @@ void console_inode::finish_read_wait(wait_entry &entry) {
   wait.finish(entry);
 }
 
-expected<block_inode::cached_sector*> block_inode::load_page(unsigned page, bool force_reload) {
-  auto &c = cache[page];
-  if (c.valid && !force_reload)
-    return &c;
+block_inode::cached_sector *block_inode::load_page(unsigned page, bool force_reload) {
+  auto c = cache.find(page);
+  if (!c) {
+    c = new cached_sector();
+    c->key = page;
+    c->data = (unsigned char *) as_va(pframe());
+  } else if (!force_reload)
+    return c;
   
   unsigned sector = page * 8;
-  if (!c.data)
-    c.data = (unsigned char *) as_va(pframe());
+  if (auto ret = dev->read(sector, c->data, 8); ret != 0)
+    return printk("device: error code %d\n", ret), nullptr;
 
-  if (auto ret = dev->read(sector, c.data, 8); ret != 0)
-    return -EIO;
-
-  c.valid = true;
-  c.dirty = false;
-  return &c;
+  c->dirty = false;
+  if (!cache.find(page))
+    cache.insert(c);
+  return c;
 }
 
 void block_inode::flush_page(unsigned page) {
-  auto &c = cache[page];
-  if (!c.valid || !c.dirty)
+  auto c = cache.find(page);
+  if (!c || !c->dirty)
     return;
-  dev->write(page, c.data, 8);
-  c.dirty = false;
+  dev->write(page, c->data, 8);
+  c->dirty = false;
 }
 
 #define LOAD_SECTOR(c, sector, direct) \
@@ -111,10 +113,9 @@ ssize_t block_inode::read(size_t offset, void *buf, size_t len, int flags) {
     auto cp = load_page(cur / PAGE_SIZE, flags & O_DIRECT);
     if (!cp)
       return -EIO;
-    auto &page = **cp;
 
     size_t l = min(len - pos, PAGE_SIZE - off);
-    memcpy((char *) buf + pos, page.data + off, l);
+    memcpy((char *) buf + pos, cp->data + off, l);
     
     pos += l;
   }
@@ -133,11 +134,9 @@ ssize_t block_inode::write(size_t offset, const void *buf, size_t len, int flags
     bool full = (off == 0 && l == PAGE_SIZE);
     auto cp = load_page(cur / PAGE_SIZE, (flags & O_DIRECT) && !full);
     
-    auto &page = **cp;
-    memcpy(page.data + off, (char*)buf + pos, l);
+    memcpy(cp->data + off, (char*) buf + pos, l);
     
-    page.dirty = true;
-    page.valid = true;
+    cp->dirty = true;
     pos += l;
   }
 
@@ -147,23 +146,15 @@ ssize_t block_inode::write(size_t offset, const void *buf, size_t len, int flags
 }
 
 void block_inode::flush() {
-  for (const auto &[page, c] : cache)
-    // Note we can't capture reference directly, since the pair is temporarily constructed.
-    // This `flush_sector` will always check dirtiness.
-    flush_page(page);
+  // TODO: enumerate an RB-tree!
 }
 
 void *block_inode::get_page(unsigned i) {
-  auto page = load_page(i);
-  if (!page)
-    return nullptr;
-
-  return (*page)->data;
+  return load_page(i)->data;
 }
 
 void block_inode::mark_dirty(unsigned i) {
-  auto &page = cache.at(i);
-  page.dirty = true;
+  cache.find(i)->dirty = true;
 }
 
 tty_inode::tty_inode(console_inode *console): inode_impl(devfs.get(), 0, 0, 0666, File), tty(console) {}

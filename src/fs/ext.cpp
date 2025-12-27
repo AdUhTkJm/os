@@ -42,7 +42,7 @@ size_t ext_inode::locate_ext2(size_t byte) {
     return meta.directptr[cnt];
 
   // We're in the range of single-indirect pointer.
-  unsigned *ptrs;
+  const unsigned *ptrs;
   cnt -= 12;
   if (cnt < N) {
     ptrs = (unsigned *) read_block(meta.indirect1);
@@ -1003,7 +1003,7 @@ int ext_inode::erase_ext2(unsigned block, int level) {
     return 1;
   }
 
-  auto page = (unsigned *) read_block(block);
+  auto page = (const unsigned *) read_block(block);
   if (!page)
     return -EIO;
 
