@@ -24,13 +24,23 @@ public:
 
 class meminfo : public inode_impl<meminfo> {
   inode::meta meta;
-  string value;
 public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
   READONLY_FILE;
 
   meminfo(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
+  ssize_t read(size_t, void *, size_t, int) override;
+};
+
+class stat : public inode_impl<stat> {
+  inode::meta meta;
+public:
+  FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_FILE;
+
+  stat(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
   ssize_t read(size_t, void *, size_t, int) override;
 };
 
@@ -53,13 +63,15 @@ namespace pid {
 class oom_score_adj : public inode_impl<oom_score_adj> {
   inode::meta meta;
   pcb_t *pcb;
+  int value = 0;
 public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
-  READONLY_FILE;
 
   oom_score_adj(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0444, File), pcb(pcb) {}
   ssize_t read(size_t, void *, size_t, int) override;
+  ssize_t write(size_t, const void *, size_t, int) override;
+  int truncate(size_t) override { return -EINVAL; }
 };
 
 }
@@ -85,6 +97,7 @@ public:
 class procroot : public inode_impl<procroot> {
   proc::filesystems *filesystems;
   proc::meminfo *meminfo;
+  proc::stat *stat;
 
   os::hashmap<int, proc::process*> pnodes;
   inode::meta meta;

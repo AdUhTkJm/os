@@ -82,8 +82,10 @@ block_inode::cached_sector *block_inode::load_page(unsigned page, bool force_rel
   unsigned sector = page * 8;
   if (auto ret = dev->read(sector, c->data, 8); ret != 0)
     return printk("device: error code %d\n", ret), nullptr;
+  active()->ruse.ru_inblock++;
 
   c->dirty = false;
+  // TODO: use a wait queue instead, for concurrency issues.
   if (!cache.find(page))
     cache.insert(c);
   return c;
@@ -94,6 +96,7 @@ void block_inode::flush_page(unsigned page) {
   if (!c || !c->dirty)
     return;
   dev->write(page, c->data, 8);
+  active()->ruse.ru_oublock++;
   c->dirty = false;
 }
 

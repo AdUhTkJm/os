@@ -18,19 +18,17 @@ using namespace os;
 int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
   size_t timeout = 1800'0000'0000'0000'0000ul;
   if (timeout) {
-    auto tp = copy_from_user((void *) _timeout, sizeof(timespec));
-    if (!tp)
+    timespec ts;
+    if (!copy_from_user(&ts, (void *) _timeout, sizeof(timespec)))
       return -EFAULT;
 
-    auto ts = *(timespec *) tp->get();
     timeout = ts.tv_nsec + ts.tv_sec * 1_s;
   }
 
-  auto p = copy_from_user(addr, 4);
-  if (!p)
+  int u;
+  if (!copy_from_user(&u, addr, 4))
     return -EFAULT;
 
-  int u = *(int *) p->get();
   if (u != expected)
     return -EAGAIN;
 
@@ -46,8 +44,8 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
 
   q->lock.acquire();
 
-  auto p2 = copy_from_user(addr, 4);
-  u = *(int *) p2->get();
+  if (!copy_from_user(&u, addr, 4))
+    return -EFAULT;
   if (u != expected) {
     q->lock.release();
     return -EAGAIN;
@@ -65,12 +63,11 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
     q->lock.acquire();
     q->wait.finish(entry);
     
-    auto p = copy_from_user(addr, 4);
-    if (!p) {
+    if (!copy_from_user(&u, addr, 4)) {
       q->lock.release();
       return -EFAULT;
     }
-    u = *(int *) p->get();
+
     if (u != expected) {
       q->lock.release();
       return 0;
@@ -313,10 +310,8 @@ int ioctl(int fd, int op, void *argp) {
     return 0;
   }
   case TCSETS: {
-    auto p = copy_from_user(argp, sizeof(termio));
-    if (!p)
-      return p;
-    dev.flags = *(termio *) p->get();
+    if (!copy_from_user(&dev.flags, argp, sizeof(termio)))
+      return -EFAULT;
     return 0;
   }
   case TIOCGPGRP: {
@@ -324,11 +319,8 @@ int ioctl(int fd, int op, void *argp) {
     return 0;
   }
   case TIOCSPGRP: {
-    auto p = copy_from_user(argp, sizeof(int));
-    if (!p)
-      return p;
-    int pgid = *(int*) p->get();
-    dev.pgid = pgid;
+    if (!copy_from_user(&dev.pgid, argp, sizeof(int)))
+      return -EFAULT;
     return 0;
   }
   case TIOCGWINSZ: {
@@ -356,9 +348,7 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
 
   [[unlikely]] if (pid == int(0x8000'0000))
     return -ESRCH;
-  
-  if (rusage)
-    printk("wait4: unimplemented: rusage\n");
+
   if (!pcb->children.size())
     return -ECHILD;
 
@@ -381,7 +371,15 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
           int status = (child->ret & 0xff) << 8;
           copy_to_user(wstatus, &status, sizeof(int));
         }
+        pusage use {};
+        for (auto t : child->threads)
+          use += t->ruse;
+        if (rusage) {
+          struct rusage v = (struct rusage) use;
+          copy_to_user(rusage, &v, sizeof(struct rusage));
+        }
 
+        pcb->cruse += use;
         pcb->children.erase(child);
         delete child;
         return p;
@@ -482,12 +480,15 @@ int bind(int fd, void *_addr, unsigned len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
-  auto addrp = copy_from_user(_addr, len);
-  if (!addrp)
-    return -addrp;
-  auto addr = addrp->get();
 
-  auto family = *(unsigned short *) addr;
+  // This is guaranteed to have enough size.
+  sockaddr addr;
+  if (len > sizeof(sockaddr))
+    return -EINVAL;
+  if (!copy_from_user(&addr, _addr, len))
+    return -EFAULT;
+
+  auto family = addr.sa_family;
   if (family != AF_INET) {
     printk("bind: unsupported family: %d\n", family);
     return -EINVAL;
@@ -497,7 +498,7 @@ int bind(int fd, void *_addr, unsigned len) {
     if (len < sizeof(sockaddr_in))
       return -EINVAL;
 
-    auto info = *(sockaddr_in *) addr;
+    auto info = *(sockaddr_in *) &addr;
     return udp->bind(info.sin_addr.s_addr, info.sin_port);
   }
   
@@ -505,7 +506,7 @@ int bind(int fd, void *_addr, unsigned len) {
     if (len < sizeof(sockaddr_in))
       return -EINVAL;
 
-    auto info = *(sockaddr_in *) addr;
+    auto info = *(sockaddr_in *) &addr;
     return tcp->bind(info.sin_addr.s_addr, info.sin_port);
   }
 
@@ -520,12 +521,15 @@ int connect(int fd, void *_addr, unsigned len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
-  auto addrp = copy_from_user(_addr, len);
-  if (!addrp)
-    return -addrp;
-  auto addr = addrp->get();
 
-  auto family = *(unsigned short *) addr;
+  if (len > sizeof(sockaddr))
+    return -EINVAL;
+
+  sockaddr addr;
+  if (!copy_from_user(&addr, _addr, len))
+    return -EFAULT;
+
+  auto family = addr.sa_family;
   if (family != AF_INET) {
     printk("connect: unsupported family: %d\n", family);
     return -EINVAL;
@@ -535,14 +539,14 @@ int connect(int fd, void *_addr, unsigned len) {
     if (len < sizeof(sockaddr_in))
       return -EINVAL;
 
-    auto info = *(sockaddr_in *) addr;
+    auto info = *(sockaddr_in *) &addr;
     return udp->connect(info.sin_addr.s_addr, info.sin_port);
   }
   if (auto tcp = dyn_cast<tcp_socket_inode>(file->node())) {
     if (len < sizeof(sockaddr_in))
       return -EINVAL;
 
-    auto info = *(sockaddr_in *) addr;
+    auto info = *(sockaddr_in *) &addr;
     return tcp->connect(info.sin_addr.s_addr, info.sin_port);
   }
 
@@ -597,10 +601,10 @@ int futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsign
 
   if ((va_t) addr % 4 != 0)
     return -EINVAL;
-  auto p = copy_from_user(addr, 4);
-  if (!p)
+
+  int u;
+  if (!copy_from_user(&u, addr, 4))
     return -EFAULT;
-  int u = *(int *) p->get();
 
   (void) val2;
   switch (op) {
@@ -649,10 +653,9 @@ int setsockopt(int fd, int level, int optname, void *optval, int optlen) {
     if (!udp)
       return -EBADF;
 
-    auto p = copy_from_user(optval, optlen);
-    if (!p)
-      return p;
-    int enable = *(int*) p->get();
+    int enable;
+    if (!copy_from_user(&enable, optval, optlen))
+      return -EFAULT;
     udp->options.checksum = !enable;
     return 0;
   }
@@ -671,10 +674,6 @@ int sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsign
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
-
-  auto buf = copy_from_user(_buf, size);
-  if (!buf)
-    return -EFAULT;
   
   // Now let's see the inode type.
   if (dest) {
@@ -691,7 +690,20 @@ int sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsign
   if (flags & MSG_DONTWAIT)
     writeflags |= O_NONBLOCK;
 
-  return node->write(0, buf->get(), size, writeflags);
+  char buf[1024];
+  int written = 0;
+  for (size_t i = 0; i < size; i += 1024) {
+    size_t l = min(1024ul, size);
+    if (!copy_from_user(buf, (char *) _buf + i, l))
+      return -EFAULT;
+
+    auto ret = node->write(0, buf, l, writeflags);
+    if (ret <= 0)
+      return written ? written : ret;
+    size -= l;
+    written += l;
+  }
+  return written;
 }
 
 int sendmsg(int fd, const msghdr &header, int flags) {
@@ -700,17 +712,13 @@ int sendmsg(int fd, const msghdr &header, int flags) {
     return -EINVAL;
   }
 
-  auto iovp = copy_from_user(header.msg_iov, sizeof(iovec) * header.msg_iovlen);
-  if (!iovp)
-    return -EFAULT;
-
-  iovec *iov = (iovec *) iovp->get();
-  // printk("sendmsg: flags: %d\n", flags);
-
   // Note msg_name and msg_namelen are user-space pointers, as expected by sendto().
   int sent = 0;
   for (unsigned i = 0; i < header.msg_iovlen; i++) {
-    int ret = sendto(fd, iov[i].iov_base, iov[i].iov_len, flags, header.msg_name, header.msg_namelen);
+    iovec iov;
+    if (!copy_from_user(&iov, header.msg_iov + i, sizeof(iovec)))
+      return -EFAULT;
+    int ret = sendto(fd, iov.iov_base, iov.iov_len, flags, header.msg_name, header.msg_namelen);
     if (ret < 0)
       return sent;
     sent += ret;
@@ -719,12 +727,11 @@ int sendmsg(int fd, const msghdr &header, int flags) {
 }
 
 int sendmsg(int fd, void *msg, int flags) {
-  auto p = copy_from_user((void *) msg, sizeof(msghdr));
-  if (!p)
+  msghdr header;
+  if (!copy_from_user(&header, (void *) msg, sizeof(msghdr)))
     return -EFAULT;
 
-  msghdr *header = (msghdr *) p->get();
-  return sendmsg(fd, *header, flags);
+  return sendmsg(fd, header, flags);
 }
 
 int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
@@ -741,11 +748,10 @@ int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
   
   auto before = pcb->rlims[resource];
   if (newrlim) {
-    auto plim = copy_from_user(newrlim, sizeof(rlimit));
-    if (!plim)
+    rlimit rlim;
+    if (!copy_from_user(&rlim, newrlim, sizeof(rlimit)))
       return -EFAULT;
 
-    auto rlim = *(rlimit *) plim->get();
     if (before.rlim_max != 0 && (rlim.rlim_max > before.rlim_max || rlim.rlim_cur > rlim.rlim_max || rlim.rlim_cur == 0))
       return -EPERM;
 
@@ -778,11 +784,10 @@ int nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
   }
 
   tcb->sclock = clock;
-  auto m_rq = copy_from_user(rqtp, sizeof(timespec));
-  if (!m_rq)
-    return m_rq;
+  timespec rq;
+  if (!copy_from_user(&rq, rqtp, sizeof(timespec)))
+    return -EFAULT;
 
-  auto rq = *(timespec *) m_rq->get();
   if (rq.tv_nsec >= (long) 1_s || rq.tv_sec < 0)
     return -EINVAL;
 

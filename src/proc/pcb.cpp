@@ -6,7 +6,7 @@
 #include "../utils/stl/unique_ptr.h"
 #include "../fs/pipe.h"
 
-extern int timer_tick;
+extern int clock_period;
 
 namespace os {
 
@@ -178,6 +178,15 @@ void pcb_t::send_signal(int sig) {
   pending.add(sig);
 }
 
+pcb_t::~pcb_t() {
+  // Free all threads.
+  for (auto t = threads.front(); t;) {
+    auto next = t->next;
+    delete t;
+    t = next;
+  }
+}
+
 int tcb_t::sleep(size_t nano) {
   timeout = nano == -1ul ? (1l << 63) : (nano + tick_length - 1) / tick_length;
   
@@ -232,8 +241,9 @@ void terminate(tcb_t *tcb, int ret) {
     return;
   }
 
+  // We don't remove it from `pcb->threads`, for rusage count and for reading return values.
+  // Moreover, we need to track the threads so that we can recycle them on pcb exit.
   tcb->ret = ret;
-  pcb->threads.erase(tcb);
   scheduler.erase(tcb);
 }
 
@@ -687,6 +697,13 @@ expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
   char *buf = new char[len];
   memcpy(buf, usr, len);
   return expected<unique_ptr<char>>(buf);
+}
+
+bool copy_from_user(void *ker, void *usr, size_t len) {
+  EnableAccessToUserMemory enable;
+  vma::map_current(usr, (char *) usr + len);
+  memcpy(ker, usr, len);
+  return true;
 }
 
 expected<unique_ptr<char>> copy_from_user(char *usr) {

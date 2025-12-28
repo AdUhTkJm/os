@@ -13,7 +13,7 @@
 #include "../utils/log.h"
 
 // In nanosecond.
-extern int timer_tick;
+extern int clock_period;
 // In nanosecond, from Unix epoch. This is initially boot time.
 extern size_t realtime;
 // Default to zero (UTC).
@@ -21,7 +21,7 @@ timezone zone;
 
 // Returns current timestamp.
 size_t os::now() {
-  return rdtime() * timer_tick + realtime;
+  return rdtime() * clock_period + realtime;
 }
 
 // For a system call list:
@@ -129,14 +129,11 @@ HANDLE(readv, fd, iov, cnt) {
   if (cnt <= 0)
     return -EINVAL;
 
-  auto iovecs = copy_from_user((void*) iov, cnt * sizeof(iovec));
-  if (!iovecs)
-    return -EFAULT;
-
-  auto iovk = (iovec *) iovecs->get();
   long total = 0;
   for (int i = 0; i < cnt; i++) {
-    const auto &v = iovk[i];
+    iovec v;
+    if (!copy_from_user(&v, (char *) iov + i * sizeof(iovec), sizeof(iovec)))
+      return -EFAULT;
 
     if (v.iov_len == 0)
       continue;
@@ -163,10 +160,20 @@ HANDLE(write, fd, _buf, len) {
   if (!file)
     return -EBADF;
 
-  auto buf = copy_from_user((void*) _buf, len);
-  if (!buf)
-    return -EFAULT;
-  return file->write(buf->get(), len);
+  char buf[1024];
+  size_t written = 0;
+  for (long i = 0; i < len; i += 1024) {
+    long l = min(len, 1024l);
+    if (!copy_from_user(buf, (char*) _buf + i, l))
+      return -EFAULT;
+    int ret = file->write(buf, l);
+    if (ret <= 0)
+      return written ? written : ret;
+
+    written += ret;
+    len -= l;
+  }
+  return written;
 }
 
 HANDLE(writev, fd, iov, cnt) {
@@ -177,26 +184,30 @@ HANDLE(writev, fd, iov, cnt) {
   if (cnt <= 0)
     return -EINVAL;
 
-  auto iovecs = copy_from_user((void*) iov, cnt * sizeof(iovec));
-  if (!iovecs)
-    return -EFAULT;
-
-  auto iovk = (iovec *) iovecs->get();
   long total = 0;
+  char buf[1024];
   for (int i = 0; i < cnt; i++) {
-    const auto &v = iovk[i];
+    iovec v;
+    if (!copy_from_user(&v, (char *) iov + i * sizeof(iovec), sizeof(iovec)))
+      return -EFAULT;
 
     if (v.iov_len == 0)
       continue;
 
     // Copy a single buffer.
-    auto buf = copy_from_user(v.iov_base, v.iov_len);
-    if (!buf)
-      return total ? total : -EFAULT;
+    long n = 0;
+    for (size_t j = 0; j < v.iov_len; j++) {
+      size_t l = min(v.iov_len, 1024ul);
+      if (!copy_from_user(buf, v.iov_base, l))
+        return -EFAULT;
 
-    ssize_t n = file->write(buf->get(), v.iov_len);
-    if (n < 0)
-      return total ? total : n;
+      auto ret = file->write(buf, l);
+      if (ret < 0)
+        return total ? total : ret;
+      if (ret == 0)
+        break;
+      n += ret;
+    }
 
     total += n;
     // If we have a partial write, then we stop immediately.
@@ -279,10 +290,8 @@ HANDLE(sendfile, out, in, offptr, len) {
 
   size_t offset = fin->offset;
   if (offptr) {
-    auto p = copy_from_user((void *) offptr, sizeof(size_t));
-    if (!p)
-      return p;
-    offset = *(size_t*) p->get();
+    if (!copy_from_user(&offset, (void *) offptr, sizeof(size_t)))
+      return -EFAULT;
   }
 
   char buf[1024];
@@ -349,7 +358,6 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
     int fd = relative
       ? pcb->open_file_from(path->get(), dirfd, O_PATH)
       : pcb->open_file(path->get(), O_PATH);
-    printk("fd = %d\n", fd);
     if (fd < 0)
       return fd;
 
@@ -372,10 +380,9 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
   auto meta_before = node->get_meta();
   bool changed = false;
   if (times != 0) {
-    auto timep = copy_from_user((void*) times, sizeof(timespec) * 2);
-    if (!timep)
+    timespec time[2];
+    if (!copy_from_user(time, (void*) times, sizeof(timespec) * 2))
       return -EFAULT;
-    auto time = (timespec *) timep->get();
     if (time[0].tv_nsec >= long(1_s) || time[1].tv_nsec >= long(1_s))
       return -EINVAL;
 
@@ -729,25 +736,69 @@ HANDLE(getrandom, _) {
 
 // We only have a single CPU.
 HANDLE(sched_getaffinity, pid, size, mask) {
-  if (size < 4)
+  if (size < (int) sizeof(unsigned long))
     return -EINVAL;
 
-  int kset = 1;
-  copy_to_user((void *) mask, &kset, sizeof(int));
+  copy_to_user((void *) mask, zeroes, size);
+  char kset = 1;
+  copy_to_user((void *) mask, &kset, 1);
   return 0;
 }
 
-HANDLE(sched_setaffinity, pid, size, mask) {
+HANDLE(sched_setaffinity, pid, size, _mask) {
   if (size < 4)
     return -EINVAL;
   
   
-  auto maskp = copy_from_user((void *) mask, sizeof(int));
-  if (!maskp)
+  int mask;
+  if (!copy_from_user(&mask, (void *) _mask, sizeof(int)))
     return -EFAULT;
 
-  if (*(int *) maskp->get() != 1)
+  if (mask != 1)
     return -EINVAL;
+  return 0;
+}
+
+// We don't (and won't) have NUMA. Always return default value.
+HANDLE(get_mempolicy, policy, nmask, maxnode, addr, flags) {
+  long zero = 0;
+  if (policy)
+    copy_to_user((void *) policy, &zero, 4);
+  
+  if (nmask && maxnode > 0)
+    copy_to_user((void *) nmask, &zero, 8);
+
+  return 0;
+}
+
+HANDLE(capget, header, data) {
+  cap_header h;
+  cap_data dat;
+
+  if (!header)
+      return -EFAULT;
+
+  copy_from_user(&h, (void *) header, sizeof(h));
+
+  // If version is 0, user is asking what we support.
+  if (h.version == 0) {
+    h.version = LINUX_CAPABILITY_VERSION_3;
+    h.pid = 0;
+    copy_to_user((void *) header, &h, sizeof(h));
+    return 0;
+  }
+
+  if (h.version != LINUX_CAPABILITY_VERSION_3)
+    return -EINVAL;
+
+  if (!data)
+    return -EFAULT;
+
+  // TODO: stub: grant everything.
+  dat.effective   = 0xffffffff;
+  dat.permitted   = 0xffffffff;
+  dat.inheritable = 0xffffffff;
+  copy_to_user((void *) data, &dat, sizeof(dat));
   return 0;
 }
 
@@ -848,9 +899,45 @@ HANDLE(riscv_hwprobe, _) {
 }
 #endif
 
+// This system call returns in clock ticks.
 HANDLE(times, buf) {
-  copy_to_user((void *) buf, &pcb->times, sizeof(tms));
-  return timer_tick;
+  long utime = 0, stime = 0;
+  for (auto t : pcb->threads) {
+    utime += t->ruse.ru_utime;
+    stime += t->ruse.ru_stime;
+  }
+  tms times {
+    .tms_utime = utime,
+    .tms_stime = stime,
+    .tms_cutime = pcb->cruse.ru_utime,
+    .tms_cstime = pcb->cruse.ru_stime,
+  };
+  copy_to_user((void *) buf, &times, sizeof(tms));
+  return clock_period;
+}
+
+HANDLE(getrusage, who, buf) {
+  switch (who) {
+  case -1: { // Children
+    rusage v = (rusage) pcb->cruse;
+    copy_to_user((void *) buf, &v, sizeof(rusage));
+    return 0;
+  }
+  case 0: { // Self
+    pusage use {};
+    for (auto t : pcb->threads)
+      use += t->ruse;
+    rusage v = (rusage) use;
+    copy_to_user((void *) buf, &v, sizeof(rusage));
+    return 0;
+  }
+  case 1: {// Thread
+    rusage v = (rusage) tcb->ruse;
+    copy_to_user((void *) buf, &v, sizeof(rusage));
+    return 0;
+  }
+  }
+  return -EINVAL;
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
@@ -956,7 +1043,7 @@ HANDLE(ioctl, fd, op, argp) {
 
 HANDLE(clock_gettime, id, tp) {
   timespec spec;
-  size_t time = rdtime() * timer_tick;
+  size_t time = rdtime() * clock_period;
 
   switch (id) {
   case CLOCK_MONOTONIC:
@@ -995,13 +1082,13 @@ HANDLE(settimeofday, tv, tz) {
     // TODO: What is a valid timezone anyway?
     return -EINVAL;
   if (tv) {
-    // Note this is a timeval!
-    auto val = copy_from_user((void*) tv, sizeof(timeval));
-    if (!val)
-      return val;
-    auto ts = (timeval*) val->get();
-    unsigned long time = ts->tv_usec * 1_us + ts->tv_sec * 1_s;
-    unsigned long tick = rdtime() * (unsigned long) timer_tick;
+    // Note this is a timeval, rather than a timespec.
+    timeval ts;
+    if (!copy_from_user(&ts, (void*) tv, sizeof(timeval)))
+      return -EFAULT;
+    
+    unsigned long time = ts.tv_usec * 1_us + ts.tv_sec * 1_s;
+    unsigned long tick = rdtime() * (unsigned long) clock_period;
     if (time < tick)
       return -EINVAL;
 
@@ -1041,24 +1128,13 @@ HANDLE(rt_sigprocmask, how, set, oldset, size) {
   if (!set)
     return 0;
 
-  auto sigset = copy_from_user((void *) set, size);
-  if (!sigset)
-    return sigset.error();
-
-  unsigned long mask;
-  switch (size) {
-  case 8:
-    mask = *(unsigned char *) sigset->get();
-    break;
-  case 16:
-    mask = *(unsigned short *) sigset->get();
-    break;
-  case 32:
-    mask = *(unsigned *) sigset->get();
-    break;
-  default:
+  sigset_t sigset;
+  if (!copy_from_user(&sigset, (void *) set, size))
+    return -EFAULT;
+  if (size >= 8)
     return -EINVAL;
-  };
+
+  unsigned long mask = sigset.val;
   // In Linux, the bit for `sig` is usually `sig - 1`.
   mask <<= 1;
 
@@ -1085,20 +1161,20 @@ HANDLE(rt_sigtimedwait, sig, info, timeout) {
     return -EINVAL;
   }
 
-  auto sigset = copy_from_user((void *) sig, sizeof(sigset_t));
-  if (!sigset)
-    return sigset;
+  sigset_t waitset;
+  if (!copy_from_user(&waitset, (void *) sig, sizeof(sigset_t)))
+    return -EFAULT;
 
   size_t tm = 0;
   if (timeout) {
-    auto timep = copy_from_user((void *) timeout, sizeof(timespec));
-    if (!timep)
-      return timep;
-    auto time = (timespec *) timep->get();
-    tm = time->tv_nsec + time->tv_sec * 1_s;
+    timespec time;
+    if (!copy_from_user(&time, (void *) timeout, sizeof(timespec)))
+      return -EFAULT;
+
+    tm = time.tv_nsec + time.tv_sec * 1_s;
   }
 
-  auto wait = *(unsigned long*) sigset->get();
+  auto wait = waitset.val;
   // In Linux, the bit is usually `sig - 1`.
   wait <<= 1;
   if (tm == 0) {
@@ -1160,20 +1236,20 @@ HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
   // Ignore sigmask for now.
   if (cnt <= 0)
     return -EINVAL;
-  auto pollfds = copy_from_user((void *) _fds, cnt * sizeof(pollfd));
-  if (!pollfds)
-    return pollfds;
+
+  // TODO: how to remove dynamic allocation here?
+  unique_ptr<pollfd[]> fds(new pollfd[cnt]);
+  if (!copy_from_user(fds.get(), (void *) _fds, cnt * sizeof(pollfd)))
+    return -EFAULT;
   
   size_t timeout = -1ul;
   if (tmo) {
-    auto tp = copy_from_user((void *) tmo, sizeof(timespec));
-    if (!tp)
-      return tp;
-    timespec t = *(timespec *) tp->get();
+    timespec t;
+    if (!copy_from_user(&t, (void *) tmo, sizeof(timespec)))
+      return -EFAULT;
     timeout = t.tv_nsec + t.tv_sec * 1_s;
   }
 retry:
-  auto fds = (pollfd*) pollfds->get();
   int available = 0;
   for (long i = 0; i < cnt; i++) {
     pollfd &fd = fds[i];
@@ -1193,7 +1269,7 @@ retry:
       available++;
   }
   if (available) {
-    copy_to_user((void *) _fds, fds, cnt * sizeof(pollfd));
+    copy_to_user((void *) _fds, fds.get(), cnt * sizeof(pollfd));
     return available;
   }
   // Don't add to wait queue if we don't want to wait.
@@ -1260,10 +1336,10 @@ HANDLE(rt_sigaction, sig, act, oldact) {
     copy_to_user((void *) oldact, &v, sizeof(::sigaction));
   }
   if (act) {
-    auto sigactp = copy_from_user((void *) act, sizeof(::sigaction));
-    if (!sigactp)
-      return sigactp;
-    auto sigact = *(::sigaction *) sigactp->get();
+    ::sigaction sigact;
+    if (!copy_from_user(&sigact, (void *) act, sizeof(::sigaction)))
+      return -EFAULT;
+    
     os::sigaction a {
       .handler = sigact.sa_handler,
       .mask = sigact.sa_mask.val,
@@ -1334,14 +1410,13 @@ HANDLE(sendmsg, fd, msg, flags) {
 }
 
 HANDLE(sendmmsg, fd, msg, n, flags) {
-  auto mp = copy_from_user((void *) msg, sizeof(mmsghdr) * n);
-  if (!mp)
-    return mp;
-  auto messages = (mmsghdr *) mp->get();
-
   int i = 0;
   for (; i < n; i++) {
-    int sent = detail::sendmsg(fd, messages[i].msg_hdr, flags);
+    mmsghdr message;
+    if (!copy_from_user(&message, (mmsghdr *) msg + i, sizeof(mmsghdr)))
+      return -EFAULT;
+
+    int sent = detail::sendmsg(fd, message.msg_hdr, flags);
     if (sent < 0)
       return i ? i : sent;
     
@@ -1381,10 +1456,9 @@ HANDLE(setitimer, which, timer, old) {
     return -EINVAL;
   }
   
-  auto p = copy_from_user((void *) timer, sizeof(itimerval));
-  if (!p)
-    return p;
-  itimerval time = *(itimerval *) p->get();
+  itimerval time;
+  if (!copy_from_user(&time, (void *) timer, sizeof(itimerval)))
+    return -EFAULT;
   if (time.it_interval.tv_usec > 999999 || time.it_interval.tv_usec < 0)
     return -EINVAL;
   if (time.it_value.tv_usec > 999999 || time.it_value.tv_usec < 0)
@@ -1445,15 +1519,19 @@ namespace os {
   auto pcb = tcb->pcb;
   // Switch from user mode to kernel mode.
   // We update kmode.
-  if (!tcb->kmode)
+  if (!tcb->kmode) {
+    size_t time = now();
+    tcb->ruse.ru_utime += time - tcb->last_sched;
+    tcb->last_sched = time;
     tcb->kmode = true;
+  }
 
   if (scause < 0) {
     int kind = scause & 0xff;
     switch (kind) {
     case 5: { // Timer interrupt
       // Tick every 100ms.
-      sbi_set_timer(rdtime() + tick_length / timer_tick);
+      sbi_set_timer(rdtime() + tick_length / clock_period);
       scheduler.tick();
       scheduler.yield(); // TODO: check time slice
     }

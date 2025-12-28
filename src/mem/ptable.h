@@ -129,6 +129,8 @@ int pte_flags(va_t va, const pte_t *root);
 inline int pte_flags(const void *va) { return pte_flags((va_t) va); }
 inline int pte_flags(const void *va, const pte_t *root) { return pte_flags((va_t) va, root); }
 
+pte_t pte_of(va_t va, const pte_t *root);
+
 /* Gives a virtually consecutive memory region of size `size`. */
 void *kalloc(size_t size);
 
@@ -226,7 +228,7 @@ void mmwr(pa_t p, T value) {
 
 void copy_to_user(void *usr, const void *ker, size_t len);
 // Copies raw data.
-expected<unique_ptr<char>> copy_from_user(void *usr, size_t len);
+bool copy_from_user(void *ker, void *usr, size_t len);
 // Copies a string.
 expected<unique_ptr<char>> copy_from_user(char *usr);
 // Copies a null-terminated list of strings.

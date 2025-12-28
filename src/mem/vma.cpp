@@ -8,9 +8,10 @@ void map_single(void *va, pte_t *root) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
+  auto v = now();
   va_t addr = (va_t) va;
   auto va_page = rounddown<4_kb>(va);
-  int origflags = pte_flags(va_page);
+  pte_t pte = pte_of((va_t) va_page, root);
 
   auto vmap = pcb->vma.find(addr);
   if (!vmap) {
@@ -32,7 +33,7 @@ void map_single(void *va, pte_t *root) {
   // We use zero-page optimization here. For MAP_ANONYMOUS (i.e. no backup file),
   // we can allocate a zero-page and copy-on-write.
   pa_t pa = (vma.flags & MAP_SHARED)
-    ? to_pa((*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data)
+    ? (pa_t) (*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data - KERNEL_OFFSET
     : os::pframe_zeroed();
   
   int flags = PTE_V | PTE_U;
@@ -40,46 +41,33 @@ void map_single(void *va, pte_t *root) {
   if (vma.prot & PROT_READ) flags |= PTE_R;
   if (vma.prot & PROT_WRITE) flags |= PTE_W;
 
-  if (origflags != -1 && (origflags & PTE_COW)) {
+  if ((pte & PTE_V) && (pte & PTE_COW)) {
     // This is a copy-on-write segment. We copy the original contents.
     memcpy((void *) as_va(pa), va_page, PAGE_SIZE);
     // The original pa must be freed.
-    pfree(to_pa(va_page));
+    pfree(PTE_TO_PA(pte));
     // Remap the memory and let it point to the new pa.
     os::pmap(pa, va_page, MAP_4KB, flags | PTE_W, root);
     return;
   }
 
-  // Temporarily map with write permission, if we need to copy into it.
-  // Note that it is possible that `prot == 0`. In this case, we need to
-  // grab both PTE_R and PTE_W; otherwise RISC-V complains about this.
-  bool mustwrite = vma.backup || (vma.flags & MAP_ANONYMOUS);
-  int tempflags = mustwrite ? flags | PTE_RW : flags;
-  os::pmap(pa, va_page, MAP_4KB, tempflags, root);
-
-  // Take back the write permission on exit.
-  const auto &finisher = [&]() {
-    if (tempflags != flags)
-      os::pmap(pa, va_page, MAP_4KB, flags, root);
-  };
-  struct takeback {
-    decltype(finisher) f;
-    takeback(decltype(finisher) f): f(f) {}
-    ~takeback() { f(); }
-  } _takeback(finisher);
+  os::pmap(pa, va_page, MAP_4KB, flags, root);
 
   // Copy the contents if it exists.
-  if (!vma.backup)
+  if (!vma.backup) {
+    tcb->ruse.ru_minflt++;
     // It is required that we zero this if we're using an anonymous mmap.
     return;
+  }
   
   // `begin` and this address are in the same page.
   // We read from beginning.
+  tcb->ruse.ru_majflt++;
   if (vma.begin / PAGE_SIZE == addr / PAGE_SIZE) {
     SeekGuard guard(vma.backup, vma.offset);
     auto off = vma.begin % PAGE_SIZE;
     auto read = min(PAGE_SIZE - off, vma.maxread);
-    vma.backup->read((void *) vma.begin, read);
+    vma.backup->read((void *) as_va(vma.begin - (va_t) va_page + pa), read);
     return;
   }
 
@@ -91,7 +79,7 @@ void map_single(void *va, pte_t *root) {
 
   if (read > 0) {
     SeekGuard guard(vma.backup, vma.offset + off);
-    vma.backup->read((void *) va_page, read);
+    vma.backup->read((void *) as_va(pa), read);
   }
 }
 

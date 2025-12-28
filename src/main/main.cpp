@@ -97,13 +97,13 @@ void idle() {
 
 bool os::onboot = true;
 // Used in interrupt.h. Tick length in nanoseconds.
-int timer_tick;
+int clock_period;
 // Nanoseconds since Unix epoch (1970.1.1)
 size_t realtime;
 
 void get_tick() {
   void *p = fdt::query("/cpus", "timebase-frequency");
-  timer_tick = 1'000'000'000 / to_big_endian(*(unsigned *) p);
+  clock_period = 1'000'000'000 / to_big_endian(*(unsigned *) p);
 }
 
 void get_real_time() {
@@ -242,7 +242,7 @@ void main_high() {
   futexes.construct();
 
   // Enable timer.
-  sbi_set_timer(rdtime() + 10_ms / timer_tick);
+  sbi_set_timer(rdtime() + 10_ms / clock_period);
   printk("Boot finished.\n");
   for (;;) ;
 }

@@ -13,6 +13,12 @@ void core(int sig) {
 void sighandle() {
   auto tcb = active();
   auto pcb = tcb->pcb;
+  if (tcb->kmode) {
+    size_t time = now();
+    tcb->ruse.ru_stime += time - tcb->last_sched;
+    tcb->last_sched = time;
+    tcb->kmode = false;
+  }
 
   int sig = tcb->pending.next(tcb->mask);
   if (sig != 0)
@@ -40,6 +46,10 @@ void sighandle() {
     case SIGSEGV:
       core(sig);
       break;
+
+    case SIGUSR1:
+    case SIGUSR2:
+      kill(sig);
 
     case SIGCHLD:
       // Ignore

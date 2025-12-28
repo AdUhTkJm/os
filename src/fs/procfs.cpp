@@ -20,12 +20,44 @@ ssize_t filesystems::read(size_t offset, void *buf, size_t len, int) {
 #endif
 
 ssize_t pid::oom_score_adj::read(size_t offset, void *buf, size_t len, int) {
-  if (offset >= 2)
+  char buffer[10];
+  itoa(value, buffer, 10);
+  size_t buflen = strlen(buffer);
+  buffer[buflen++] = '\n';
+  buffer[buflen] = '\0';
+  if (offset >= buflen)
     return 0;
-
-  auto l = min(len, 2ul);
-  memcpy(buf, "0\n" + offset, l);
+  
+  size_t l = min(len, buflen - offset);
+  memcpy(buf, buffer + offset, l);
   return l;
+}
+
+ssize_t pid::oom_score_adj::write(size_t offset, const void *buf, size_t len, int) {
+  if (offset != 0)
+    return -EINVAL;
+  // The maximum length possible is the string "-1000\n".
+  if (len > 6)
+    return -EINVAL;
+
+  // Parse the integer.
+  auto str = (const char *) buf;
+  int res = 0, sign = 1; size_t i = 0;
+  if (*str == '-') {
+    sign = -1;
+    i++;
+  }
+  for (; i <= len && str[i] && str[i] <= '9' && str[i] >= '0'; i++)
+    res = res * 10 + str[i] - '0';
+  res *= sign;
+
+  if (i == 0)
+    return -EINVAL;
+  if (str[i] == '\n')
+    i++;
+
+  value = res;
+  return i;
 }
 
 #ifdef __clang__
@@ -87,24 +119,47 @@ ssize_t meminfo::read(size_t offset, void *buf, size_t len, int) {
   value += 0;
   value += " kB\n";
 
+  if (offset >= value.size())
+    return 0;
   auto l = min(value.size() - offset, len);
   memcpy(buf, value.c_str() + offset, l);
   return l;
 };
+
+ssize_t stat::read(size_t offset, void *buf, size_t len, int) {
+  static const char *value =
+R"(cpu 0 0 0 0 0 0 0 0 0 0
+cpu0 0 0 0 0 0 0 0 0 0 0
+intr 0
+ctxt 0
+btime 0
+processes 1
+procs_running 1
+procs_blocked 0
+)";
+  static const size_t vlen = strlen(value);
+  if (offset >= vlen)
+    return 0;
+  auto l = min(vlen - offset, len);
+  memcpy(buf, value + offset, l);
+  return vlen;
+}
 
 }
 
 namespace os {
 
 procroot::procroot(class fs *fs):
-  inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)), meminfo(new proc::meminfo(fs)) {
+  inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)), meminfo(new proc::meminfo(fs)), stat(new proc::stat(fs)) {
   filesystems->ref();
   meminfo->ref();
+  stat->ref();
 }
 
 procroot::~procroot() {
   filesystems->drop();
   meminfo->drop();
+  stat->drop();
 }
 
 inode *procroot::lookup(const string &name) {
@@ -120,6 +175,8 @@ inode *procroot::lookup(const string &name) {
   }
   if (name == "meminfo")
     return meminfo;
+  if (name == "stat")
+    return stat;
   
   // Try convert the string into number.
   unsigned long res = 0; unsigned i = 0;
@@ -148,6 +205,7 @@ vector<inode::item> procroot::list() {
   vector<item> result;
   result.push_back({ filesystems->inum(), "filesystems", File });
   result.push_back({ meminfo->inum(), "meminfo", File });
+  result.push_back({ stat->inum(), "stat", File });
   result.push_back({ active()->pcb->pid, "self", Dir });
   char buf[13];
   for (auto [pid, _] : *pidmap) {

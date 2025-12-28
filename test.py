@@ -69,10 +69,10 @@ SPECIAL_FLAGS = {
 
 flags = []
 
-if not args.no_instrument or args.release:
+if not args.no_instrument and not args.release:
   flags += ["-DFUNC_INSTRUMENT", "-finstrument-functions"]
 
-if not args.no_debug_memory or args.release:
+if not args.no_debug_memory and not args.release:
   flags += ["-DDEBUG_MEMORY"]
 
 if args.debug_memory_expensive:

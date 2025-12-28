@@ -71,6 +71,7 @@ class block_inode : public inode_impl<block_inode> {
     // If we just write `data[4096]`, then there will be ~4KB of padding introduced by VM allocator.
     unsigned char *data = 0;
     bool dirty = false;
+    bool busy = false;
   };
   // TODO: change into LRU
   os::rb_tree<unsigned, cached_sector> cache;

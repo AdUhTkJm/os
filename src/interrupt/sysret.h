@@ -394,6 +394,72 @@ struct rlimit {
   unsigned long rlim_max;  /* Hard limit (ceiling for rlim_cur) */
 };
 
+struct rusage {
+  struct timeval ru_utime; /* user CPU time used */
+  struct timeval ru_stime; /* system CPU time used */
+  long   ru_maxrss;        /* maximum resident set size */
+  long   ru_ixrss;         /* integral shared memory size */
+  long   ru_idrss;         /* integral unshared data size */
+  long   ru_isrss;         /* integral unshared stack size */
+  long   ru_minflt;        /* page reclaims (soft page faults) */
+  long   ru_majflt;        /* page faults (hard page faults) */
+  long   ru_nswap;         /* swaps */
+  long   ru_inblock;       /* block input operations */
+  long   ru_oublock;       /* block output operations */
+  long   ru_msgsnd;        /* IPC messages sent */
+  long   ru_msgrcv;        /* IPC messages received */
+  long   ru_nsignals;      /* signals received */
+  long   ru_nvcsw;         /* voluntary context switches */
+  long   ru_nivcsw;        /* involuntary context switches */
+};
+
+// This is for storing in PCB, and not taken from any header.
+struct pusage {
+  long   ru_utime;         /* user CPU time used */
+  long   ru_stime;         /* system CPU time used */
+  long   ru_maxrss;        /* maximum resident set size */
+  long   ru_minflt;        /* page reclaims (soft page faults) */
+  long   ru_majflt;        /* page faults (hard page faults) */
+  long   ru_inblock;       /* block input operations */
+  long   ru_oublock;       /* block output operations */
+  long   ru_nvcsw;         /* voluntary context switches */
+  long   ru_nivcsw;        /* involuntary context switches */
+
+  pusage &operator+=(const pusage &other) {
+    ru_utime += other.ru_utime;
+    ru_stime += other.ru_stime;
+    ru_maxrss = ru_maxrss > other.ru_maxrss ? ru_maxrss : other.ru_maxrss;
+    ru_minflt += other.ru_minflt;
+    ru_majflt += other.ru_majflt;
+    ru_inblock += other.ru_inblock;
+    ru_oublock += other.ru_oublock;
+    ru_nvcsw += other.ru_nvcsw;
+    ru_nivcsw += other.ru_nivcsw;
+    return *this;
+  }
+
+  operator struct rusage() {
+    return rusage {
+      .ru_utime = { .tv_sec = ru_utime / 1'000'000'000, .tv_usec = (ru_utime / 1000) % 1'000'000 },
+      .ru_stime = { .tv_sec = ru_utime / 1'000'000'000, .tv_usec = (ru_utime / 1000) % 1'000'000 },
+      .ru_maxrss = ru_maxrss,
+      .ru_ixrss = 0,
+      .ru_idrss = 0,
+      .ru_isrss = 0,
+      .ru_minflt = ru_minflt,
+      .ru_majflt = ru_majflt,
+      .ru_nswap = 0,
+      .ru_inblock = ru_inblock,
+      .ru_oublock = ru_oublock,
+      .ru_msgsnd = 0,
+      .ru_msgrcv = 0,
+      .ru_nsignals = 0,
+      .ru_nvcsw = ru_nvcsw,
+      .ru_nivcsw = ru_nivcsw,
+    };
+  }
+};
+
 // From <sys/time.h>.
 #define ITIMER_REAL    0
 #define ITIMER_VIRTUAL 1
@@ -424,5 +490,21 @@ struct sysinfo {
 typedef struct {
   int bits[1024 / sizeof(int)];
 } cpu_set_t;
+
+// From <linux/capability.h>
+struct cap_header {
+  unsigned version;
+  int      pid;
+};
+
+struct cap_data {
+  unsigned effective;
+  unsigned permitted;
+  unsigned inheritable;
+};
+
+#define LINUX_CAPABILITY_VERSION_1 0x19980330
+#define LINUX_CAPABILITY_VERSION_2 0x20071026
+#define LINUX_CAPABILITY_VERSION_3 0x20080522
 
 #endif

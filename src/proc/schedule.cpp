@@ -39,6 +39,18 @@ void scheduler_t::dispatch_impl() {
   }
   ready.pop_front();
 
+  // Update time information.
+  size_t time = now();
+  if (active->last_sched != 0) {
+    long delta = time - active->last_sched;
+    active->ruse.ru_nvcsw++;
+    if (active->kmode)
+      active->ruse.ru_stime += delta;
+    else
+      active->ruse.ru_utime += delta;
+  }
+  next->last_sched = time;
+
   active = next;
   trap_return_setup(next);
   

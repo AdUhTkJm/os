@@ -352,6 +352,29 @@ int pte_flags(va_t va) {
   return pte_flags(va, pt_root());
 }
 
+pte_t pte_of(va_t va, const pte_t *root) {
+  pte_t pte_l2 = root[VA_LVL2(va)];
+  if (!is_valid(pte_l2))
+    return 0;
+  if (is_leaf(pte_l2))
+    return pte_l2;
+
+  pte_t *pt_l1 = (pte_t *) PTE_TO_VA(pte_l2);
+  pte_t pte_l1 = pt_l1[VA_LVL1(va)];
+
+  if (!is_valid(pte_l1))
+    return 0;
+  if (is_leaf(pte_l1))
+    return pte_l1;
+
+  pte_t *pt_l0 = (pte_t *) PTE_TO_VA(pte_l1);
+  pte_t pte_l0 = pt_l0[VA_LVL0(va)];
+  if (!is_valid(pte_l0))
+    return 0;
+
+  return pte_l0;
+}
+
 namespace pt {
 
 pa_t copy(pte_t *root) {

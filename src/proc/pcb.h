@@ -117,6 +117,8 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   sigset pending = 0;     // Pending signals, for this thread.
   sigset sigwait = 0;     // Signals that the process is waiting for.
   long timeout = 0;       // Timeout to last sleep.
+  long last_sched = 0;    // Time before last schedule.
+  pusage ruse {};         // Resource usage.
 #ifndef NDEBUG
   hashmap<wait_entry*, wait_queue*> entr;
 #endif
@@ -160,8 +162,7 @@ struct pcb_t {
   wait_queue wait;        // Threads suspended in wait() system call.
   spinlock waitlock;      // Lock associated with `wait`.
   rlimit rlims[9];        // Resource limits.
-  tms times {};           // For times() system call. TODO: update on every tick.
-  long last_schedule;     // The timestamp of last schedule.
+  pusage cruse;           // The rusage of all terminated children by wait().
   struct itimer {
     long timeout;         // In ticks.
     long interval;        // In ticks.
@@ -170,6 +171,7 @@ struct pcb_t {
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
   void clear();
+  ~pcb_t();
 
   int open_file_from(const string &name, dentry *relbase, int flags, int mode, inode::filetype type);
   int open_file_from(const string &name, int dirfd, int flags, int mode = 0, inode::filetype type = inode::File);
