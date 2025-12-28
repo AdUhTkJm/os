@@ -32,10 +32,10 @@ ssize_t file::read(void *buf, size_t len) {
   ssize_t read = 0;
   while (read < long(len) && offset < len) {
     size_t poff = offset % PAGE_SIZE;
-    page_cache::page &page = (*node()->cache)[offset / PAGE_SIZE];
+    page_cache::page *page = (*node()->cache)[offset / PAGE_SIZE];
 
     auto chunk = min(len - read, PAGE_SIZE - poff);
-    memcpy((char*) buf + read, page.data + poff, chunk);
+    memcpy((char*) buf + read, page->data + poff, chunk);
 
     read += chunk;
     offset += chunk;
@@ -59,12 +59,12 @@ ssize_t file::write(const void *buf, size_t len) {
   size_t written = 0;
   while (written < len) {
     size_t poff = offset % PAGE_SIZE;
-    auto &page = (*node()->cache)[offset / PAGE_SIZE];
+    auto *page = (*node()->cache)[offset / PAGE_SIZE];
 
     size_t chunk = min(len - written, PAGE_SIZE - poff);
-    memcpy(page.data + poff, (char*) buf + written, chunk);
+    memcpy(page->data + poff, (char*) buf + written, chunk);
 
-    page.dirty = true;
+    page->dirty = true;
     written += chunk;
     offset += chunk;
   }
@@ -492,7 +492,6 @@ void vfs::init() {
 }
 
 page_cache::page::page(page_cache *parent, size_t index) : parent(parent), data((char*) as_va(pframe())), index(index), dirty(false) {
-  refcnt = 1;
   int len = parent->node->read(index * PAGE_SIZE, data, PAGE_SIZE, 0);
   if (len < 0)
     printk("page cache: warning: read failed\n");
@@ -503,30 +502,33 @@ page_cache::page::page(page_cache *parent, size_t index) : parent(parent), data(
 page_cache::page::~page() {
   if (dirty)
     parent->node->write(index * PAGE_SIZE, data, PAGE_SIZE, 0);
-  pfree(to_pa(data));
+  pfree((pa_t) data - KERNEL_OFFSET);
 }
 
-page_cache::page &page_cache::operator[](size_t i) {
+page_cache::page *page_cache::operator[](size_t i) {
   synchronized _(lock);
-  if (pages.count(i))
-    return *pages[i];
+  auto it = pages.find(i);
+  if (it != pages.end())
+    return (*it).second;
 
-  return *(pages[i] = new page(this, i));
+  auto page = new class page(this, i);
+  pages.insert(i, page);
+  return page;
 }
 
 void page_cache::erase(size_t i) {
   synchronized _(lock);
-  if (!pages.count(i))
+  auto it = pages.find(i);
+  if (it == pages.end())
     return;
 
-  delete pages[i];
   pages.erase(i);
+  delete (*it).second;
 }
 
 void page_cache::flush() {
   synchronized _(lock);
-  for (auto [_, page] : pages)
-    delete page;
+  // TODO: enumerate
   pages.clear();
 }
 

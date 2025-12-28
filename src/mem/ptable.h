@@ -32,6 +32,7 @@ typedef uintptr_t pa_t;
 #define PTE_RX (PTE_R | PTE_X)
 #define PTE_RW (PTE_R | PTE_W)
 #define PTE_COW (1ul << 8) /* Note that bits 8 and 9 are reserved for OS. */
+#define PTE_SHARED (1ul << 9)
 #define PTE_FLAGS(x) ((x) & 0x3ff)
 
 #define PTE_PPN(x) (((x) >> 10) & ((1ul << 46) - 1))

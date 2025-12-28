@@ -230,14 +230,14 @@ void init(tcb_t *tcb) {
   pcb->ftbl->allocate(new file(*console, O_WRONLY), 2); // stderr
 }
 
-void terminate(tcb_t *tcb, int ret) {
+void terminate(tcb_t *tcb, int ret, bool sig) {
   auto pcb = tcb->pcb;
 
   assert(tcb->entr.size() == 0);
 
   if (pcb->threads.size() == 1) {
     assert(pcb->threads.front() == tcb);
-    terminate(pcb, ret);
+    terminate(pcb, ret, sig);
     return;
   }
 
@@ -248,7 +248,7 @@ void terminate(tcb_t *tcb, int ret) {
 }
 
 // This should kill all threads inside this process.
-void terminate(pcb_t *pcb, int ret) {
+void terminate(pcb_t *pcb, int ret, bool sig) {
   // Change all child processes to children of init.
   // It is expected that init will recycle them later.
   auto init = (*pidmap)[1];
@@ -263,6 +263,7 @@ void terminate(pcb_t *pcb, int ret) {
 
   pcb->clear();
   pidmap->erase(pcb->pid);
+  pcb->sigterm = sig;
 
   // Erase all remaining threads.
   auto active = os::active();
@@ -406,12 +407,11 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     TLBRefreshGuard guard;
     pt::walk((pte_t *) as_va(pp->pt_root), [](pte_t &pte) {
       // Only do this on user pages that are writable.
-      if (!(pte & PTE_U) || !(pte & PTE_W))
+      if (!(pte & PTE_U) || !(pte & PTE_W) || (pte & PTE_SHARED))
         return;
       
       pte &= ~PTE_W;
       pte |= PTE_COW;
-      pincref(PTE_TO_PA(pte));
     });
 
     // Deep-copy the page table.

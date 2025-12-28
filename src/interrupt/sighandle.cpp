@@ -1,10 +1,10 @@
 #include "../proc/schedule.h"
+#include "sysids.h"
 
 namespace os {
 
 void kill(int sig) {
-  // TODO: mark as stopped from signal.
-  os::terminate(active(), sig);
+  os::terminate(active(), sig, true);
 }
 
 void core(int sig) {
@@ -14,6 +14,9 @@ void core(int sig) {
 void sighandle() {
   auto tcb = active();
   auto pcb = tcb->pcb;
+  bool sysret = tcb->sysret;
+  tcb->sysret = false;
+
   if (tcb->kmode) {
     size_t time = now();
     tcb->ruse.ru_stime += time - tcb->last_sched;
@@ -32,7 +35,7 @@ void sighandle() {
   tcb->sigresume = -1;
   if (sig == SIGKILL) {
     // Don't invoke handler. Just terminate.
-    os::terminate(pcb, -sig);
+    os::terminate(pcb, sig, true);
     return;
   }
 
@@ -57,7 +60,7 @@ void sighandle() {
 
     default:
       printk("unknown signal: %d\n", sig);
-      os::terminate(tcb, -sig);
+      os::terminate(tcb, sig, true);
     }
     return;
   }
@@ -76,8 +79,10 @@ void sighandle() {
 #ifdef RV
   auto trap = (trapframe *) tcb->ksp;
   memcpy(&tcb->sigf, trap, sizeof(trapframe));
-  if (action.flags & SA_RESTART)
+  if ((action.flags & SA_RESTART) && sysret && trap->regs[8] == -EINTR) {
+    tcb->sigf.regs[8] = tcb->a0;
     tcb->sigf.sepc -= 4;
+  }
 
   char *usp = (char *) trap->sscratch;
 

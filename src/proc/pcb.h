@@ -110,7 +110,9 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   bool ctx_valid = false; // Whether the syscall/trap context is valid.
   bool kthread = false;   // Whether this is a kernel thread.
   bool kmode = false;     // Whether this executed in kernel mode.
+  bool sysret = false;    // Returning from a system call.
   unsigned char sclock;   // The clock that the thread sleeps on.
+  reg_t a0;               // The previous a0, when returning from a system call.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
   int sigresume = 0;      // The signal that causes the thread to wake up from sigwait().
@@ -151,6 +153,7 @@ struct pcb_t {
   bool kproc = false;     // Kernel process.
   bool execd = false;     // Has performed `exec`.
   bool zombie = false;    // Whether this is a zombie.
+  bool sigterm;           // Whether the process terminated because of a signal.
   os::intrusive_list<tcb_t> threads;
   os::vector<pcb_t*> children;
   class vfs *vfs;
@@ -198,8 +201,8 @@ extern static_storage<hashmap<int, pcb_t*>> pidmap;
 
 void init(tcb_t *tcb);
 // We can terminate a thread or a process.
-void terminate(tcb_t *tcb, int ret);
-void terminate(pcb_t *pcb, int ret);
+void terminate(tcb_t *tcb, int ret, bool sig);
+void terminate(pcb_t *pcb, int ret, bool sig);
 
 // Set up the returning from the trap handler.
 void trap_return_setup(tcb_t *pcb);

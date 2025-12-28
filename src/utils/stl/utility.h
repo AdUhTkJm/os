@@ -41,6 +41,11 @@ constexpr T min(const T& a, const T& b) {
   return a < b ? a : b;
 }
 
+template<class T>
+constexpr T abs(T a) {
+  return a < 0 ? -a : a;
+}
+
 // Memory sizes.
 // Gives the number of bytes in the given number of KB/MB/GB.
 // For example, 1_mb == 1048576 (bytes).

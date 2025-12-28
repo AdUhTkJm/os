@@ -362,13 +362,13 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
       if (child->zombie) {
         int p = child->pid;
         // This is not the one we're looking for.
-        if (p != pid && pid != -1)
+        if (p != pid && pid != -1 && !(pid < -1 && abs(pid) == child->pgid))
           continue;
 
         lock.release();
         if (wstatus) {
           // See <wait.h> for the bits.
-          int status = (child->ret & 0xff) << 8;
+          int status = child->sigterm ? (child->ret & 0x7f) : ((child->ret & 0xff) << 8);
           copy_to_user(wstatus, &status, sizeof(int));
         }
         pusage use {};

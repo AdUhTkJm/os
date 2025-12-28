@@ -4,6 +4,7 @@
 #include "../utils/helper.h"
 #include "../utils/stl/atomic.h"
 #include "../utils/stl/optional.h"
+#include "../utils/stl/rbtree.h"
 #include "../mem/ptable.h"
 #include "../lock/mutex.h"
 
@@ -144,21 +145,24 @@ class page_cache {
 public:
   mutex lock;
 
-  class page : public shared {
+  class page {
   public:
     page_cache *parent;
-    char* data;
+    char *data;
     size_t index;
     bool dirty = false;
+
+    ~page();
+    page(const page &other) = delete;
+    page &operator=(const page &other) = delete;
   private:
     friend class page_cache;
     page(page_cache *parent, size_t index);
-    ~page();
   };
 
   page_cache(inode *node): node(node) {}
 
-  page &operator[](size_t i);
+  page *operator[](size_t i);
   ~page_cache();
 
   void flush();
@@ -167,7 +171,7 @@ public:
   void erase(size_t i);
 
 private:
-  os::hashmap<size_t, class page*> pages;
+  os::hashmap<size_t, page*> pages;
   inode *node;
   friend class page_cache::page;
 };

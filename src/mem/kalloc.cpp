@@ -337,16 +337,16 @@ pa_t pframe_zeroed() {
   return p;
 }
 
-void pfree(pa_t p) {
-  if (!p)
+void pfree(pa_t pa) {
+  if (!pa)
     return;
-  assert(p % PAGE_SIZE == 0);
+  assert(pa % PAGE_SIZE == 0);
   
-  auto pos = off(p);
+  auto pos = off(pa);
   
 #if defined(DEBUG_MEMORY)
   if (meta[pos].refcnt == 0) {
-    printk("%p double-freed\n", p);
+    printk("%p double-freed\n", pa);
     panic("memory: pfree");
   }
 #endif
@@ -355,21 +355,21 @@ void pfree(pa_t p) {
     return;
 
 #if defined(DEBUG_MEMORY)
-  memset((void *) as_va(p), 0xCC, PAGE_SIZE);
+  memset((void *) as_va(pa), 0xCC, PAGE_SIZE);
 #endif
 
   // This region is managed by free list allocator.
   physavail++;
   const auto end = (pa_t) __kernel_end - KERNEL_OFFSET;
-  if (p >= end && p < end + FREE_LIST_SIZE * PAGE_SIZE) {
-    auto *frame = (frame_t *) as_va(p);
+  if (pa >= end && pa < end + FREE_LIST_SIZE * PAGE_SIZE) {
+    auto *frame = (frame_t *) as_va(pa);
     frame->next = free_head;
-    free_head = p;
+    free_head = pa;
     return;
   }
 
   // This is managed by the bitmap allocator.
-  pmmap[off(p)] = 0;
+  pmmap[off(pa)] = 0;
 }
 
 pa_t pmalloc(int pagecnt) {
@@ -466,6 +466,10 @@ size_t ptotal() {
 
 pframe_meta *inspect_meta() {
   return meta;
+}
+
+int refcnt(pa_t pa) {
+  return meta[off(pa)].refcnt;
 }
 
 }

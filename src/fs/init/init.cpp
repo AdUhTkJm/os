@@ -244,16 +244,16 @@ extern "C" void _start() {
     
     // Execute the shell.
 #ifdef TEST
-#define LIBC "musl"
+#define LIBC "glibc"
 #define CD "cd /mnt/" LIBC
     const char *test = 
-      // CD "/basic && sh ./run-all.sh";
+      // CD "/basic && ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
-      CD " && sh ./libcbench_testcode.sh";
+      // CD " && sh ./libcbench_testcode.sh";
       // CD " && sh ./unixbench_testcode.sh";
       // CD " && sh ./lmbench_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
-      // CD " && sh ./ltp_testcode.sh";
+      CD " && sh ./ltp_testcode.sh";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };

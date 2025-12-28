@@ -25,23 +25,26 @@ void map_single(void *va, pte_t *root) {
     } else
 #endif
       printk("Unmapped address %p. Terminate the process.\n", va);
-    os::terminate(tcb, -127);
+    os::terminate(tcb, -127, false);
     return;
   }
   const auto &vma = *vmap;
 
-  // We use zero-page optimization here. For MAP_ANONYMOUS (i.e. no backup file),
-  // we can allocate a zero-page and copy-on-write.
   pa_t pa = (vma.flags & MAP_SHARED)
-    ? (pa_t) (*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE].data - KERNEL_OFFSET
+    ? (pa_t) (*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE]->data - KERNEL_OFFSET
     : os::pframe_zeroed();
   
   int flags = PTE_V | PTE_U;
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
   if (vma.prot & PROT_WRITE) flags |= PTE_W;
+  if (vma.flags & MAP_SHARED) {
+    flags |= PTE_SHARED;
+    pincref(pa);
+  }
 
   if ((pte & PTE_V) && (pte & PTE_COW)) {
+    assert(!(pte & PTE_SHARED));
     // This is a copy-on-write segment. We copy the original contents.
     memcpy((void *) as_va(pa), va_page, PAGE_SIZE);
     // The original pa must be freed.

@@ -958,12 +958,12 @@ HANDLE(execve, _path, _argv, _envp) {
 }
 
 HANDLE(exit, ret) {
-  os::terminate(tcb, ret);
+  os::terminate(tcb, ret, false);
   panic("exit: unreachable");
 }
 
 HANDLE(exit_group, ret) {
-  os::terminate(pcb, ret);
+  os::terminate(pcb, ret, false);
   panic("exit_group: unreachable");
 }
 
@@ -1579,16 +1579,17 @@ namespace os {
     switch (scause) {
     case 2: // Invalid instruction
       printk("exception (user): pid %d: invalid instruction %p when executing %p\n", pid, stval, sepc);
-      os::terminate(active(), -127);
+      os::terminate(active(), -127, false);
       break;
     case 5:
       printk("exception (user): pid %d: load access fault at %p when executing %p\n", pid, stval, sepc);
       printk("page table flags: %x, physical address: %p\n", pte_flags(stval), to_pa(stval));
-      os::terminate(active(), -127);
+      os::terminate(active(), -127, false);
       break;
     case 8: { // System call
-      auto pcb = active();
-      auto trap = (trapframe *) pcb->ksp;
+      auto trap = (trapframe *) tcb->ksp;
+      tcb->a0 = trap->regs[8];
+      tcb->sysret = true;
       trap->regs[8] = syshandle(trap); // a0
 #ifndef NO_SYSCALL_LOG
       LOG_METHOD(" -> (%p)\n", trap->regs[8]);
@@ -1606,7 +1607,7 @@ namespace os {
       break;
     default:
       printk("exception (user): scause = %ld, stval = %p, sepc = %p\n", scause & 0xff, stval, sepc);
-      os::terminate(active(), -127);
+      os::terminate(active(), -127, false);
     }
   }
 }

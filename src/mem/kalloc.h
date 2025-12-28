@@ -88,6 +88,8 @@ pframe_meta *inspect_meta();
 size_t off(pa_t pa);
 #endif
 
+int refcnt(pa_t pa);
+
 }
 
 #endif
