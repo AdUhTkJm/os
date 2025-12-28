@@ -60,6 +60,8 @@ struct ctxframe {
   reg_t sstatus;
 };
 
+using sigframe = trapframe;
+
 #ifdef __cplusplus
 static_assert(sizeof(trapframe) == 272);
 #endif
@@ -119,6 +121,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   long timeout = 0;       // Timeout to last sleep.
   long last_sched = 0;    // Time before last schedule.
   pusage ruse {};         // Resource usage.
+  sigframe sigf;          // The signal frame, for sigreturn().
 #ifndef NDEBUG
   hashmap<wait_entry*, wait_queue*> entr;
 #endif
@@ -139,7 +142,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
 
 struct pcb_t {
   pa_t pt_root;           // Root page table entry.
-  vma::addrspace vma;          // Virtual memory areas.
+  vma::addrspace vma;     // Virtual memory areas.
   pcb_t *parent;          // Parent.
   process_file_table*ftbl;// Process file table.
   int uid, euid, suid;

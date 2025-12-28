@@ -3,7 +3,8 @@
 namespace os {
 
 void kill(int sig) {
-  os::terminate(active(), -sig);
+  // TODO: mark as stopped from signal.
+  os::terminate(active(), sig);
 }
 
 void core(int sig) {
@@ -36,8 +37,7 @@ void sighandle() {
   }
 
   auto action = pcb->sigact[sig];
-  // TODO: implement custom handler
-  if (1 || !action.handler) {
+  if (!action.handler) {
     switch (sig) {
     case SIGABRT:
     case SIGFPE:
@@ -61,9 +61,44 @@ void sighandle() {
     }
     return;
   }
+  // SIG_IGN: we should ignore the signal.
+  if ((va_t) action.handler == 1)
+    return;
   
-  printk("handler: %p\n", action.handler);
-  assert(false && "no custom handlers yet!");
+  // Set up a trapframe in user space.
+  // The frame is as follows:
+  //
+  // usp:
+  //   08b00893  li a7, 139
+  //   00000073  ecall
+  //
+  // Then we need to set `ra` to usp.
+#ifdef RV
+  auto trap = (trapframe *) tcb->ksp;
+  memcpy(&tcb->sigf, trap, sizeof(trapframe));
+  if (action.flags & SA_RESTART)
+    tcb->sigf.sepc -= 4;
+
+  char *usp = (char *) trap->sscratch;
+
+  usp -= 16;
+  unsigned insn = 0x08b00893;
+  copy_to_user(usp, &insn, 4);
+  insn = 0x73;
+  copy_to_user(usp + 4, &insn, 4);
+  // TODO: use a separate page instead.
+  os::pmap(to_pa(usp), usp, MAP_4KB, PTE_V | PTE_U | PTE_RWX, pt_root());
+
+  trap->regs[/*ra*/ 0] = (va_t) usp;
+  trap->regs[/*a0*/ 8] = sig;
+  trap->sscratch = (va_t) usp;
+  trap->sepc = (va_t) action.handler;
+  __asm__ volatile("fence.i");
+#endif
+
+#ifdef LA
+  assert(false && "no signals yet!");
+#endif
 }
 
 }

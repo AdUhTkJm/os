@@ -14,7 +14,8 @@ struct pframe_meta {
 };
 
 // Reserved kernel virtual memory size.
-constexpr size_t VM_SIZE = 1_gb;
+// We will reserve some final maps for VDSO.
+constexpr size_t VM_SIZE = 1_gb - PAGE_SIZE;
 constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 
 // The entire physical memory space we're able to manage. QEMU only has 128MB anyway.

@@ -48,6 +48,10 @@ struct sigaction {
   unsigned long flags = 0;
 };
 
+void siginit();
+
+constexpr unsigned long /*va_t*/ vdso = 0xffff'ffff'ffff'f000;
+
 }
 
 #endif

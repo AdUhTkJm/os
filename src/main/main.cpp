@@ -158,6 +158,7 @@ void main_high() {
 
   // Initialize VMA (TODO: zero-page optimization).
   os::vma::init();
+  os::siginit();
 
   // Set up (boot-time) kernel stack.
   boot_pcb.construct();

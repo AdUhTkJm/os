@@ -196,6 +196,11 @@ struct sigaction {
   sigset_t sa_mask;
 };
 
+#define SA_SIGINFO   4
+#define SA_RESTART   0x10000000
+#define SA_NODEFER   0x40000000
+#define SA_RESETHAND 0x80000000
+
 /* Structure for scatter/gather I/O.  */
 struct iovec {
   void *iov_base;	/* Pointer to data.  */

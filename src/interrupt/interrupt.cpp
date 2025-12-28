@@ -188,15 +188,15 @@ HANDLE(writev, fd, iov, cnt) {
   char buf[1024];
   for (int i = 0; i < cnt; i++) {
     iovec v;
-    if (!copy_from_user(&v, (char *) iov + i * sizeof(iovec), sizeof(iovec)))
+    if (!copy_from_user(&v, (iovec *) iov + i, sizeof(iovec)))
       return -EFAULT;
 
     if (v.iov_len == 0)
       continue;
 
     // Copy a single buffer.
-    long n = 0;
-    for (size_t j = 0; j < v.iov_len; j++) {
+    size_t n = 0;
+    for (size_t j = 0; j < v.iov_len; j += 1024) {
       size_t l = min(v.iov_len, 1024ul);
       if (!copy_from_user(buf, v.iov_base, l))
         return -EFAULT;
@@ -211,7 +211,7 @@ HANDLE(writev, fd, iov, cnt) {
 
     total += n;
     // If we have a partial write, then we stop immediately.
-    if ((size_t) n < v.iov_len)
+    if (n < v.iov_len)
       break;
   }
 
@@ -1190,6 +1190,13 @@ HANDLE(rt_sigtimedwait, sig, info, timeout) {
   auto ret = tcb->sigresume != -1 ? tcb->sigresume : -EAGAIN;
   tcb->sigresume = -1;
   return ret;
+}
+
+HANDLE(rt_sigreturn, _) {
+  auto trap = (trapframe *) tcb->ksp;
+  memcpy(trap, &tcb->sigf, sizeof(trapframe));
+  // We shouldn't change the value of a0.
+  return trap->regs[8];
 }
 
 HANDLE(kill, pid, sig) {
