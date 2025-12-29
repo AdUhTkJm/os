@@ -622,9 +622,34 @@ ssize_t ext_inode::write(size_t offset, const void *buf, size_t len, int flags) 
   if (len == 0)
     return 0;
   this->flags = flags;
+  auto fs = static_cast<ext*>(this->fs);
+
+  // For a symlink small enough, we directly write it in directptr[].
+  if (type == Link && meta.sz <= 60 && offset + len <= 60) {
+    memcpy(meta.directptr + offset, buf, len);
+    meta.sz = max(meta.sz, (unsigned) (offset + len));
+    fs->update_meta(this);
+    return 0;
+  }
+  // Otherwise, it just looks like a normal file.
+  // For 0-length links (e.g. a newly created one), there is no need to transfer data.
+  [[unlikely]] if (type == Link && meta.sz > 0 && meta.sz <= 60 && offset + len > 60) {
+    char oldbuf[60], oldsz = meta.sz;
+    meta.sz = offset + len;
+    memcpy(oldbuf, meta.directptr, 60);
+    memset(meta.directptr, 0, 60);
+
+    if (auto ret = write(0, oldbuf, 60, flags); ret < 0) {
+      // Revert the changes.
+      meta.sz = oldsz;
+      memcpy(meta.directptr, oldbuf, 60);
+      return ret;
+    }
+
+    // Fall through: now this is a normal write.
+  }
 
   bool append = flags & O_APPEND;
-  auto fs = static_cast<ext*>(this->fs);
   offset = append ? meta.sz : offset;
 
   size_t size = fs->blksz;

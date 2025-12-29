@@ -618,6 +618,42 @@ HANDLE(fdatasync, fd) {
   return 0;
 }
 
+HANDLE(symlinkat, target, dirfd, linkpath) {
+  auto path = copy_from_user((char *) linkpath);
+  if (!path)
+    return -EFAULT;
+
+  auto tgt = copy_from_user((char *) target);
+  if (!tgt)
+    return -EFAULT;
+
+  auto dirname = os::dirname(path->get());
+  auto basename = os::basename(path->get());
+
+  bool relative = dirname[0] != '/';
+  int fd = relative
+    ? pcb->open_file_from(dirname, dirfd, O_PATH)
+    : pcb->open_file(dirname, O_PATH);
+  if (fd < 0)
+    return fd;
+
+  auto file = pcb->ftbl->at(fd);
+  auto node = file->node();
+  if (!writable(pcb->euid, pcb->egid, node))
+    return -EACCES;
+
+  // Do we really need to look up twice?
+  if (file->node()->lookup(basename))
+    return -EEXIST;
+
+  if (auto ret = file->node()->create(basename, inode::Link, 0666 & pcb->umask); ret < 0)
+    return ret;
+
+  auto inode = file->node()->lookup(basename);
+  inode->write(0, tgt->get(), strlen(tgt->get()), 0);
+  return 0;
+}
+
 HANDLE(unlinkat, dirfd, _path, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
@@ -710,8 +746,45 @@ HANDLE(getuid, _) {
   return pcb->uid;
 }
 
+HANDLE(setuid, uid) {
+  if (uid < 0)
+    return -EINVAL;
+
+  if (pcb->euid == 0) {
+    pcb->uid = pcb->euid = pcb->suid = uid;
+    return 0;
+  }
+
+  if (uid != pcb->suid && uid != pcb->uid && uid != pcb->euid)
+    return -EPERM;
+  
+  pcb->euid = uid;
+  return 0;
+}
+
 HANDLE(geteuid, _) {
   return pcb->euid;
+}
+
+HANDLE(setreuid, ruid, euid) {
+  if (ruid < -1 || euid < -1)
+    return -EINVAL;
+  // Nothing changes.
+  if (ruid == -1 && euid == -1)
+    return 0;
+
+  if (ruid != -1 && pcb->euid != 0 && ruid != pcb->suid && ruid != pcb->uid && ruid != pcb->euid)
+    return -EPERM;
+  if (euid != -1 && pcb->euid != 0 && euid != pcb->suid && euid != pcb->uid && euid != pcb->euid)
+    return -EPERM;
+  
+  if (ruid != -1)
+    pcb->uid = ruid;
+  if (euid != -1)
+    pcb->euid = euid;
+
+  pcb->suid = pcb->euid;
+  return 0;
 }
 
 HANDLE(getegid, _) {
@@ -941,10 +1014,11 @@ HANDLE(getrusage, who, buf) {
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
-  tcb_t *tcb = os::clone(flags, stack, (void *) tls);
-  if (childtid)
-    copy_to_user((void *) childtid, &tcb->tid, sizeof(int));
-  return tcb->pcb->pid;
+  if (parenttid && (flags & CLONE_PARENT_SETTID))
+    copy_to_user((void *) parenttid, &tcb->tid, sizeof(int));
+
+  tcb_t *ct = os::clone(flags, stack, (void *) tls, (void *) childtid);
+  return ct->pcb->pid;
 }
 
 HANDLE(execve, _path, _argv, _envp) {

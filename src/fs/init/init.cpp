@@ -249,11 +249,12 @@ extern "C" void _start() {
     const char *test = 
       // CD "/basic && ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
-      // CD " && sh ./libcbench_testcode.sh";
+      CD " && sh ./libcbench_testcode.sh";
       // CD " && sh ./unixbench_testcode.sh";
       // CD " && sh ./lmbench_testcode.sh";
+      // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
-      CD " && sh ./ltp_testcode.sh";
+      // CD " && sh ./ltp_testcode.sh";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };

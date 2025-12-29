@@ -9,7 +9,7 @@ spinlock vfs::mountlock;
 static_storage<os::hashmap<pair<inode*, string>, dentry*>> vfs::dcache;
 static_storage<os::vector<fs*>> vfs::tosync;
 
-inode *file::node() {
+inode *file::node() const {
   return entry->node;
 }
 
@@ -123,10 +123,17 @@ bool writable(int uid, int gid, const inode *node) {
 bool executable(int uid, int gid, const inode *node) {
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
-  if (uid != 0) {
-    if (!(flags & (1 << (bit + 0))))
-      return false;
+  if (uid == 0) {
+    // For root, we need at least one execute bit for files.
+    if (node->type != inode::Dir)
+      return bool((flags & 1) | (flags & (1 << 3)) | (flags & (1 << 6)));
+
+    // But for directories, we can always do it.
+    return true;
   }
+
+  if (!(flags & (1 << (bit + 0))))
+    return false;
   return true;
 }
 
@@ -149,7 +156,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
     comps.push_back(comp);
 
   pcb_t *pcb = active()->pcb;
-  int uid = pcb->uid, gid = pcb->gid;
+  int uid = pcb->euid, gid = pcb->egid;
 
   for (size_t i = 0; i < comps.size(); i++) {
     const string &name = comps[i];
@@ -182,7 +189,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
         return -ENOTDIR;
 
     if (!executable(uid, gid, cur->node))
-        return -EPERM;
+        return -EACCES;
 
     auto key = pair { cur->node, name };
     if (auto it = dcache->find(key); it != dcache->end())
@@ -210,7 +217,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
     // Handle symlink in the middle of the path.
     if (cur->node->type == inode::Link && i + 1 < comps.size()) {
       if (!readable(uid, gid, cur->node))
-        return -EPERM;
+        return -EACCES;
 
       auto link = cur->node->readlink();
       if (!link)

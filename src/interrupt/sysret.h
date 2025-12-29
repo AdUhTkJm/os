@@ -496,6 +496,20 @@ typedef struct {
   int bits[1024 / sizeof(int)];
 } cpu_set_t;
 
+struct clone_args {
+  unsigned long flags;        /* Flags bit mask */
+  unsigned long pidfd;        /* Where to store PID file descriptor */
+  unsigned long child_tid;    /* Where to store child TID, in child's memory */
+  unsigned long parent_tid;   /* Where to store child TID, in parent's memory */
+  unsigned long exit_signal;  /* Signal to deliver to parent on child termination */
+  unsigned long stack;        /* Pointer to lowest byte of stack */
+  unsigned long stack_size;   /* Size of stack */
+  unsigned long tls;          /* Location of new TLS */
+  unsigned long set_tid;      /* Pointer to a pid_t array */
+  unsigned long set_tid_size; /* Number of elements in set_tid */
+  unsigned long cgroup;       /* File descriptor for target cgroup */
+};
+
 // From <linux/capability.h>
 struct cap_header {
   unsigned version;

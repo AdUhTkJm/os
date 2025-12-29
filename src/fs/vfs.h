@@ -125,7 +125,7 @@ public:
     begin, current, end
   };
 
-  inode *node();
+  inode *node() const;
 
   file(dentry *node, int flags);
   ~file();

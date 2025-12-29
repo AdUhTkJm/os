@@ -5,6 +5,7 @@
 #include "../mem/kalloc.h"
 #include "../utils/stl/unique_ptr.h"
 #include "../fs/pipe.h"
+#include "../interrupt/impl.h"
 
 extern int clock_period;
 
@@ -137,10 +138,10 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   if (node->type == inode::Dir && write)
     return -EISDIR;
 
-  if (read && !readable(uid, gid, node))
-    return -EPERM;
-  if (write && !writable(uid, gid, node))
-    return -EPERM;
+  if (read && !readable(euid, egid, node))
+    return -EACCES;
+  if (write && !writable(euid, egid, node))
+    return -EACCES;
 
   file *f = new file(dentry, flags);
   int fd = ftbl->allocate(f);
@@ -235,6 +236,11 @@ void terminate(tcb_t *tcb, int ret, bool sig) {
 
   assert(tcb->entr.size() == 0);
 
+  if (tcb->cleartid) {
+    copy_to_user(tcb->tidaddr, zeroes, sizeof(int));
+    detail::futex_wake(tcb->tidaddr, 2147483647);
+  }
+
   if (pcb->threads.size() == 1) {
     assert(pcb->threads.front() == tcb);
     terminate(pcb, ret, sig);
@@ -319,6 +325,11 @@ void trap_return_setup(tcb_t *tcb) {
   tcb->status = Running;
   auto pcb = tcb->pcb;
   setroot(pcb->pid, pcb->pt_root);
+
+  [[unlikely]] if (tcb->settid) {
+    copy_to_user((void *) tcb->tidaddr, &tcb->tid, sizeof(int));
+    tcb->settid = false; 
+  }
 }
 #endif
 
@@ -349,35 +360,7 @@ void trap_return_setup(tcb_t *tcb) {
 }
 #endif
 
-// Taken from <sched.h>
-
-#define CLONE_VM      0x00000100 /* Set if VM shared between processes.  */
-#define CLONE_FS      0x00000200 /* Set if fs info shared between processes.  */
-#define CLONE_FILES   0x00000400 /* Set if open files shared between processes.  */
-#define CLONE_SIGHAND 0x00000800 /* Set if signal handlers shared.  */
-#define CLONE_PIDFD   0x00001000 /* Set if a pidfd should be placed in parent.  */
-#define CLONE_PTRACE  0x00002000 /* Set if tracing continues on the child.  */
-#define CLONE_VFORK   0x00004000 /* Set if the parent wants the child to wake it up on mm_release.  */
-#define CLONE_PARENT  0x00008000 /* Set if we want to have the same parent as the cloner.  */
-#define CLONE_THREAD  0x00010000 /* Set to add to same thread group.  */
-#define CLONE_NEWNS   0x00020000 /* Set to create new namespace.  */
-#define CLONE_SYSVSEM 0x00040000 /* Set to shared SVID SEM_UNDO semantics.  */
-#define CLONE_SETTLS  0x00080000 /* Set TLS info.  */
-#define CLONE_PARENT_SETTID 0x00100000 /* Store TID in userlevel buffer before MM copy.  */
-#define CLONE_CHILD_CLEARTID 0x00200000 /* Register exit futex and memory location to clear.  */
-#define CLONE_DETACHED 0x00400000 /* Create clone detached.  */
-#define CLONE_UNTRACED 0x00800000 /* Set if the tracing process can't force CLONE_PTRACE on this clone.  */
-#define CLONE_CHILD_SETTID 0x01000000 /* Store TID in userlevel buffer in the child.  */
-#define CLONE_NEWCGROUP    0x02000000	/* New cgroup namespace.  */
-#define CLONE_NEWUTS	0x04000000	/* New utsname group.  */
-#define CLONE_NEWIPC	0x08000000	/* New ipcs.  */
-#define CLONE_NEWUSER	0x10000000	/* New user namespace.  */
-#define CLONE_NEWPID	0x20000000	/* New pid namespace.  */
-#define CLONE_NEWNET	0x40000000	/* New network namespace.  */
-#define CLONE_IO	0x80000000	/* Clone I/O context.  */
-#define CLONE_NEWTIME	0x00000080  /* New time namespace */
-
-tcb_t *clone(unsigned flags, va_t usp, void *tls) {
+tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   // Parent thread/process.
   auto pt = active();
   auto pp = pt->pcb;
@@ -447,7 +430,8 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
   cp->vfs->ref();
 
   ct->status = Ready;
-  ct->tls = tls;
+  if (flags & CLONE_SETTLS)
+    ct->tls = tls;
 
   // Copy various information from parent, if we aren't sharing the PCB.
   if (!share_vm) {
@@ -459,6 +443,15 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls) {
     cp->pgid = pp->pgid;
     cp->sid = pp->sid;
     memcpy(cp->rlims, pp->rlims, sizeof(pp->rlims));
+  }
+
+  if (flags & CLONE_CHILD_SETTID) {
+    ct->tidaddr = childtid;
+    ct->settid = true;
+  }
+  if (flags & CLONE_CHILD_CLEARTID) {
+    ct->tidaddr = childtid;
+    ct->cleartid = true;
   }
   
   scheduler.add(ct);
@@ -500,13 +493,14 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
   // First check whether this is an ELF. If it isn't, we must not change anything.
   int fd = pcb->open_file(path, O_RDONLY);
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -ENOENT;
+  if (!executable(pcb->euid, pcb->egid, file->node()))
+    return -EACCES;
+
   auto oldvma = pcb->vma;
   pcb->vma.clear();
-  auto file = pcb->ftbl->at(fd);
-  if (!file) {
-    pcb->vma = oldvma;
-    return -ENOENT;
-  }
 
   // Try parse the shebang.
   char begin[2] {};
@@ -549,6 +543,10 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     pcb->vma = oldvma;
     return auxv;
   }
+
+  // Look at setuid bit.
+  if (file->flags & 04000)
+    pcb->euid = pcb->suid = file->node()->uid;  
 
   // Reset the page table root immediately. We're about to free the root.
   setroot(pcb->pid, __kernel_pt_root);

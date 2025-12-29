@@ -11,16 +11,17 @@
 #include "../utils/log.h"
 #include "../lock/futex.h"
 
-namespace {
+namespace os::detail {
 
-using namespace os;
-
-int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
+int futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
   size_t timeout = 1800'0000'0000'0000'0000ul;
-  if (timeout) {
+  if (_timeout) {
     timespec ts;
     if (!copy_from_user(&ts, (void *) _timeout, sizeof(timespec)))
       return -EFAULT;
+
+    if (ts.tv_nsec > 999'999'999 || ts.tv_nsec < 0)
+      return -EINVAL;
 
     timeout = ts.tv_nsec + ts.tv_sec * 1_s;
   }
@@ -37,9 +38,11 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
     return -EFAULT;
 
   futexes.lock.acquire();
-  futex_queue *&q = (*futexes)[key];
-  if (!q)
+  futex_queue *q = (*futexes)[key];
+  if (!q) {
     q = new futex_queue;
+    futexes->insert(key, q);
+  }
   futexes.lock.release();
 
   q->lock.acquire();
@@ -55,6 +58,7 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
   entry.mask = mask;
   auto tcb = active();
   for (;;) {
+    printk("suspend %d\n", tcb->tid);
     q->wait.prepare(entry);
     q->lock.release();
     
@@ -62,6 +66,7 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
 
     q->lock.acquire();
     q->wait.finish(entry);
+    printk("resume %d\n", tcb->tid);
     
     if (!copy_from_user(&u, addr, 4)) {
       q->lock.release();
@@ -86,7 +91,7 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1) {
   }
 }
 
-int futex_wake(void *addr, int count, unsigned mask = -1) {
+int futex_wake(void *addr, int count, unsigned mask) {
   futex_key key((va_t) addr);
   if (key.type == futex_key::BAD)
     return -EFAULT;
@@ -105,12 +110,6 @@ int futex_wake(void *addr, int count, unsigned mask = -1) {
   q->lock.release();
   return woken;
 }
-
-}
-
-namespace os::detail {
-
-using namespace os;
 
 int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags) {
   auto vfs = active()->pcb->vfs;
@@ -421,13 +420,13 @@ int faccessat(int dirfd, const char *path, int mode) {
     return 0;
 
   auto node = pcb->ftbl->at(fd)->node();
-  if (mode & R_OK && !(readable(pcb->uid, pcb->gid, node)))
+  if (mode & R_OK && !(readable(pcb->euid, pcb->egid, node)))
     return -EACCES;
 
-  if (mode & W_OK && !(writable(pcb->uid, pcb->gid, node)))
+  if (mode & W_OK && !(writable(pcb->euid, pcb->egid, node)))
     return -EACCES;
 
-  if (mode & X_OK && !(executable(pcb->uid, pcb->gid, node)))
+  if (mode & X_OK && !(executable(pcb->euid, pcb->egid, node)))
     return -EACCES;
 
   return 0;
