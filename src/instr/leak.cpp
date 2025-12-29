@@ -70,6 +70,11 @@ constexpr size_t symcnt = sizeof(symbols) / sizeof(symbol);
 extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
   if (stack.top < SHADOW_DEPTH)
     stack.frames[stack.top++] = this_fn;
+  else {
+    for (int i = 0; i < SHADOW_DEPTH - 1; i++)
+      stack.frames[i] = stack.frames[i + 1];
+    stack.frames[SHADOW_DEPTH - 1] = this_fn;
+  }
 }
 
 #if defined(DEBUG_MEMORY_EXPENSIVE) || defined(UNIT_TEST)

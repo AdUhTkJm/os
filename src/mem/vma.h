@@ -114,16 +114,15 @@ private:
     if (!n)
       return;
 
-    size_t end = 0, gap = 0;
+    size_t gap = 0;
     n->minstart = n->leaf ? n->k[0] : n->ch[0]->minstart;
+    n->maxend = !n->leaf ? n->ch[n->count]->maxend : n->v[n->count - 1].end;
     
     for (int i = 0; i < n->count; i++) {
-      end = max(end, n->v[i].end);
       if (n->leaf && i > 0)
         gap = max(n->maxgap, n->k[i] - n->v[i - 1].end);
 
       if (!n->leaf) {
-        end = max(end, n->ch[i]->maxend);
         gap = max(gap, n->ch[i]->maxgap);
         // We know `ch[i]` is left of `k[i]`, and therefore its end might not reach `k[i]`'s end.
         // There might be a gap, and we calculate its length.
@@ -136,12 +135,9 @@ private:
     }
     
     // We didn't update the last child in the previous loop; do it here.
-    if (!n->leaf) {
-      end = max(end, n->ch[n->count]->maxend);
+    if (!n->leaf)
       gap = max(gap, n->ch[n->count]->maxgap);
-    }
 
-    n->maxend = end;
     n->maxgap = gap;
   }
 

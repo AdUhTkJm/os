@@ -62,6 +62,7 @@ void init() {
 [[gnu::no_instrument_function]] void handle() {
   // Claim the interrupt to get the IRQ ID.
   unsigned irq = mmrd<unsigned>(PLIC_BASE + PLIC_CLAIM_S_OFFSET);
+  random->mix(irq ^ rdtime());
   if (handlers->count(irq))
     handlers->at(irq)(irq);
   else

@@ -227,9 +227,26 @@ void main_high() {
   pcb->ftbl->ref();
   pcb->execpath = "/init";
 
+  // Gives one physical page for the root page table and the kernel stack.
+  pcb->pt_root = pframe();
+  tcb->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
+  ((trapframe *) tcb->ksp)->sscratch = 0xf'f000'0000;
+
+  // Copy the kernel's level 2 root table.
+  // We only need to shallow copy.
+  memcpy((void *) as_va(pcb->pt_root), (void*) as_va(__kernel_pt_root), PAGE_SIZE);
+
+  // Open stdin, stdout and stderr.
+  // Note they are different files, but point to the same place.
+  auto console = pcb->vfs->lookup("/dev/console");
+  if (!console)
+    panic("no console!");
+  pcb->ftbl->allocate(new file(*console, O_RDONLY), 0); // stdin
+  pcb->ftbl->allocate(new file(*console, O_WRONLY), 1); // stdout
+  pcb->ftbl->allocate(new file(*console, O_WRONLY), 2); // stderr
+
   if (!load_elf(init, tcb).valid())
     panic("load_elf: cannot load /init");
-  os::init(tcb);
   scheduler.add(tcb);
   pcb->vfs->close(init);
 

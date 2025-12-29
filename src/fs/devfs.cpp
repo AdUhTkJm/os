@@ -7,6 +7,7 @@
 namespace os {
 
 static_storage<console_inode> console;
+static_storage<random_inode> random;
 static_storage<class devfs> devfs;
 
 ssize_t console_inode::read(size_t offset, void *buf, size_t len, int flags) {
@@ -210,6 +211,83 @@ void tty_inode::finish_read_wait(wait_entry &entry) {
   tty.console->finish_read_wait(entry);
 }
 
+// A quarter-round in Chacha20, as described in section 2.1.
+#define QR(a, b, c, d)        \
+  a += b; d ^= a; d = rotate(d, 16); \
+  c += d; b ^= c; b = rotate(b, 12); \
+  a += b; d ^= a; d = rotate(d, 8);  \
+  c += d; b ^= c; b = rotate(b, 7);
+
+random_inode::random_inode(const unsigned *key): inode_impl(&*devfs, 0, 0, 0444, File) {
+  memcpy(state, consts, 4);
+  memcpy(state, key, 8);
+  state[12] = 0;
+  state[13] = rand();
+  state[14] = rand();
+  state[15] = rand();
+}
+
+void random_inode::chacha20_block(unsigned *__restrict__ dst  , const unsigned *__restrict__ src) {
+  unsigned x[16];
+  for (int i = 0; i < 16; i++)
+    x[i] = src[i];
+
+  // See section 2.3.1.
+  for (int i = 0; i < 10; i++) {
+    QR(x[0], x[4], x[8],  x[12]);
+    QR(x[1], x[5], x[9],  x[13]);
+    QR(x[2], x[6], x[10], x[14]);
+    QR(x[3], x[7], x[11], x[15]);
+    QR(x[0], x[5], x[10], x[15]);
+    QR(x[1], x[6], x[11], x[12]);
+    QR(x[2], x[7], x[8],  x[13]);
+    QR(x[3], x[4], x[9],  x[14]);
+  }
+
+  for (int i = 0; i < 16; i++)
+    dst[i] = x[i] + src[i];
+}
+
+ssize_t random_inode::read(size_t, void *buffer, size_t len, int) {
+  unsigned block[16];
+
+  ssize_t read = 0;
+  for (char *buf = (char *) buffer; len > 0; ) {
+    chacha20_block(block, state);
+    state[12]++;
+
+    size_t l = len > 64 ? 64 : len;
+    memcpy(buf, block, l);
+
+    buf += l;
+    read += l;
+    len -= l;
+  }
+  return read;
+}
+
+void random_inode::reseed(const unsigned *key) {
+  // Reset the key.
+  for (size_t i = 0; i < 8; i++)
+    state[4 + i] ^= key[i];
+
+  memcpy(state, consts, 4);
+  state[12] = 0;
+  state[13] = rand();
+  state[14] = rand();
+  state[15] = rand();
+}
+
+void random_inode::mix(unsigned v) {
+  state[(state[12]++ & 7) + 4] ^= v;
+  if (mixcnt >= 1024) {
+    mixcnt -= 1024;
+    unsigned out[16];
+    chacha20_block(out, state);
+    memcpy(state + 4, out, 32);
+  }
+}
+
 null_inode::null_inode(): inode_impl(&*devfs, 0, 0, 0666, File) {}
 
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0, 0755, Dir) {}
@@ -246,8 +324,18 @@ void mount_dev() {
   if (!dentry)
     panic("devfs: cannot find /dev");
 
+  // Just some randomly typed bits. We must wait for adding more entropy.
+  unsigned initial_entropy[8];
+  for (int i = 0; i < 8; i++)
+    initial_entropy[i] = rand();
+  random.construct(initial_entropy);
+
   root->record("tty",  new (permanent) tty_inode(console));
   root->record("null", new (permanent) null_inode());
+  // They are essentially the same thing, just that urandom won't block on early boot.
+  // We don't really use them on boot, so doesn't matter too much.
+  root->record("urandom", &*random);
+  root->record("random", &*random);
   root->record(".", root);
   
   vfs::mount(*dentry, droot);

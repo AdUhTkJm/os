@@ -48,8 +48,6 @@ namespace os {
 
 #define __user
 
-// Near the highest address in the lower-half space.
-constexpr va_t stack_top = 0xf'f000'0000ul;
 constexpr size_t user_stack_size = 8_mb;
 constexpr size_t kstack_size = 8_kb - 16;
 
@@ -133,21 +131,17 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   int tid;                // Thread id.
   thread_state status;    // Thread status (running, sleeping etc.)
   va_t ksp;               // Kernel stack for this thread.
-  va_t __user usp;        // User stack top for this thread.
-  va_t pc;                // Initial program counter (entry point) of this thread.
   bool ctx_valid = false; // Whether the syscall/trap context is valid.
   bool kthread = false;   // Whether this is a kernel thread.
   bool kmode = false;     // Whether this executed in kernel mode.
   bool sysret = false;    // Whether the thread is returning from a system call.
-  bool settid = false;    // Whether the thread has CLONE_CHILD_SETTID set on clone.
-  bool cleartid = false;  // Whether the thread has CLONE_CHILD_CLEARTID set on clone.
   unsigned char sclock;   // The clock that the thread sleeps on.
   reg_t a0;               // The previous a0, when returning from a system call.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
   int sigresume = 0;      // The signal that causes the thread to wake up from sigwait().
-  void __user *tidaddr;   // The tid address for `settid` and `cleartid` to operate on.
-  void __user *tls;       // Thread-local storage pointer.
+  void *stidaddr = 0;     // The tid address for `settid` to operate on.
+  void *ctidaddr = 0;     // The tid address for `cleartid` to operate on.
   sigset mask = 0;        // Masked (ignored) signals.
   sigset pending = 0;     // Pending signals, for this thread.
   sigset sigwait = 0;     // Signals that the process is waiting for.
@@ -230,7 +224,6 @@ static_assert(offsetof(tcb_t, ksp) == 24);
 
 extern static_storage<hashmap<int, pcb_t*>> pidmap;
 
-void init(tcb_t *tcb);
 // We can terminate a thread or a process.
 void terminate(tcb_t *tcb, int ret, bool sig);
 void terminate(pcb_t *pcb, int ret, bool sig);
@@ -277,17 +270,20 @@ tcb_t *make_kprocess(T fptr) {
   pcb->ftbl->ref();
 
   tcb->status = Init;
-  tcb->pc = (va_t) fptr;
   // We aren't lazy-allocating here.
   // Also don't forget that stack grows downwards.
   constexpr auto usp_size = 16_kb - 16;
-  tcb->usp = (va_t) vmalloc<16>(usp_size) + usp_size;
+  tcb->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
+  auto trap = (trapframe *) tcb->ksp;
+  trap->sscratch = (va_t) vmalloc<16>(usp_size) + usp_size;
+  trap->sepc = (va_t) fptr;
+
   tcb->pcb = pcb;
   tcb->tid = pcb->pid;
   pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = usp_size;
   pcb->threads.push_back(tcb);
   pidmap->insert(pcb->pid, pcb);
-  init(tcb);
+  pcb->pt_root = __kernel_pt_root;
   return tcb;
 }
 

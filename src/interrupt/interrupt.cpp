@@ -799,12 +799,26 @@ HANDLE(gettid, _) {
   return tcb->tid;
 }
 
-HANDLE(set_tid_address, _) {
-  return -ENOSYS; // TODO
+HANDLE(set_tid_address, tidaddr) {
+  tcb->ctidaddr = (void *) tidaddr;
+  return tcb->tid;
 }
 
-HANDLE(getrandom, _) {
-  return -ENOSYS; // TODO
+HANDLE(getrandom, buf, len, flags) {
+  // We deliberately ignore flags here.
+  // We set /dev/random and /dev/urandom to point to the same thing, so GRND_RANDOM would be safe to ignore.
+  // Moreover, it never blocks (we should have obtained enough entropy on boot),
+  // so this is also alright.
+  unsigned block[16];
+  long read = 0;
+  while (len > 0) {
+    auto l = min(len, 64l);
+    random->read(0, block, l, 0);
+    copy_to_user((void *) buf, block, l);
+    len -= l;
+    read += l;
+  }
+  return read;
 }
 
 // We only have a single CPU.
@@ -1014,6 +1028,14 @@ HANDLE(getrusage, who, buf) {
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
+  // Disallowed: the same handler's user-space address might be different in different address spaces.
+  // This also simplifies the case in VM.
+  if (!(flags & CLONE_VM) && (flags & CLONE_SIGHAND))
+    return -EINVAL;
+  // Two threads must not share the same stack.
+  if ((flags & CLONE_VM) & !stack)
+    return -EINVAL;
+
   if (parenttid && (flags & CLONE_PARENT_SETTID))
     copy_to_user((void *) parenttid, &tcb->tid, sizeof(int));
 
@@ -1188,6 +1210,15 @@ HANDLE(mprotect, start, len, prot) {
 
 HANDLE(munmap, addr, len) {
   return detail::munmap(addr, len);
+}
+
+HANDLE(madvise, addr, len, type) {
+  if (len < 0 || addr % PAGE_SIZE != 0)
+    return -EINVAL;
+
+  // TODO: listen to advice.
+  // This is purely performance-related so we can probably ignore it.
+  return 0;
 }
 
 HANDLE(sched_yield, _) {

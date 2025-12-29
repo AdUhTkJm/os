@@ -240,6 +240,8 @@ v(-height)
 
 在编写操作系统时，C++ 的标准库是不可用的。因此，我需要自行编写一些基础设施。
 
+它们大多依赖动态内存分配。在@boot[]和@memsafety[]两处简略地介绍了这个 OS 中内存分配的方式，所以就不再单独提及。
+
 == 容器 <containers>
 
 我实现了下列容器：
@@ -286,6 +288,10 @@ B-tree 唯一的缺点就是在修改元素的时候，会导致其他元素的�
 template<class K, class V, int Order> requires(Order % 2 == 0)
 class btree;
 ```
+
+在地址空间一节中，我在处理地址空间的时候使用了特化的 B-tree，具体请见 @addrspace。
+
+*红黑树* 
 
 == 错误处理工具
 
@@ -430,11 +436,11 @@ struct wait_queue {
 
 线程独有的信息主要有：
 
-- *栈*。`ksp`, `usp`记录内核与用户态的栈的位置。就算是内核进程，这两个栈依然是分开的。
+- *栈*。`ksp`, `usp`记录内核与用户态的栈的位置。就算是内核进程，这两个栈依然是分开的。对于 `ksp` 记录 trapframe 的具体方式，请见@interrupt。
 
 - *上下文*。进入睡眠时，记录当前 system call 的进度。
 
-- *状态*。`Sleeping`, `Ready` 等用于调度的信息。它们的切换在@wait-queue 中有所提及。
+- *状态*。`Sleeping`, `Ready` 等用于调度的信息。它们的切换在@wait-queue[]中有所提及。
 
 此外，还有如信号、睡眠时长等各个 system call 专用的信息。
 
@@ -458,7 +464,7 @@ struct wait_queue {
 
 实际上，glibc 需要的 auxv 似乎还挺多的。使用 `LD_SHOW_AUXV=1` 可以显示所有提供给程序的 auxv：在 host OS 上使用可以看到需要哪些，在 guest OS 上使用可以方便调试。
 
-有的程序需要 TLS (_thread local storage_)。考虑到用户态的栈对于每个进程也是独立的，我选择直接拿栈的最下面作为 TLS。
+有的程序需要 TLS (_thread local storage_)。TLS 的值实际上完全由用户空间决定，内核并不参与分配，也无需记录。只需要在 clone() 的时候设置好 tp 的值就可以了。
 
 === 睡眠与醒来
 
@@ -477,6 +483,71 @@ struct wait_queue {
 特别需要注意的是，不能直接释放内核态的栈 `ksp`：我们正在这个栈上。这个留给析构函数删除就好了。
 
 接下来，唤醒 wait4() 中的线程，然后给父进程发个 `SIGCHLD` 信号，最后把所有的子进程都交给 `init` (pid 1)，就可以了。
+
+== 地址空间 <addrspace>
+
+每个进程具有独立的虚拟地址空间。
+
+在加载 ELF 文件时，进程只有 ELF 文件的 PT_LOAD 段、一个堆和一个栈。我们需要知道这些空间的开始与结束地址、读写权限、是否需要从文件中读取，以及从哪读取、最大读取多长（为了避免错误地读入本属于 .bss 段的地方）。
+
+换言之，我们需要的是一个 `vma_t` 结构：
+```cpp
+struct vma_t {
+  uintptr_t begin, end;
+  int prot, flags;
+  file *backup;
+  size_t offset, maxread;
+};
+```
+
+它被看做是 `backup` 的 owner，因此在构造与析构时会对应地增减这个文件的引用计数。
+
+我们需要支持 mmap/munmap/mprotect 这三个对地址空间的操作、以及 brk 这个专门针对堆的 system call。我们还需要在 page fault 时快速地查找到底应该从哪个 `vma_t` 来 map。因此，我们需要一种合适的数据结构来支持下面这些操作：
+
+- 插入、删除；
+
+- 查找包含地址 `addr` 的一个 `vma_t`；
+
+- 给定一段地址 `[begin, end)`，查找所有重合的 `vma_t`；
+
+- 查找一个长度至少为 `len` 的空隙。
+
+我采取的数据结构是添加了一些内容的 B-tree。常见的 B-tree node 是长这样的：
+```cpp
+struct node {
+  node *ch[Order];    // Children.
+  K k[Order - 1];     // Keys.
+  V v[Order - 1];     // Values.
+  int count = 0;      // Key count; children count is always `count + 1`.
+  bool leaf;
+};
+```
+
+这里的 `Order` 指的是 B-tree 的阶，是一个由模板指定的常量（见@containers）。这存储的是键值对，不过我们只需要存储 `vma_t` 这些值。为了方便起见，我规定对于 ```cpp vma_t v```， 这里的 key 就等于 ```cpp v.begin```。
+
+为了支持三种特殊操作，我们需要加入三个字段：
+```cpp
+struct node {
+  ...
+  size_t minstart;    // Min starting point in children.
+  size_t maxend;      // Max ending point in children.
+  size_t maxgap;      // Max gap in children.
+  int count = 0;
+  bool leaf;
+};
+```
+
+在插入和删除过程中，我们可以顺手更新这些值。具体的更新方法是，每当一个节点本身的 `k`、`v` 或 `ch` 有任何变化时，就执行这样的更新：
+
+对 `minstart` 而言，这显然就是 `ch[0]->minstart`，或者对叶子节点来说就是 `k[0]`。
+
+对 `maxend` 来说，我们保证这个 B-tree 中没有重叠的 `vma_t`。这意味着和 `minstart` 类似，我们只需要检查 `ch[count]->maxend` 或者 `v[count-1].end` 就可以了。别忘了 `ch` 的个数总是比 `v` 多一个。
+
+至于 `maxgap` 就有些麻烦了。我们无法轻易地判断到底哪个地方的空隙最大，所以只好每一个都算一遍。空隙也就是上一个 `vma_t` 的结束和下一个 `vma_t` 的开始之差，但*并不总是* `k[i]` 和 `v[i-1].end` 之差：实际上，只有叶子节点才是这样的。它应该是 `ch[i]` 这颗子树的最后一个 `vma_t`，换言之，就是 `ch[i]->maxend`。同理，我们需要比较 `ch[i+1]->minstart` 和 `v[i].end` 之差。
+
+别忘了还有一个可能来源：子树内部的空隙。好在我们不需要递归进入子树，不然插入和删除的复杂度就不再是 O(log n) 了。我们已经有了子树的 `maxgap` 属性，所以直接与当前计算出来的值取最大就行。
+
+这样我们就完成了更新。在 split, merge 等一次操作触及多个节点的时候，按照上面的解释，我们需要先更新靠近叶子的节点，再更新靠近根部的节点。
 
 = 文件系统 <fs>
 
@@ -589,7 +660,7 @@ C++ 提供了绝对的自由，但为了让运行稳定，在使用内存时依�
 
 我的内存分配分为三级：分配物理内存，分配虚拟内存页，以及可以分配任意大小虚拟内存的 `vmalloc()`。
 
-正如@boot 所说，在启动时，我首先初始化了一个 16MB 的 free-list allocator，然后读取 FDT 并初始化了 128 MB（以 QEMU 的默认设置为例）的 bitmap allocator。
+正如@boot[]所说，在启动时，我首先初始化了一个 16MB 的 free-list allocator，然后读取 FDT 并初始化了 128 MB（以 QEMU 的默认设置为例）的 bitmap allocator。
 
 对于虚拟内存页的分配，我也采用 bitmap allocator。
 

@@ -1,4 +1,5 @@
 #include "schedule.h"
+#include "../fs/devfs.h"
 
 namespace os {
 

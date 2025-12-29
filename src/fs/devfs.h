@@ -104,8 +104,36 @@ public:
   urandom_inode();
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t, const void*, size_t, int flags) override;
+};
 
-  void add_entropy(unsigned long entropy);
+class random_inode : public inode_impl<random_inode> {
+  // We use a Chacha20 hasher.
+  // See RFC 8439, https://datatracker.ietf.org/doc/html/rfc8439
+  constexpr static unsigned consts[4] = { 0x61707865, 0x3320646e, 0x79622d32, 0x6b206574 };
+  // Rotate the number `n` bytes to the left.
+  constexpr static unsigned rotate(unsigned x, int n) {
+    return (x << n) | (x >> (32 - n));
+  }
+
+  unsigned state[16];
+  // Accumulated entropy from outside.
+  unsigned accum[8];
+  int mixcnt = 0;
+  inode::meta meta;
+
+  void chacha20_block(unsigned *__restrict__ dst, const unsigned *__restrict__ src);
+
+  // We expect an 8-byte entropy.
+  void reseed(const unsigned *entropy);
+public:
+  FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_FILE;
+
+  random_inode(const unsigned *key);
+  ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
+
+  void mix(unsigned value);
 };
 
 class tty_inode : public inode_impl<tty_inode> {
@@ -140,7 +168,7 @@ public:
 };
 
 extern static_storage<console_inode> console;
-extern static_storage<urandom_inode> urandom;
+extern static_storage<random_inode> random;
 
 void mount_dev();
 

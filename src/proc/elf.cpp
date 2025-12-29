@@ -155,13 +155,14 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
     PROT_READ | PROT_WRITE, MAP_PRIVATE
   });
   // Allocate a stack. Note it grows downwards.
+  auto trap = (trapframe *) tcb->ksp;
   pcb->vma.insert(vma::vma_t {
-    stack_top - user_stack_size, tcb->usp = stack_top,
+    trap->sscratch - user_stack_size, (va_t) trap->sscratch,
     PROT_READ | PROT_WRITE, MAP_PRIVATE
   });
+  trap->sepc = pc;
   pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = user_stack_size;
   tcb->status = Init;
-  tcb->pc = pc;
   return auxv;
 }
 

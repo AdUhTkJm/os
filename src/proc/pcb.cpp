@@ -211,34 +211,17 @@ int nextpid() {
   return pid++;
 }
 
-void init(tcb_t *tcb) {
-  auto pcb = tcb->pcb;
-  // Gives one physical page for the root page table and the kernel stack.
-  pcb->pt_root = pframe();
-  tcb->ksp = (va_t) vmalloc<16>(kstack_size) + kstack_size - sizeof(trapframe);
-
-  // Copy the kernel's level 2 root table.
-  // We only need to shallow copy.
-  memcpy((void *) as_va(pcb->pt_root), (void*) as_va(__kernel_pt_root), PAGE_SIZE);
-
-  // Open stdin, stdout and stderr.
-  // Note they are different files, but point to the same place.
-  auto console = pcb->vfs->lookup("/dev/console");
-  if (!console)
-    panic("no console!");
-  pcb->ftbl->allocate(new file(*console, O_RDONLY), 0); // stdin
-  pcb->ftbl->allocate(new file(*console, O_WRONLY), 1); // stdout
-  pcb->ftbl->allocate(new file(*console, O_WRONLY), 2); // stderr
-}
-
 void terminate(tcb_t *tcb, int ret, bool sig) {
   auto pcb = tcb->pcb;
 
   assert(tcb->entr.size() == 0);
 
-  if (tcb->cleartid) {
-    copy_to_user(tcb->tidaddr, zeroes, sizeof(int));
-    detail::futex_wake(tcb->tidaddr, 2147483647);
+  if (tcb->ctidaddr) {
+    // If copy_to_user causes termination, we don't really want to trigger it again.
+    auto addr = tcb->ctidaddr;
+    tcb->ctidaddr = nullptr;
+    copy_to_user(addr, zeroes, sizeof(int));
+    detail::futex_wake(addr, 1);
   }
 
   if (pcb->threads.size() == 1) {
@@ -302,9 +285,6 @@ static void first_time_setup(tcb_t *tcb) {
   // Note that stack grows downwards, so we self-decrement
   // and leave the space for it.
   auto trap = (trapframe *) tcb->ksp;
-  trap->sepc = tcb->pc;
-  // Let sp point to the user stack.
-  trap->sscratch = tcb->usp;
 
   int sstatus; CSRR(sstatus, sstatus);
   // User process with interrupt enabled.
@@ -326,9 +306,9 @@ void trap_return_setup(tcb_t *tcb) {
   auto pcb = tcb->pcb;
   setroot(pcb->pid, pcb->pt_root);
 
-  [[unlikely]] if (tcb->settid) {
-    copy_to_user((void *) tcb->tidaddr, &tcb->tid, sizeof(int));
-    tcb->settid = false; 
+  [[unlikely]] if (tcb->stidaddr) {
+    copy_to_user(tcb->stidaddr, &tcb->tid, sizeof(int));
+    tcb->stidaddr = nullptr; 
   }
 }
 #endif
@@ -412,18 +392,22 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   // Point to the new user stack.
   // From man clone(2), when usp is NULL we reuse the parent stack.
   // Copy-on-write ensures this works.
-  ct->usp = usp ? usp : pt->usp;
 
   // Set the return value (a0) of child to zero.
   auto trap = (trapframe *) ct->ksp;
+  trap->sscratch = usp ? usp : ((trapframe *) pt->ksp)->sscratch;
   trap->regs[8] = 0;
-  ct->pc = trap->sepc;
 
   // Copy the table, but not the files.
-  cp->ftbl = share_files ? pp->ftbl : new process_file_table(*pp->ftbl);
-  cp->ftbl->ref();
-  for (auto [_, f] : *cp->ftbl)
-    f->ref();
+  if (share_files) {
+    cp->ftbl = pp->ftbl;
+    cp->ftbl->ref();
+  } else {
+    cp->ftbl = new process_file_table(*pp->ftbl);
+    cp->ftbl->ref();
+    for (auto [_, f] : *cp->ftbl)
+      f->ref();
+  }
 
   // Copy VFS context.
   cp->vfs = share_fs ? pp->vfs : new vfs(*pp->vfs);
@@ -431,7 +415,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
 
   ct->status = Ready;
   if (flags & CLONE_SETTLS)
-    ct->tls = tls;
+    trap->regs[/*tp*/ 2] = (reg_t) tls;
 
   // Copy various information from parent, if we aren't sharing the PCB.
   if (!share_vm) {
@@ -445,14 +429,13 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
     memcpy(cp->rlims, pp->rlims, sizeof(pp->rlims));
   }
 
-  if (flags & CLONE_CHILD_SETTID) {
-    ct->tidaddr = childtid;
-    ct->settid = true;
-  }
-  if (flags & CLONE_CHILD_CLEARTID) {
-    ct->tidaddr = childtid;
-    ct->cleartid = true;
-  }
+  if (flags & CLONE_CHILD_SETTID)
+    ct->stidaddr = childtid;
+  
+  if (flags & CLONE_CHILD_CLEARTID)
+    ct->ctidaddr = childtid;
+  
+  printk("flags = %p\n", flags);
   
   scheduler.add(ct);
   return ct;
@@ -579,7 +562,8 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   for (auto fd : toclose)
     pcb->ftbl->deallocate(fd);
 
-  char *usp = (char *) tcb->usp;
+  auto trap = (trapframe *) tcb->ksp;
+  char *usp = (char *) trap->sscratch;
   os::vector<char*> argvp, envpp;
   // Copy the real contents of the strings.
   // Also copy the current path.
@@ -670,15 +654,8 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
   size_t argc = argvp.size();
   copy_to_user(usp -= ptrsz, &argc, ptrsz);
-  // We shouldn't maintain alignment; ld.so will do it for us.
-  tcb->usp = (va_t) usp;
-  assert(tcb->usp % 16 == 0);
-
-  // Set up trapframe.
-  auto trap = (trapframe *) tcb->ksp;
-  trap->sepc = tcb->pc;
-  trap->sscratch = tcb->usp;
-  trap->regs[2] = stack_top - user_stack_size; // TLS
+  trap->sscratch = (va_t) usp;
+  assert(trap->sscratch % 16 == 0);
   return 0;
 }
 #undef COPY_ENTRY

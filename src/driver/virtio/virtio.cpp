@@ -331,6 +331,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   assert(stat != 0xff);
   if (stat == 0)
     memcpy(buffer, (void *) as_va(buf), 512 * len);
+  random->mix(rdtime() ^ *(unsigned *) buffer);
 
   pfree(req);
   pfree(buf);
