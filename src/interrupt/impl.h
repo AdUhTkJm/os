@@ -10,30 +10,31 @@ struct msghdr;
 
 namespace os::detail {
 
-int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags);
-int fcntl(int fd, int ty, int arg);
-int mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset);
-int mprotect(unsigned long start, unsigned long len, int prot);
-int munmap(unsigned long addr, unsigned long len);
-int ioctl(int fd, int op, void *argp);
-int wait(int pid, void *wstatus, int options, void *rusage);
-int faccessat(int dirfd, const char *path, int mode);
-int socket(int domain, int type, int protocol);
-int bind(int fd, void *sockaddr, unsigned len);
-int connect(int fd, void *sockaddr, unsigned len);
-int syslog(int type, char *buf, unsigned long size);
-int futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1);
-int futex_wake(void *addr, int count, unsigned mask = -1);
-int futex(void *uaddr, int op, int val, void *timeout, unsigned long val2, unsigned long val3);
-int setsockopt(int fd, int level, int optname, void *optval, int optlen);
-int getsockopt(int fd, int level, int optname, void *optval, int *optlen);
-int sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigned addrlen);
-int sendmsg(int fd, void *msg, int flags);
-int sendmsg(int fd, const msghdr &msg, int flags);
-int prlimit64(int pid, int resource, void *newrlim, void *oldrlim);
-int nanosleep(int clock, int flags, void *rqtp, void *rmtp);
+long mount(const char *src, const char *tgt, const char *fsty, unsigned long flags);
+long fcntl(int fd, int ty, int arg);
+long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset);
+long mprotect(unsigned long start, unsigned long len, int prot);
+long munmap(unsigned long addr, unsigned long len);
+long ioctl(int fd, int op, void *argp);
+long wait(int pid, void *wstatus, int options, void *rusage);
+long faccessat(int dirfd, const char *path, int mode);
+long socket(int domain, int type, int protocol);
+long bind(int fd, void *sockaddr, unsigned len);
+long connect(int fd, void *sockaddr, unsigned len);
+long syslog(int type, char *buf, unsigned long size);
+long futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1);
+long futex_wake(void *addr, int count, unsigned mask = -1);
+long futex(void *uaddr, int op, int val, void *timeout, unsigned long val2, unsigned long val3);
+long setsockopt(int fd, int level, int optname, void *optval, int optlen);
+long getsockopt(int fd, int level, int optname, void *optval, int *optlen);
+long sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigned addrlen);
+long sendmsg(int fd, void *msg, int flags);
+long sendmsg(int fd, const msghdr &msg, int flags);
+long prlimit64(int pid, int resource, void *newrlim, void *oldrlim);
+long nanosleep(int clock, int flags, void *rqtp, void *rmtp);
+long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid);
 
-int fromtype(inode::filetype ty);
+long fromtype(inode::filetype ty);
 
 }
 

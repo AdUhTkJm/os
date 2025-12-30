@@ -26,7 +26,7 @@ public:
   int rmdir(const string &name) override;
   inode *lookup(const string &name) override;
   os::vector<item> list() override;
-  optional<string> readlink() override { return nullopt; }\
+  optional<string> readlink() override;
 
   size_t size() const override { return data.size(); }
   // Note that `data.data()` will change, so we can't use it.

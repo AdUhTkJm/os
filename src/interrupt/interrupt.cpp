@@ -117,7 +117,8 @@ HANDLE(read, fd, _buf, len) {
 
   char *buf = new char[len];
   auto ret = file->read(buf, len);
-  copy_to_user((void *) _buf, buf, len);
+  if (!copy_to_user((void *) _buf, buf, len))
+    return -EFAULT;
   return ret;
 }
 
@@ -144,7 +145,8 @@ HANDLE(readv, fd, iov, cnt) {
     if (n <= 0)
       return total ? total : n;
 
-    copy_to_user(v.iov_base, buf.get(), v.iov_len);
+    if (!copy_to_user(v.iov_base, buf.get(), v.iov_len))
+      return -EFAULT;
 
     total += n;
     // If we have a partial read, then we stop immediately.
@@ -428,7 +430,8 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
   pcb->close_file(fd);
   if (!link)
     return -EINVAL;
-  copy_to_user((void *) buf, link->c_str(), size);
+  if (!copy_to_user((void *) buf, link->c_str(), size))
+    return -EFAULT;
   return min(link->size(), (unsigned long) size);
 }
 
@@ -563,7 +566,8 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
   };
   pcb->close_file(fd);
-  copy_to_user((void *) buf, &stat, sizeof(stat));
+  if (!copy_to_user((void *) buf, &stat, sizeof(stat)))
+    return -EFAULT;
   return 0;
 }
 
@@ -588,7 +592,8 @@ HANDLE(fstat, fd, buf) {
     .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
     .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
   };
-  copy_to_user((void *) buf, &stat, sizeof(stat));
+  if (!copy_to_user((void *) buf, &stat, sizeof(stat)))
+    return -EFAULT;
   return 0;
 }
 #endif // #ifdef RV
@@ -699,7 +704,7 @@ HANDLE(unlinkat, dirfd, _path, flags) {
 }
 
 HANDLE(brk, addr) {
-  return pcb->vma.brk(addr);
+  return pcb->vma->brk(addr);
 }
 
 HANDLE(dup, fd) {
@@ -758,7 +763,7 @@ HANDLE(setuid, uid) {
   if (uid != pcb->suid && uid != pcb->uid && uid != pcb->euid)
     return -EPERM;
   
-  pcb->euid = uid;
+  pcb->euid = pcb->suid = uid;
   return 0;
 }
 
@@ -788,15 +793,50 @@ HANDLE(setreuid, ruid, euid) {
 }
 
 HANDLE(getegid, _) {
-  return pcb->gid;
+  return pcb->egid;
+}
+
+HANDLE(setgid, gid) {
+  if (gid < 0)
+    return -EINVAL;
+
+  if (pcb->gid == 0) {
+    pcb->gid = pcb->egid = pcb->sgid = gid;
+    return 0;
+  }
+
+  if (gid != pcb->sgid && gid != pcb->gid && gid != pcb->egid)
+    return -EPERM;
+  
+  pcb->egid = pcb->sgid = gid;
+  return 0;
 }
 
 HANDLE(getgid, _) {
-  return pcb->egid;
+  return pcb->gid;
 }
 
 HANDLE(gettid, _) {
   return tcb->tid;
+}
+
+HANDLE(getsid, pid) {
+  if (pid == 0)
+    return pcb->sid;
+
+  auto proc = pidmap->find(pid);
+  if (proc == pidmap->end())
+    return -ESRCH;
+
+  return (*proc).second->sid;
+}
+
+HANDLE(setsid, _) {
+  if (pcb->sid == pcb->pid)
+    return -EPERM;
+
+  pcb->sid = pcb->pid;
+  return 0;
 }
 
 HANDLE(set_tid_address, tidaddr) {
@@ -814,7 +854,7 @@ HANDLE(getrandom, buf, len, flags) {
   while (len > 0) {
     auto l = min(len, 64l);
     random->read(0, block, l, 0);
-    copy_to_user((void *) buf, block, l);
+    if (!copy_to_user((void *) buf, block, l)) return -EFAULT;
     len -= l;
     read += l;
   }
@@ -826,9 +866,9 @@ HANDLE(sched_getaffinity, pid, size, mask) {
   if (size < (int) sizeof(unsigned long))
     return -EINVAL;
 
-  copy_to_user((void *) mask, zeroes, size);
+  if (!copy_to_user((void *) mask, zeroes, size)) return -EFAULT;
   char kset = 1;
-  copy_to_user((void *) mask, &kset, 1);
+  if (!copy_to_user((void *) mask, &kset, 1)) return -EFAULT;
   return 0;
 }
 
@@ -849,11 +889,14 @@ HANDLE(sched_setaffinity, pid, size, _mask) {
 // We don't (and won't) have NUMA. Always return default value.
 HANDLE(get_mempolicy, policy, nmask, maxnode, addr, flags) {
   long zero = 0;
-  if (policy)
-    copy_to_user((void *) policy, &zero, 4);
-  
+  if (policy) {
+    if (!copy_to_user((void *) policy, &zero, 4))
+      return -EFAULT;
+  }
+
   if (nmask && maxnode > 0)
-    copy_to_user((void *) nmask, &zero, 8);
+    if (!copy_to_user((void *) nmask, &zero, 8))
+      return -EFAULT;
 
   return 0;
 }
@@ -863,15 +906,17 @@ HANDLE(capget, header, data) {
   cap_data dat;
 
   if (!header)
-      return -EFAULT;
+    return -EFAULT;
 
-  copy_from_user(&h, (void *) header, sizeof(h));
+  if (!copy_from_user(&h, (void *) header, sizeof(h)))
+    return -EFAULT;
 
   // If version is 0, user is asking what we support.
   if (h.version == 0) {
     h.version = LINUX_CAPABILITY_VERSION_3;
     h.pid = 0;
-    copy_to_user((void *) header, &h, sizeof(h));
+    if (!copy_to_user((void *) header, &h, sizeof(h)))
+      return -EFAULT;
     return 0;
   }
 
@@ -885,7 +930,7 @@ HANDLE(capget, header, data) {
   dat.effective   = 0xffffffff;
   dat.permitted   = 0xffffffff;
   dat.inheritable = 0xffffffff;
-  copy_to_user((void *) data, &dat, sizeof(dat));
+  if (!copy_to_user((void *) data, &dat, sizeof(dat))) return -EFAULT;
   return 0;
 }
 
@@ -948,7 +993,8 @@ HANDLE(getcwd, buf, size) {
   auto path = pcb->pwd->path();
   if (path.size() + 1 >= (unsigned long) size)
     return -ERANGE;
-  copy_to_user((void*) buf, path.c_str(), path.size() + 1);
+  if (!copy_to_user((void*) buf, path.c_str(), path.size() + 1))
+    return -EFAULT;
   return buf;
 }
 
@@ -964,7 +1010,8 @@ HANDLE(uname, buf) {
   };
   auto host = hostname();
   memcpy(name.nodename, host, strlen(host));
-  copy_to_user((void *) buf, &name, sizeof(utsname));
+  if (!copy_to_user((void *) buf, &name, sizeof(utsname)))
+    return -EFAULT;
   return 0;
 }
 
@@ -999,7 +1046,8 @@ HANDLE(times, buf) {
     .tms_cutime = pcb->cruse.ru_utime,
     .tms_cstime = pcb->cruse.ru_stime,
   };
-  copy_to_user((void *) buf, &times, sizeof(tms));
+  if (!copy_to_user((void *) buf, &times, sizeof(tms)))
+    return -EFAULT;
   return clock_period;
 }
 
@@ -1007,7 +1055,8 @@ HANDLE(getrusage, who, buf) {
   switch (who) {
   case -1: { // Children
     rusage v = (rusage) pcb->cruse;
-    copy_to_user((void *) buf, &v, sizeof(rusage));
+    if (!copy_to_user((void *) buf, &v, sizeof(rusage)))
+      return -EFAULT;
     return 0;
   }
   case 0: { // Self
@@ -1015,12 +1064,14 @@ HANDLE(getrusage, who, buf) {
     for (auto t : pcb->threads)
       use += t->ruse;
     rusage v = (rusage) use;
-    copy_to_user((void *) buf, &v, sizeof(rusage));
+    if (!copy_to_user((void *) buf, &v, sizeof(rusage)))
+      return -EFAULT;
     return 0;
   }
   case 1: {// Thread
     rusage v = (rusage) tcb->ruse;
-    copy_to_user((void *) buf, &v, sizeof(rusage));
+    if (!copy_to_user((void *) buf, &v, sizeof(rusage)))
+      return -EFAULT;
     return 0;
   }
   }
@@ -1028,19 +1079,18 @@ HANDLE(getrusage, who, buf) {
 }
 
 HANDLE(clone, flags, stack, parenttid, tls, childtid) {
-  // Disallowed: the same handler's user-space address might be different in different address spaces.
-  // This also simplifies the case in VM.
-  if (!(flags & CLONE_VM) && (flags & CLONE_SIGHAND))
-    return -EINVAL;
-  // Two threads must not share the same stack.
-  if ((flags & CLONE_VM) & !stack)
+  return detail::clone(flags, stack, (void *) parenttid, (void *) tls, (void *) childtid);
+}
+
+HANDLE(clone3, _args, size) {
+  clone_args args;
+  if (!copy_from_user(&args, (void *) _args, size))
+    return -EFAULT;
+
+  if ((args.flags & 0xff) != 0)
     return -EINVAL;
 
-  if (parenttid && (flags & CLONE_PARENT_SETTID))
-    copy_to_user((void *) parenttid, &tcb->tid, sizeof(int));
-
-  tcb_t *ct = os::clone(flags, stack, (void *) tls, (void *) childtid);
-  return ct->pcb->pid;
+  return detail::clone(args.flags | args.exit_signal, args.stack, (void *) args.parent_tid, (void *) args.tls, (void *) args.child_tid);
 }
 
 HANDLE(execve, _path, _argv, _envp) {
@@ -1084,8 +1134,10 @@ HANDLE(getdents64, fd, dirents, cnt) {
 
     unsigned char type = inode::as_dt(item.ty);
     linux_dirent64 entry { .inum = (unsigned long) item.inum, ._resv = 0, .len = len, .type = type };
-    copy_to_user(pos, &entry, nameoff);
-    copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1);
+    if (!copy_to_user(pos, &entry, nameoff))
+      return -EFAULT;
+    if (!copy_to_user(pos + nameoff, item.name.c_str(), item.name.size() + 1))
+      return -EFAULT;
     pos += len;
     file->offset++;
   }
@@ -1120,7 +1172,7 @@ HANDLE(chroot, _path) {
   if (!path || !*path)
     return -EFAULT;
 
-  auto dentry = pcb->vfs->lookup(path->get());
+  auto dentry = pcb->vfs->lookup_from(path->get(), pcb->pwd);
   if (!dentry)
     return dentry;
   if ((*dentry)->node->type != inode::Dir)
@@ -1154,13 +1206,13 @@ HANDLE(clock_gettime, id, tp) {
 
   spec.tv_sec = time / 1_s;
   spec.tv_nsec = time % 1_s;
-  copy_to_user((void *) tp, &spec, sizeof(timespec));
+  if (!copy_to_user((void *) tp, &spec, sizeof(timespec))) return -EFAULT;
   return 0;
 }
 
 HANDLE(gettimeofday, tv, tz) {
   if (tz)
-    copy_to_user((void*) tz, &zone, sizeof(timezone));
+    if (!copy_to_user((void*) tz, &zone, sizeof(timezone))) return -EFAULT;
   
   if (tv) {
     auto cur = now();
@@ -1168,7 +1220,7 @@ HANDLE(gettimeofday, tv, tz) {
       .tv_sec = long(cur / 1_s),
       .tv_usec = long(cur % 1_s) / 1000,
     };
-    copy_to_user((void*) tv, &ts, sizeof(timeval));
+    if (!copy_to_user((void*) tv, &ts, sizeof(timeval))) return -EFAULT;
   }
   return 0;
 }
@@ -1229,14 +1281,14 @@ HANDLE(sched_yield, _) {
 
 HANDLE(rt_sigprocmask, how, set, oldset, size) {
   if (oldset)
-    copy_to_user((void *) oldset, &tcb->mask.sig, size);
+    if (!copy_to_user((void *) oldset, &tcb->mask.sig, size)) return -EFAULT;
   if (!set)
     return 0;
 
   sigset_t sigset;
   if (!copy_from_user(&sigset, (void *) set, size))
     return -EFAULT;
-  if (size >= 8)
+  if (size > 8)
     return -EINVAL;
 
   unsigned long mask = sigset.val;
@@ -1345,7 +1397,7 @@ HANDLE(tgkill, pid, tid, sig) {
 }
 
 HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
-  // Ignore sigmask for now.
+  // TODO: Ignore sigmask for now.
   if (cnt <= 0)
     return -EINVAL;
 
@@ -1381,7 +1433,8 @@ retry:
       available++;
   }
   if (available) {
-    copy_to_user((void *) _fds, fds.get(), cnt * sizeof(pollfd));
+    if (!copy_to_user((void *) _fds, fds.get(), cnt * sizeof(pollfd)))
+      return -EFAULT;
     return available;
   }
   // Don't add to wait queue if we don't want to wait.
@@ -1445,7 +1498,8 @@ HANDLE(rt_sigaction, sig, act, oldact) {
       .sa_flags = a.flags,
       .sa_mask = { a.mask.sig },
     };
-    copy_to_user((void *) oldact, &v, sizeof(::sigaction));
+    if (!copy_to_user((void *) oldact, &v, sizeof(::sigaction)))
+      return -EFAULT;
   }
   if (act) {
     ::sigaction sigact;
@@ -1493,7 +1547,8 @@ HANDLE(pipe2, fds, flags) {
   file *write = new file(new dentry("<pipe w>", pipe, nullptr), O_WRONLY | extra);
 
   int fd[2] = { pcb->ftbl->allocate(read), pcb->ftbl->allocate(write) };
-  copy_to_user((void*) fds, fd, sizeof(fd));
+  if (!copy_to_user((void*) fds, fd, sizeof(fd)))
+    return -EFAULT;
   return 0;
 }
 
@@ -1532,7 +1587,7 @@ HANDLE(sendmmsg, fd, msg, n, flags) {
     if (sent < 0)
       return i ? i : sent;
     
-    copy_to_user((void*) (msg + sizeof(mmsghdr) * i + offsetof(mmsghdr, msg_len)), &sent, sizeof(unsigned));
+    if (!copy_to_user((void*) (msg + sizeof(mmsghdr) * i + offsetof(mmsghdr, msg_len)), &sent, sizeof(unsigned))) return -EFAULT;
   }
   return i;
 }
@@ -1556,7 +1611,7 @@ HANDLE(sysinfo, info) {
     .freehigh = 0,
     .mem_unit = PAGE_SIZE
   };
-  copy_to_user((void *) info, &sysinfo, sizeof(struct sysinfo));
+  if (!copy_to_user((void *) info, &sysinfo, sizeof(struct sysinfo))) return -EFAULT;
   return 0;
 }
 
@@ -1591,7 +1646,7 @@ HANDLE(setitimer, which, timer, old) {
       .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
       .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
     };
-    copy_to_user((void *) old, &v, sizeof(itimerval));
+    if (!copy_to_user((void *) old, &v, sizeof(itimerval))) return -EFAULT;
   }
   return 0;
 }
@@ -1607,7 +1662,7 @@ HANDLE(getitimer, which, old) {
     .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
     .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
   };
-  copy_to_user((void *) old, &v, sizeof(timeval) * 2);
+  if (!copy_to_user((void *) old, &v, sizeof(timeval) * 2)) return -EFAULT;
   return 0;
 }
 
@@ -1680,14 +1735,13 @@ namespace os {
     }
     panic("exception occurred in kernel");
   } else {
-    auto pid = active()->pcb->pid;
     switch (scause) {
     case 2: // Invalid instruction
-      printk("exception (user): pid %d: invalid instruction %p when executing %p\n", pid, stval, sepc);
+      printk("exception (user): pid %d (tid %d): invalid instruction %p when executing %p\n", pcb->pid, tcb->tid, stval, sepc);
       os::terminate(active(), -127, false);
       break;
     case 5:
-      printk("exception (user): pid %d: load access fault at %p when executing %p\n", pid, stval, sepc);
+      printk("exception (user): pid %d (tid %d): load access fault at %p when executing %p\n", pcb->pid, tcb->tid, stval, sepc);
       printk("page table flags: %x, physical address: %p\n", pte_flags(stval), to_pa(stval));
       os::terminate(active(), -127, false);
       break;
@@ -1702,13 +1756,10 @@ namespace os {
       break;
     }
     case 12: // Instruction page fault
-      vma::map_current((void*) stval);
-      break;
     case 13: // Load page fault
-      vma::map_current((void*) stval);
-      break;
     case 15: // Store page fault. This also work on COW pages; no special care needed.
-      vma::map_current((void*) stval);
+      if (!vma::map_current((void*) stval))
+        tcb->send_signal(SIGSEGV);
       break;
     default:
       printk("exception (user): scause = %ld, stval = %p, sepc = %p\n", scause & 0xff, stval, sepc);

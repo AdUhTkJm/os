@@ -85,6 +85,13 @@ int tmpfs_inode::rmdir(const string &name) {
   return 0;
 }
 
+optional<string> tmpfs_inode::readlink() {
+  if (type != Link)
+    return nullopt;
+  
+  return string(data.data(), data.size());
+}
+
 os::vector<inode::item> tmpfs_inode::list() {
   os::vector<item> result;
   for (auto [name, inode] : children)

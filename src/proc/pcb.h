@@ -139,6 +139,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   reg_t a0;               // The previous a0, when returning from a system call.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
+  int sigonterm = SIGCHLD;// The signal to send to parent on termination.
   int sigresume = 0;      // The signal that causes the thread to wake up from sigwait().
   void *stidaddr = 0;     // The tid address for `settid` to operate on.
   void *ctidaddr = 0;     // The tid address for `cleartid` to operate on.
@@ -169,7 +170,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
 
 struct pcb_t {
   pa_t pt_root;           // Root page table entry.
-  vma::addrspace vma;     // Virtual memory areas.
+  vma::addrspace *vma;    // Virtual memory areas.
   pcb_t *parent;          // Parent.
   process_file_table*ftbl;// Process file table.
   int uid, euid, suid;
@@ -269,6 +270,9 @@ tcb_t *make_kprocess(T fptr) {
   pcb->ftbl = new process_file_table;
   pcb->ftbl->ref();
 
+  pcb->vma = new vma::addrspace;
+  pcb->vma->ref();
+
   tcb->status = Init;
   // We aren't lazy-allocating here.
   // Also don't forget that stack grows downwards.
@@ -286,8 +290,6 @@ tcb_t *make_kprocess(T fptr) {
   pcb->pt_root = __kernel_pt_root;
   return tcb;
 }
-
-void copy_to_user(void *usr, const void *ker, size_t len);
 
 }
 

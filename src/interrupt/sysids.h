@@ -285,6 +285,7 @@ enum syscall {
   riscv_flush_icache = 244 + 15,
   spawn = 400,
   mailwrite = 402,
+  clone3 = 435,
   mkdir = 1030,
 #endif
 

@@ -305,11 +305,6 @@ public:
   };
   dentry *base;
 
-  // Don't copy refcnt.
-  vfs() {}
-  vfs(const vfs &other): base(other.base) {}
-  vfs &operator=(const vfs &other) { base = other.base; return *this; }
-
   // Returns the (optional) entry and an error code.
   // If `lastsym` is set to false, the last component will not be resolved when it is a symlink.
   expected<dentry *> lookup(const string &path, bool lastsym = true);

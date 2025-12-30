@@ -9,7 +9,8 @@ namespace os {
 // These are processes that are sleeping for a timeout.
 extern wait_queue napping;
 // Processes that have a ticking itimer, with ITIMER_REAL.
-extern static_storage<os::list<pcb_t*>> itimer_real;
+// Maps pid to pcb.
+extern static_storage<os::hashmap<int, pcb_t*>> itimer_real;
 
 struct scheduler_t {
   os::intrusive_list<tcb_t> sleep, ready;
@@ -17,7 +18,7 @@ struct scheduler_t {
   spinlock lock;
 
   // No global constructor is allowed. Hence this explicit init.
-  void init() { }
+  void init() { itimer_real.construct(); }
   
   void add(tcb_t *tcb);
   // Chooses the next process to schedule, and switches to it.

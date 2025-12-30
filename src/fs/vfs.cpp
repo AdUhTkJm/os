@@ -160,6 +160,10 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
 
   for (size_t i = 0; i < comps.size(); i++) {
     const string &name = comps[i];
+    // Some filesystems can only handle name length <= 255.
+    if (name.size() > 255)
+      return -ENAMETOOLONG;
+
     if (!cur)
       return -ENOTDIR;
 
@@ -250,14 +254,21 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
   return cur;
 }
 
+// When we're instrumenting functions, the lookup_impl function will take up more stack than normal.
+#if defined(FUNC_INSTRUMENT) || !defined(NDEBUG)
+constexpr static int maxdepth = 8;
+#else
+constexpr static int maxdepth = 12;
+#endif
+
 expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
   // Put a maximum on recursion depth to avoid infinite loops.
-  return lookup_impl(path, base, lastsym, 40);
+  return lookup_impl(path, base, lastsym, maxdepth);
 }
 
 expected<dentry*> vfs::lookup_from(const string &path, dentry *dentry, bool lastsym) {
   bool relative = path[0] != '/';
-  return lookup_impl(path, relative ? dentry : base, lastsym, 40);
+  return lookup_impl(path, relative ? dentry : base, lastsym, maxdepth);
 }
 
 // Moves the mount from `source` to `target`.

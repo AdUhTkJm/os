@@ -3,7 +3,7 @@
 
 namespace os::vma {
 
-void map_single(void *va, pte_t *root) {
+[[nodiscard]] bool map_single(void *va, pte_t *root) {
   EnableAccessToUserMemory enabler;
   auto tcb = active();
   auto pcb = tcb->pcb;
@@ -13,7 +13,7 @@ void map_single(void *va, pte_t *root) {
   auto va_page = rounddown<4_kb>(va);
   pte_t pte = pte_of((va_t) va_page, root);
 
-  auto vmap = pcb->vma.find(addr);
+  auto vmap = pcb->vma->find(addr);
   if (!vmap) {
     // Examine scause to print a better debug message. This is mainly for RISC-V.
 #ifdef RV
@@ -21,12 +21,12 @@ void map_single(void *va, pte_t *root) {
     auto type = scause == 12 ? "execute" : scause == 13 ? "load" : scause == 15 ? "store" : nullptr;
     if (type) {
       va_t sepc = ((trapframe *) tcb->ksp)->sepc;
-      printk("Unmapped address %p on %s, requested from instruction %p of process %d. Terminate the process.\n", va, type, sepc, pcb->pid);
+      printk("Unmapped address %p on %s, requested from instruction %p of process %d (thread %d).\n",
+        va, type, sepc, pcb->pid, tcb->tid);
     } else
 #endif
-      printk("Unmapped address %p. Terminate the process.\n", va);
-    os::terminate(tcb, -127, false);
-    return;
+      printk("Unmapped address %p.\n", va);
+    return false;
   }
   const auto &vma = *vmap;
 
@@ -51,66 +51,89 @@ void map_single(void *va, pte_t *root) {
     pfree(PTE_TO_PA(pte));
     // Remap the memory and let it point to the new pa.
     os::pmap(pa, va_page, MAP_4KB, flags | PTE_W, root);
-    return;
+    return true;
   }
 
-  os::pmap(pa, va_page, MAP_4KB, flags, root);
-
-  // Copy the contents if it exists.
   if (!vma.backup) {
     tcb->ruse.ru_minflt++;
-    // It is required that we zero this if we're using an anonymous mmap.
-    return;
+    os::pmap(pa, va_page, MAP_4KB, flags, root);
+    // This is uniprocessor and no sleep can happen, so no worry about the race condition below.
+    return true;
   }
-  
-  // `begin` and this address are in the same page.
-  // We read from beginning.
+
+  // Copy the contents if it exists.
+  // We must map after reading, in case of CLONE_VM is specified.
+  // Consider this case:
+  //   Thread A accesses `va`
+  //   Thread A page faults
+  //   Thread A maps a page and calls read(), suspends
+  //   Thread B swapped in
+  //   Thread B writes `va` <- BOOM (1): sees zeroes!
+  //   Thread A remaps `va` <- BOOM (2): lost data!
+  // We must map the page after the read.
+
   tcb->ruse.ru_majflt++;
+  
   if (vma.begin / PAGE_SIZE == addr / PAGE_SIZE) {
+    // `begin` and this address are in the same page.
+    // We read from beginning.
     SeekGuard guard(vma.backup, vma.offset);
     auto off = vma.begin % PAGE_SIZE;
     auto read = min(PAGE_SIZE - off, vma.maxread);
     vma.backup->read((void *) as_va(vma.begin - (va_t) va_page + pa), read);
-    return;
+  } else {
+    // This is in the middle. We read the entire page.
+    va_t off = (va_t) va_page - vma.begin;
+    // Note that these are unsigned, so a direct subtraction and then max(..., 0) won't work.
+    ssize_t read = off < vma.maxread ? min((size_t) PAGE_SIZE, vma.maxread - off) : 0;
+    if (read > 0) {
+      SeekGuard guard(vma.backup, vma.offset + off);
+      vma.backup->read((void *) as_va(pa), read);
+    }
   }
 
-  // This is in the middle. We read the entire page.
-  va_t off = (va_t) va_page - vma.begin;
-
-  // Note that these are unsigned, so a direct subtraction and then max(..., 0) won't work.
-  ssize_t read = off < vma.maxread ? min((size_t) PAGE_SIZE, vma.maxread - off) : 0;
-
-  if (read > 0) {
-    SeekGuard guard(vma.backup, vma.offset + off);
-    vma.backup->read((void *) as_va(pa), read);
+  // When the page is writable, to prevent BOOM (2), we must check again.
+  // Walking page table is slow, so we want to avoid it in readonly cases (like .text).
+  if (auto pte = pte_of((va_t) va_page, root); pte & PTE_V) {
+    // Someone has already mapped the page - see the case analysis above.
+    // In that case we need to do nothing.
+    pfree(pa);
+    return true;
   }
+
+  // Now map the page after the read, to avoid BOOM (1).
+  os::pmap(pa, va_page, MAP_4KB, flags, root);
+  return true;
 }
 
-void map_current(void *va) {
+bool map_current(void *va) {
   int flags = pte_flags(va);
   // Don't remap.
   if (flags != -1 && !(flags & PTE_COW))
-    return;
+    return true;
 
   return map_single(va, pt_root());
 }
 
-void map_current(void *va, pte_t *root) {
+bool map_current(void *va, pte_t *root) {
   int flags = pte_flags(va);
   // Don't remap.
   if (flags != -1 && !(flags & PTE_COW))
-    return;
+    return true;
 
   return map_single(va, root);
 }
 
-void map_current(void *from, void *to, bool write) {
+bool map_current(void *from, void *to, bool write) {
   char *p = (char *) from, *q = (char *) to;
   for (p = rounddown<PAGE_SIZE>(p); p < q; p += PAGE_SIZE) {
     int flags = pte_flags(p);
-    if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write))
-      map_single(p, pt_root());
+    if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write)) {
+      if (!map_single(p, pt_root()))
+        return false;
+    }
   }
+  return true;
 }
 
 bool vma_t::mergeable(const vma_t &other) const {
@@ -170,6 +193,8 @@ va_t addrspace::find_mmap(unsigned long len, va_t hint) const {
     return va;
 
   // We might need to start searching from other places.
+  printk("mmap: hint = %p, begin = %p, len = %p", hint, mmap_begin, len);
+  vmas.dump();
   assert(false && "TODO: find mmap: mmap_begin change not implemented");
 }
 

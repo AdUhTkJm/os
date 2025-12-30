@@ -6,7 +6,7 @@ namespace os {
 scheduler_t scheduler;
 static_storage<tcb_t> boot_tcb;
 static_storage<pcb_t> boot_pcb;
-static_storage<os::list<pcb_t*>> itimer_real;
+static_storage<os::hashmap<int, pcb_t*>> itimer_real;
 wait_queue napping;
 
 void scheduler_t::add(tcb_t *tcb) {
@@ -40,6 +40,9 @@ void scheduler_t::dispatch_impl() {
   }
   ready.pop_front();
 
+  if (active->status == Running)
+    ready.push_back(active);
+
   // Update time information.
   size_t time = now();
   if (active->last_sched != 0) {
@@ -54,7 +57,6 @@ void scheduler_t::dispatch_impl() {
 
   active = next;
   trap_return_setup(next);
-  
   // Now we switch to it.
   if (next->ctx_valid) {
     next->ctx_valid = false;
@@ -139,19 +141,18 @@ void scheduler_t::tick() {
 
     entry = next;
   }
-  for (auto pcb : *itimer_real) {
+  for (auto [pid, pcb] : *itimer_real) {
     auto &itimer = pcb->itimers[ITIMER_REAL];
     if (--itimer.timeout <= 0) {
       pcb->send_signal(SIGALRM);
       if (itimer.interval != 0)
         itimer.timeout = itimer.interval;
-      // TODO: otherwise, remove.
     }
   }
 }
 
 void scheduler_t::record_itimer_real(pcb_t *pcb) {
-  itimer_real->push_back(pcb);
+  itimer_real->insert(pcb->pid, pcb);
 }
 
 }

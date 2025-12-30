@@ -47,7 +47,7 @@ static expected<va_t> load_interp(file *ldso, pcb_t *pcb) {
         aligned, end, prot, MAP_PRIVATE,
         ldso, phdr.p_offset - off, phdr.p_filesz + off
       };
-      pcb->vma.insert(vma);
+      pcb->vma->insert(vma);
     }
   }
 
@@ -111,7 +111,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
         aligned, end, prot, MAP_PRIVATE,
         content, phdr.p_offset - off, phdr.p_filesz + off
       };
-      pcb->vma.insert(vma);
+      pcb->vma->insert(vma);
     }
 
     if (phdr.p_type == PT_INTERP) {
@@ -147,19 +147,22 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   auxv.entry = loadbase + header.e_entry;
   auxv.phnum = header.e_phnum;
   
-  pcb->vma.heap_begin = loadmax;
-  pcb->vma.heap_end = loadmax + PAGE_SIZE;
+  pcb->vma->heap_begin = loadmax;
+  pcb->vma->heap_end = loadmax + PAGE_SIZE;
   // Insert a heap and a user stack out there.
-  pcb->vma.insert(vma::vma_t {
+  pcb->vma->insert(vma::vma_t {
     loadmax, loadmax + PAGE_SIZE,
     PROT_READ | PROT_WRITE, MAP_PRIVATE
   });
   // Allocate a stack. Note it grows downwards.
   auto trap = (trapframe *) tcb->ksp;
-  pcb->vma.insert(vma::vma_t {
+  pcb->vma->insert(vma::vma_t {
     trap->sscratch - user_stack_size, (va_t) trap->sscratch,
     PROT_READ | PROT_WRITE, MAP_PRIVATE
   });
+  // Let's set mmap_begin at 2/3 of the gap between heap and stack.
+  pcb->vma->mmap_begin = rounddown<PAGE_SIZE>((trap->sscratch - user_stack_size - loadmax) * 2 / 3);
+
   trap->sepc = pc;
   pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = user_stack_size;
   tcb->status = Init;

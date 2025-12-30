@@ -13,7 +13,7 @@
 
 namespace os::detail {
 
-int futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
+long futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
   size_t timeout = 1800'0000'0000'0000'0000ul;
   if (_timeout) {
     timespec ts;
@@ -58,7 +58,6 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
   entry.mask = mask;
   auto tcb = active();
   for (;;) {
-    printk("suspend %d\n", tcb->tid);
     q->wait.prepare(entry);
     q->lock.release();
     
@@ -66,7 +65,6 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
 
     q->lock.acquire();
     q->wait.finish(entry);
-    printk("resume %d\n", tcb->tid);
     
     if (!copy_from_user(&u, addr, 4)) {
       q->lock.release();
@@ -91,7 +89,7 @@ int futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
   }
 }
 
-int futex_wake(void *addr, int count, unsigned mask) {
+long futex_wake(void *addr, int count, unsigned mask) {
   futex_key key((va_t) addr);
   if (key.type == futex_key::BAD)
     return -EFAULT;
@@ -111,9 +109,13 @@ int futex_wake(void *addr, int count, unsigned mask) {
   return woken;
 }
 
-int mount(const char *src, const char *tgt, const char *fsty, unsigned long flags) {
-  auto vfs = active()->pcb->vfs;
-  auto maybe_mntpoint = vfs->lookup(tgt);
+long mount(const char *src, const char *tgt, const char *fsty, unsigned long flags) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto vfs = pcb->vfs;
+  auto maybe_mntpoint = vfs->lookup_from(tgt, pcb->pwd);
+
   if (!maybe_mntpoint)
     return -maybe_mntpoint;
 
@@ -125,7 +127,7 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
     return -EBUSY;
 
   if (flags & MS_MOVE) {
-    auto source = vfs->lookup(src, /*lastsym=*/false);
+    auto source = vfs->lookup_from(src, pcb->pwd, /*lastsym=*/false);
     if (!source)
       return -ENOENT;
     vfs::move_mount(*source, mntpoint);
@@ -141,7 +143,7 @@ int mount(const char *src, const char *tgt, const char *fsty, unsigned long flag
 }
 
 // For details, see https://linux.die.net/man/2/fcntl
-int fcntl(int fd, int ty, int arg) {
+long fcntl(int fd, int ty, int arg) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -179,7 +181,7 @@ int fcntl(int fd, int ty, int arg) {
   }
 }
 
-int mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset) {
+long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset) {
   auto pcb = active()->pcb;
 
   bool shared = flags & MAP_SHARED;
@@ -192,7 +194,7 @@ int mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, uns
 
   va_t start;
   if (!fixed) {
-    start = pcb->vma.find_mmap(len, addr);
+    start = pcb->vma->find_mmap(len, addr);
   } else
     start = rounddown<PAGE_SIZE>(addr);
   va_t end = roundup<PAGE_SIZE>(start + len);
@@ -219,11 +221,11 @@ int mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, uns
 
   // Now allocate near this cap. Note that this has to be page-aligned.
   vma::vma_t vma(start, end, prot, flags, backup, offset, len);
-  pcb->vma.insert(vma);
+  pcb->vma->insert(vma);
   return vma.begin;
 }
 
-int mprotect(unsigned long start, unsigned long len, int prot) {
+long mprotect(unsigned long start, unsigned long len, int prot) {
   if (len == 0)
     return -EINVAL;
   
@@ -233,10 +235,10 @@ int mprotect(unsigned long start, unsigned long len, int prot) {
   start = rounddown<PAGE_SIZE>(start);
   auto finish = roundup<PAGE_SIZE>(start + len);
 
-  pcb->vma.split(start);
-  pcb->vma.split(finish);
+  pcb->vma->split(start);
+  pcb->vma->split(finish);
 
-  auto overlap = pcb->vma.find_overlap(start, finish);
+  auto overlap = pcb->vma->find_overlap(start, finish);
   if (overlap.size() == 0)
     return -ENOMEM;
 
@@ -258,7 +260,7 @@ int mprotect(unsigned long start, unsigned long len, int prot) {
   return 0;
 }
 
-int munmap(unsigned long start, unsigned long len) {
+long munmap(unsigned long start, unsigned long len) {
   // The initial check-and-split process is similar to mprotect.
   // Note we don't need memory contiguity here;
   // Also note the system call requires that `addr` is page-aligned.
@@ -270,10 +272,10 @@ int munmap(unsigned long start, unsigned long len) {
 
   auto finish = roundup<PAGE_SIZE>(start + len);
   
-  pcb->vma.split(start);
-  pcb->vma.split(finish);
+  pcb->vma->split(start);
+  pcb->vma->split(finish);
 
-  auto overlap = pcb->vma.find_overlap(start, finish);
+  auto overlap = pcb->vma->find_overlap(start, finish);
 
   // The `overlap` vector is a list of pointers. They will be invalidated when we start to erase.
   vector<va_t> toremove;
@@ -285,12 +287,12 @@ int munmap(unsigned long start, unsigned long len) {
     return -ENOMEM;
 
   for (auto start : toremove)
-    pcb->vma.erase(start);
+    pcb->vma->erase(start);
   
   return 0;
 }
 
-int ioctl(int fd, int op, void *argp) {
+long ioctl(int fd, int op, void *argp) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -305,7 +307,8 @@ int ioctl(int fd, int op, void *argp) {
 
   switch (op) {
   case TCGETS: {
-    copy_to_user(argp, &dev.flags, sizeof(termio));
+    if (!copy_to_user(argp, &dev.flags, sizeof(termio)))
+      return -EFAULT;
     return 0;
   }
   case TCSETS: {
@@ -314,7 +317,8 @@ int ioctl(int fd, int op, void *argp) {
     return 0;
   }
   case TIOCGPGRP: {
-    copy_to_user(argp, &dev.pgid, sizeof(int));
+    if (!copy_to_user(argp, &dev.pgid, sizeof(int)))
+      return -EFAULT;
     return 0;
   }
   case TIOCSPGRP: {
@@ -329,7 +333,8 @@ int ioctl(int fd, int op, void *argp) {
       .ws_xpixel = 800,
       .ws_ypixel = 600,
     };
-    copy_to_user(argp, &sz, sizeof(sz));
+    if (!copy_to_user(argp, &sz, sizeof(sz)))
+      return -EFAULT;
     return 0;
   }
   default:
@@ -337,7 +342,7 @@ int ioctl(int fd, int op, void *argp) {
   }
 }
 
-int wait(int pid, void *wstatus, int options, void *rusage) {
+long wait(int pid, void *wstatus, int options, void *rusage) {
   auto tcb = active();
   auto pcb = tcb->pcb;
   bool nohang = options & WNOHANG;
@@ -368,14 +373,16 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
         if (wstatus) {
           // See <wait.h> for the bits.
           int status = child->sigterm ? (child->ret & 0x7f) : ((child->ret & 0xff) << 8);
-          copy_to_user(wstatus, &status, sizeof(int));
+          if (!copy_to_user(wstatus, &status, sizeof(int)))
+            return -EFAULT;
         }
         pusage use {};
         for (auto t : child->threads)
           use += t->ruse;
         if (rusage) {
           struct rusage v = (struct rusage) use;
-          copy_to_user(rusage, &v, sizeof(struct rusage));
+          if (!copy_to_user(rusage, &v, sizeof(struct rusage)))
+            return -EFAULT;
         }
 
         pcb->cruse += use;
@@ -403,7 +410,13 @@ int wait(int pid, void *wstatus, int options, void *rusage) {
   }
 }
 
-int faccessat(int dirfd, const char *path, int mode) {
+long faccessat(int dirfd, const char *path, int mode) {
+  if (mode > (R_OK | W_OK | X_OK) || mode < 0)
+    return -EINVAL;
+  // We don't support empty paths, since we do not have `flags` in this call.
+  if (path[0] == '\0')
+    return -ENOENT;
+
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -420,19 +433,20 @@ int faccessat(int dirfd, const char *path, int mode) {
     return 0;
 
   auto node = pcb->ftbl->at(fd)->node();
-  if (mode & R_OK && !(readable(pcb->euid, pcb->egid, node)))
+  // According to man pages, faccessat(2) should use real ids rather than effective ids.
+  if (mode & R_OK && !(readable(pcb->uid, pcb->gid, node)))
     return -EACCES;
 
-  if (mode & W_OK && !(writable(pcb->euid, pcb->egid, node)))
+  if (mode & W_OK && !(writable(pcb->uid, pcb->gid, node)))
     return -EACCES;
 
-  if (mode & X_OK && !(executable(pcb->euid, pcb->egid, node)))
+  if (mode & X_OK && !(executable(pcb->uid, pcb->gid, node)))
     return -EACCES;
 
   return 0;
 }
 
-int socket(int domain, int type, int protocol) {
+long socket(int domain, int type, int protocol) {
   if (domain != AF_INET) {
     printk("socket: unsupported domain: %d\n", domain);
     return -EINVAL;
@@ -472,7 +486,7 @@ int socket(int domain, int type, int protocol) {
   }
 }
 
-int bind(int fd, void *_addr, unsigned len) {
+long bind(int fd, void *_addr, unsigned len) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -513,7 +527,7 @@ int bind(int fd, void *_addr, unsigned len) {
   return -EINVAL;
 }
 
-int connect(int fd, void *_addr, unsigned len) {
+long connect(int fd, void *_addr, unsigned len) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -553,7 +567,7 @@ int connect(int fd, void *_addr, unsigned len) {
   return -EINVAL;
 }
 
-int syslog(int type, char *buf, unsigned long len) {
+long syslog(int type, char *buf, unsigned long len) {
   constexpr size_t logsize = sizeof(log.buf);
   len = min(len, logsize);
   char kbuf[logsize];
@@ -564,13 +578,15 @@ int syslog(int type, char *buf, unsigned long len) {
     return 0;
   case SYSLOG_ACTION_READ: {
     read = log.read(kbuf, len);
-    copy_to_user(buf, kbuf, read);
+    if (!copy_to_user(buf, kbuf, read))
+      return -EFAULT;
     return read;
   }
   case SYSLOG_ACTION_READ_ALL:
   case SYSLOG_ACTION_READ_CLEAR: {
     read = log.read_all(kbuf, len);
-    copy_to_user(buf, kbuf, read);
+    if (!copy_to_user(buf, kbuf, read))
+      return -EFAULT;
     if (type == SYSLOG_ACTION_READ_ALL)
       return read;
     [[fallthrough]];
@@ -590,7 +606,7 @@ int syslog(int type, char *buf, unsigned long len) {
   }
 }
 
-int futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsigned long val3) {
+long futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsigned long val3) {
   // We can ignore this - it's for optimization.
   if (op & FUTEX_PRIVATE_FLAG)
     op &= ~FUTEX_PRIVATE_FLAG;
@@ -632,7 +648,7 @@ int futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsign
 
 // See socket(7) for a list of options:
 //   https://man7.org/linux/man-pages/man7/socket.7.html
-int setsockopt(int fd, int level, int optname, void *optval, int optlen) {
+long setsockopt(int fd, int level, int optname, void *optval, int optlen) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -666,7 +682,7 @@ int setsockopt(int fd, int level, int optname, void *optval, int optlen) {
 }
 
 // From man send(2), we know the only difference between `send` and `write` is the presence of flags.
-int sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsigned int addrlen) {
+long sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsigned int addrlen) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -705,7 +721,7 @@ int sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsign
   return written;
 }
 
-int sendmsg(int fd, const msghdr &header, int flags) {
+long sendmsg(int fd, const msghdr &header, int flags) {
   if (header.msg_controllen != 0) {
     printk("sendmsg: no control message yet\n");
     return -EINVAL;
@@ -725,7 +741,7 @@ int sendmsg(int fd, const msghdr &header, int flags) {
   return sent;
 }
 
-int sendmsg(int fd, void *msg, int flags) {
+long sendmsg(int fd, void *msg, int flags) {
   msghdr header;
   if (!copy_from_user(&header, (void *) msg, sizeof(msghdr)))
     return -EFAULT;
@@ -733,7 +749,7 @@ int sendmsg(int fd, void *msg, int flags) {
   return sendmsg(fd, header, flags);
 }
 
-int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
+long prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -771,11 +787,12 @@ int prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
   }
 
   if (oldrlim)
-    copy_to_user(oldrlim, &before, sizeof(rlimit));
+    if (!copy_to_user(oldrlim, &before, sizeof(rlimit)))
+      return -EFAULT;
   return 0;
 }
 
-int nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
+long nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
   auto tcb = active();
   if (flags == 1) {
     printk("nanosleep: no abstime yet\n");
@@ -798,10 +815,35 @@ int nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
       .tv_sec = (long) (rem / 1_s),
       .tv_nsec = (long) (rem % 1_s),
     };
-    copy_to_user(rmtp, &tm, sizeof(timespec));
+    if (!copy_to_user(rmtp, &tm, sizeof(timespec)))
+      return -EFAULT;
     return -1;
   }
   return 0;
+}
+
+long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid) {
+  auto tcb = active();
+  tcb->sigonterm = flags & 0xff;
+
+  if (tcb->sigonterm != 0 && (flags & CLONE_THREAD))
+    return -EINVAL;
+
+  // Disallowed: the same handler's user-space address might be different in different address spaces.
+  // This also simplifies the case in VM.
+  if (!(flags & CLONE_VM) && (flags & CLONE_SIGHAND))
+    return -EINVAL;
+  // Two threads must not share the same stack.
+  if ((flags & CLONE_VM) & !stack)
+    return -EINVAL;
+
+  if (parenttid && (flags & CLONE_PARENT_SETTID)) {
+    if (!copy_to_user((void *) parenttid, &tcb->tid, sizeof(int)))
+      return -EFAULT;
+  }
+
+  tcb_t *ct = os::clone(flags, stack, (void *) tls, (void *) childtid);
+  return ct->pcb->pid;
 }
 
 }

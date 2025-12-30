@@ -61,7 +61,7 @@ void process_file_table::clear() {
   desc.clear();
 }
 
-process_file_table::process_file_table(const process_file_table &other): open(other.open), desc(other.desc) {
+process_file_table::process_file_table(const process_file_table &other): shared(), open(other.open), desc(other.desc) {
   // Increase pipe reader/writer count.
   for (auto [_, f] : open) {
     if (auto node = dyn_cast<pipe_inode>(f->node()))
@@ -78,7 +78,7 @@ void pcb_t::clear() {
   ftbl->clear();
   ftbl->drop();
   vfs->drop();
-  vma.clear();
+  vma->drop();
 }
 
 int pcb_t::open_file(const string &path, int flags, int mode, inode::filetype type) {
@@ -217,11 +217,8 @@ void terminate(tcb_t *tcb, int ret, bool sig) {
   assert(tcb->entr.size() == 0);
 
   if (tcb->ctidaddr) {
-    // If copy_to_user causes termination, we don't really want to trigger it again.
-    auto addr = tcb->ctidaddr;
-    tcb->ctidaddr = nullptr;
-    copy_to_user(addr, zeroes, sizeof(int));
-    detail::futex_wake(addr, 1);
+    if (copy_to_user(tcb->ctidaddr, zeroes, sizeof(int)))
+      detail::futex_wake(tcb->ctidaddr, 1);
   }
 
   if (pcb->threads.size() == 1) {
@@ -253,6 +250,9 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
   pcb->clear();
   pidmap->erase(pcb->pid);
   pcb->sigterm = sig;
+
+  // Remove existing itimer calls.
+  itimer_real->erase(pcb->pid);
 
   // Erase all remaining threads.
   auto active = os::active();
@@ -307,7 +307,8 @@ void trap_return_setup(tcb_t *tcb) {
   setroot(pcb->pid, pcb->pt_root);
 
   [[unlikely]] if (tcb->stidaddr) {
-    copy_to_user(tcb->stidaddr, &tcb->tid, sizeof(int));
+    bool succ = copy_to_user(tcb->stidaddr, &tcb->tid, sizeof(int));
+    assert(succ && "the memory should have been checked!");
     tcb->stidaddr = nullptr; 
   }
 }
@@ -349,13 +350,9 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   auto ct = new tcb_t;
   pcb_t *cp;
 
-  bool share_vm    = flags & CLONE_VM;
-  bool share_files = flags & CLONE_FILES;
-  bool share_fs    = flags & CLONE_FS;
+  bool thread = flags & CLONE_THREAD;
 
-  // When sharing virtual memory, we're essentially creating a thread.
-  // We can reference to the same PCB.
-  if (share_vm) {
+  if (thread) {
     cp = pp;
     ct->tid = nextpid();
   } else {
@@ -379,9 +376,11 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
 
     // Deep-copy the page table.
     cp->pt_root = pt::copy(pt_root());
-    cp->vma = pp->vma;
     ct->tid = cp->pid;
   }
+  
+  cp->vma = flags & CLONE_VM ? pp->vma : new vma::addrspace(*pp->vma);
+  cp->vma->ref();
 
   ct->pcb = cp;
   cp->threads.push_back(ct);
@@ -399,7 +398,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   trap->regs[8] = 0;
 
   // Copy the table, but not the files.
-  if (share_files) {
+  if (flags & CLONE_FILES) {
     cp->ftbl = pp->ftbl;
     cp->ftbl->ref();
   } else {
@@ -410,7 +409,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   }
 
   // Copy VFS context.
-  cp->vfs = share_fs ? pp->vfs : new vfs(*pp->vfs);
+  cp->vfs = flags & CLONE_FS ? pp->vfs : new vfs(*pp->vfs);
   cp->vfs->ref();
 
   ct->status = Ready;
@@ -418,7 +417,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
     trap->regs[/*tp*/ 2] = (reg_t) tls;
 
   // Copy various information from parent, if we aren't sharing the PCB.
-  if (!share_vm) {
+  if (!thread) {
     cp->kproc = pp->kproc;
     cp->uid = cp->euid = cp->suid = pp->uid;
     cp->gid = cp->egid = cp->sgid = pp->gid;
@@ -434,8 +433,6 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   
   if (flags & CLONE_CHILD_CLEARTID)
     ct->ctidaddr = childtid;
-  
-  printk("flags = %p\n", flags);
   
   scheduler.add(ct);
   return ct;
@@ -464,10 +461,14 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
 | environment strings       |
 +---------------------------+
 */
+#define COPY(usr, ker, len) \
+  if (!copy_to_user(usr, ker, len)) \
+    return -EFAULT;
+
 #define COPY_ENTRY(ty, val) \
-    entry.type = ty; \
-    entry.value = val; \
-    copy_to_user(usp -= sizeof(auxv_entry), &entry, sizeof(auxv_entry));
+  entry.type = ty; \
+  entry.value = val; \
+  COPY(usp -= sizeof(auxv_entry), &entry, sizeof(auxv_entry));
 
 int exec(const string &path, const vector<string> &argv, const vector<string> &envp) {
   auto tcb = active();
@@ -483,7 +484,7 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     return -EACCES;
 
   auto oldvma = pcb->vma;
-  pcb->vma.clear();
+  pcb->vma = new vma::addrspace;
 
   // Try parse the shebang.
   char begin[2] {};
@@ -523,9 +524,12 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   auto auxv = load_elf(file, tcb);
   if (!auxv) {
     // Do the rollback.
+    delete pcb->vma;
     pcb->vma = oldvma;
     return auxv;
   }
+  // Now we can drop the old vma.
+  oldvma->drop();
 
   // Look at setuid bit.
   if (file->flags & 04000)
@@ -567,16 +571,16 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   os::vector<char*> argvp, envpp;
   // Copy the real contents of the strings.
   // Also copy the current path.
-  copy_to_user(usp -= (path.size() + 1), path.c_str(), path.size() + 1);
+  COPY(usp -= (path.size() + 1), path.c_str(), path.size() + 1);
   auto pathptr = usp;
   for (auto &str : envp) {
     int len = str.size() + 1;
-    copy_to_user(usp -= len, str.c_str(), len);
+    COPY(usp -= len, str.c_str(), len);
     envpp.push_back(usp);
   }
   for (auto &str : argv) {
     int len = str.size() + 1;
-    copy_to_user(usp -= len, str.c_str(), len);
+    COPY(usp -= len, str.c_str(), len);
     argvp.push_back(usp);
   }
   
@@ -639,36 +643,39 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
   // Insert a null pointer at the end of envp.
   uintptr_t nulptr = 0;
-  copy_to_user(usp -= ptrsz, &nulptr, ptrsz);
+  COPY(usp -= ptrsz, &nulptr, ptrsz);
   for (int i = int(envpp.size()) - 1; i >= 0; i--) {
     auto ptr = envpp[i];
-    copy_to_user(usp -= ptrsz, &ptr, ptrsz);
+    COPY(usp -= ptrsz, &ptr, ptrsz);
   }
 
   // Insert a null pointer at the end of argv.
-  copy_to_user(usp -= ptrsz, &nulptr, ptrsz);
+  COPY(usp -= ptrsz, &nulptr, ptrsz);
   for (int i = int(argvp.size()) - 1; i >= 0; i--) {
     auto ptr = argvp[i];
-    copy_to_user(usp -= ptrsz, &ptr, ptrsz);
+    COPY(usp -= ptrsz, &ptr, ptrsz);
   }
 
   size_t argc = argvp.size();
-  copy_to_user(usp -= ptrsz, &argc, ptrsz);
+  COPY(usp -= ptrsz, &argc, ptrsz);
   trap->sscratch = (va_t) usp;
   assert(trap->sscratch % 16 == 0);
   return 0;
 }
 #undef COPY_ENTRY
 
-void copy_to_user(void *usr, const void *ker, size_t len) {
+bool copy_to_user(void *usr, const void *ker, size_t len) {
   EnableAccessToUserMemory enable;
-  vma::map_current(usr, (char*) usr + len, /*write=*/true);
+  if (!vma::map_current(usr, (char*) usr + len, /*write=*/true))
+    return false;
   memcpy(usr, ker, len);
+  return true;
 }
 
 expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
   EnableAccessToUserMemory enable;
-  vma::map_current(usr, (char *) usr + len);
+  if (!vma::map_current(usr, (char *) usr + len))
+    return false;
   char *buf = new char[len];
   memcpy(buf, usr, len);
   return expected<unique_ptr<char>>(buf);
@@ -676,7 +683,9 @@ expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
 
 bool copy_from_user(void *ker, void *usr, size_t len) {
   EnableAccessToUserMemory enable;
-  vma::map_current(usr, (char *) usr + len);
+  if (!vma::map_current(usr, (char *) usr + len))
+    return false;
+
   memcpy(ker, usr, len);
   return true;
 }
@@ -686,7 +695,8 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
     return expected<unique_ptr<char>>(nullptr);
 
   EnableAccessToUserMemory enable;
-  vma::map_current(usr);
+  if (!vma::map_current(usr))
+    return -EFAULT;
   vector<char> vec;
   char *p = usr;
   for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
@@ -696,7 +706,8 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
     goto finish;
 
   for (int i = 0; i < 4096; i++) {
-    vma::map_current(p);
+    if (!vma::map_current(p))
+      return -EFAULT;
     for (char *finish = p + PAGE_SIZE; p < finish && *p; p++)
       vec.push_back(*p);
     
@@ -717,7 +728,9 @@ expected<vector<string>> copy_from_user(char **usr) {
     return vector<string>();
   
   EnableAccessToUserMemory enable;
-  vma::map_current(usr);
+  if (!vma::map_current(usr))
+    return -EFAULT;
+
   vector<string> vec;
   char **p = usr;
   for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
@@ -730,7 +743,9 @@ expected<vector<string>> copy_from_user(char **usr) {
     goto finish;
 
   for (int i = 0; i < 4096; i++) {
-    vma::map_current(p);
+    if (!vma::map_current(p))
+      return -EFAULT;
+
     for (char **finish = p + PAGE_SIZE; p < finish && *p; p++) {
       auto str = copy_from_user(*p);
       if (!str)

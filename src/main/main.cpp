@@ -209,6 +209,8 @@ void main_high() {
   tcb->pcb = pcb;
   pcb->threads.push_back(tcb);
   pcb->parent = nullptr;
+  pcb->vma = new vma::addrspace;
+  pcb->vma->ref();
 
   pcb->vfs = boot_pcb->vfs;
   pcb->vfs->ref();

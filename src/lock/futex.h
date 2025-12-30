@@ -5,6 +5,8 @@
 
 namespace os {
 
+// WARNING: We CANNOT HAVE ANY PADDING in this structure.
+// We're directly bitwise-hashing it.
 struct futex_key {
   union {
     struct {
@@ -17,14 +19,16 @@ struct futex_key {
       size_t offset;
     } shared;
   };
-  enum : char {
+  enum : unsigned long {
     PRIVATE, SHARED, BAD
   } type;
 
   futex_key() = default;
   futex_key(va_t addr);
-  bool operator==(const futex_key &other) const;
+  bool operator==(const futex_key &other) const { return memcmp(this, &other, sizeof(futex_key)) == 0; }
 };
+// This means `operator==` is semantically correct if implemented with memcmp.
+static_assert(__has_unique_object_representations(futex_key));
 
 struct futex_wait_entry : intrusive_list_node<futex_wait_entry> {
   tcb_t *tcb;
@@ -50,8 +54,6 @@ struct futex_queue {
   futex_queue &operator=(const futex_queue &other) = delete;
 };
 
-// No need to define some special hash function.
-static_assert(bitwise_hashable<futex_key>);
 // futex_queue should not be copyable.
 extern static_storage<os::hashmap<futex_key, futex_queue*>> futexes;
 

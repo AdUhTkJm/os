@@ -88,9 +88,9 @@ void sighandle() {
 
   usp -= 16;
   unsigned insn = 0x08b00893;
-  copy_to_user(usp, &insn, 4);
+  (void) copy_to_user(usp, &insn, 4);
   insn = 0x73;
-  copy_to_user(usp + 4, &insn, 4);
+  (void) copy_to_user(usp + 4, &insn, 4);
   // TODO: use a separate page instead.
   os::pmap(to_pa(usp), usp, MAP_4KB, PTE_V | PTE_U | PTE_RWX, pt_root());
 

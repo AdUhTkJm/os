@@ -486,7 +486,7 @@ struct wait_queue {
 
 == 地址空间 <addrspace>
 
-每个进程具有独立的虚拟地址空间。
+每个进程具有独立的虚拟地址空间，除非在 clone() 时指定了 CLONE_VM。
 
 在加载 ELF 文件时，进程只有 ELF 文件的 PT_LOAD 段、一个堆和一个栈。我们需要知道这些空间的开始与结束地址、读写权限、是否需要从文件中读取，以及从哪读取、最大读取多长（为了避免错误地读入本属于 .bss 段的地方）。
 
@@ -532,8 +532,6 @@ struct node {
   size_t minstart;    // Min starting point in children.
   size_t maxend;      // Max ending point in children.
   size_t maxgap;      // Max gap in children.
-  int count = 0;
-  bool leaf;
 };
 ```
 
@@ -547,7 +545,64 @@ struct node {
 
 别忘了还有一个可能来源：子树内部的空隙。好在我们不需要递归进入子树，不然插入和删除的复杂度就不再是 O(log n) 了。我们已经有了子树的 `maxgap` 属性，所以直接与当前计算出来的值取最大就行。
 
-这样我们就完成了更新。在 split, merge 等一次操作触及多个节点的时候，按照上面的解释，我们需要先更新靠近叶子的节点，再更新靠近根部的节点。
+这样我们就完成了更新。在 split, merge 等一次操作触及多个节点的时候#footnote()[有两种 split 和 merge：一种指的是 B-tree 内部节点，另一种指的是 `vma_t`。这里说的是前一种。]，按照上面的解释，我们需要先更新靠近叶子的节点，再更新靠近根部的节点。
+
+接下来，我们就可以利用这些值来剪枝。我并不确定具体的时间复杂度，但是总体来说还是比较快速的。
+
+为了支持 brk()，我们需要额外存储堆的开始地址。比起删除原有的堆再插入一个新的 `vma_t`，更快速的方法是直接在原地修改，并且更新从根部到这一条路径上全部的 `minstart`, `maxend` 以及 `maxgap` 这三个值。
+
+我还加入了一些优化。考虑到 page fault 的时候，大多缺失的页都来自于同一个 `vma_t`（尤其是 .text 段），我会在查询的时候缓存上一次查询的结果，并优先检查这次的地址是否落在上次的那个 `vma_t` 内部。
+
+== 共享内存
+
+共享内存由它的文件 `backup` 中的 page cache 实现。这里的 page cache 和@devfs[]中提到的 `block_inode` 的按页缓存是不一样的。它是 ```cpp struct file``` 的一部分，而不是 inode 的一部分，而且默认不会开启。
+
+在开启 page cache 后，将会优先读写这个缓存，而不是调用 inode 的 read/write 虚函数。这样就不需要担心 read(2)/write(2) 这些 system call 和读写共享内存之间的相互作用了。
+
+对于 MAP_SHARED | MAP_ANONYMOUS 的情况，我会创建一个 tmpfs_inode，并以它为基础创建一个 ```cpp struct file```。它不加入正常的 VFS 查找。
+
+== 缺页处理
+
+在缺页处理时，我们有的时候需要调用 `inode::read()`，而它可能暂停当前进程。如果处理不当，这就会导致 race condition。
+
+考虑这个调度流程（线程 A, B 共享地址空间）：
+
+#context {
+set rect(stroke: none)
+set align(center)
+
+let line = line(stroke: stroke(dash: "dashed", paint: blue), length: 10%);
+let underline(str) = pad(
+  stack(dir: ltr, spacing: 3pt, text(str, baseline: -5pt, stroke: stroke(thickness: 0.5pt, paint: blue)), line),
+  left: -100pt);
+
+box(
+stack(
+  dir:ltr,
+  stack(dir: ttb, spacing: 0pt,
+    rect()[*线程 A*],
+    rect()[读取 0xa6000],
+    underline("preempt"),
+    v(50pt),
+    underline("resume"),
+    rect(inset: 0pt, outset: 0pt)[写入 0xa6000],
+    pad(rect()[map(PA, 0xa6000)], top: 5pt),
+  ),
+  h(60pt),
+  stack(dir: ttb,
+    rect()[*线程 B*],
+    pad(rect()[写入 0xa6000], top: 30pt),
+    rect()[map(PA, 0xa6000)]
+  ),
+),
+)
+}
+
+容易发现，这里线程 B 的写入丢失了，而且泄漏了一页的内存。
+
+为了避免这种情况，我的解决方法是在调用 map 之前检查一下当前页表的 V bit。如果它已经为 1，那么其他线程已经写过了，必须释放当前申请的 PA，并且不 map。
+
+当然，两次读取页表可能会对性能造成一些影响。对于这一点我暂时没有什么太好的方法。
 
 = 文件系统 <fs>
 
@@ -591,6 +646,18 @@ public:
 只要每个 inode 的子类 T 都继承 `inode_impl<T>`，它们就能自动获得各异的 RTTI。这和@containers 中所提到的侵入式链表是相似的。
 
 除了上面提到的 metadata 和虚表之外，inode 还维护了引用计数和链接计数。对于硬盘上的文件系统，当引用计数归零的时候，就可以释放 inode；对于内存中的文件系统，释放 inode 就相当于删除，因此只有在引用计数和链接计数都为零时才可以释放。
+
+== devfs <devfs>
+
+=== random
+
+这个随机数发生器采用 Chacha20 算法。它会从各种地方获取随机数，例如进程 `suspend()` 发生时的时间与 pid，硬件中断的时间和 irq 等。
+
+在这个 OS 里，/dev/random 和 /dev/urandom 是同一个设备。对于较新的 Linux，它们应当只在启动时有区别，而之后都不再 block。在启动时，我不需要使用密码学安全的随机数，所以我选择把它们合为一体。
+
+=== console
+
+=== tty
 
 == 网络
 

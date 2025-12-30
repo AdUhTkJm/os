@@ -227,9 +227,10 @@ void mmwr(pa_t p, T value) {
   *(volatile U*) os::as_va(p) = (U) value;
 }
 
-void copy_to_user(void *usr, const void *ker, size_t len);
+// These functions are allowed to perform partial copies.
+[[nodiscard]] bool copy_to_user(void *usr, const void *ker, size_t len);
 // Copies raw data.
-bool copy_from_user(void *ker, void *usr, size_t len);
+[[nodiscard]] bool copy_from_user(void *ker, void *usr, size_t len);
 // Copies a string.
 expected<unique_ptr<char>> copy_from_user(char *usr);
 // Copies a null-terminated list of strings.

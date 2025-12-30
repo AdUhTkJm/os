@@ -226,7 +226,7 @@ extern "C" void _start() {
   syscall((reg_t) "/dev/vdb", (reg_t) "/mnt", (reg_t) "ext2", mount);
 
 
-  int pid = syscall(0, 0, clone);
+  int pid = syscall(0x11, 0, clone);
   if (pid == 0) {
     // Redirect stdin/stdout/stderr to tty.
     int in = syscall(-1, (reg_t) "/dev/tty", /*O_RDONLY=*/0, 0, openat);
@@ -247,15 +247,16 @@ extern "C" void _start() {
 #define LIBC "glibc"
 #define CD "cd /mnt/" LIBC
     const char *test = 
-      CD "/basic && sh ./run-all.sh";
+      // CD "/basic && sh ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
       // CD " && sh ./libcbench_testcode.sh";
       // CD " && sh ./unixbench_testcode.sh";
       // CD " && sh ./lmbench_testcode.sh";
       // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
-      // CD " && sh ./ltp_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
+      // CD " && sh ./ltp_testcode.sh";
+      // CD "/ltp/testcases/bin && ./adjtimex03 && echo 'done'";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };
@@ -267,6 +268,11 @@ extern "C" void _start() {
   }
 
   // Keep waiting for zombie processes.
-  for (;;)
-    syscall(-1, 0, 0, 0, wait4);
+  for (;;) {
+    // Don't keep waiting if there's no other processes (-ECHILD).
+    if (syscall(-1, 0, 0, 0, wait4) == -10) {
+      timespec rqtp { .tv_sec = 10, .tv_nsec = 0 };
+      syscall((reg_t) &rqtp, 0, nanosleep);
+    }
+  }
 }

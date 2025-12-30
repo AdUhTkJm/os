@@ -43,19 +43,11 @@ int futex_wait_queue::wake(int n, unsigned mask) {
   return woken;
 }
 
-bool futex_key::operator==(const futex_key &other) const {
-  if (type != other.type)
-    return false;
-  if (type == PRIVATE)
-    return priv.addr == other.priv.addr && priv.mm == other.priv.mm;
-  return shared.offset == other.shared.offset && shared.node == other.shared.node;
-}
-
 futex_key::futex_key(va_t addr) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  auto vmap = pcb->vma.find(addr);
+  auto vmap = pcb->vma->find(addr);
   if (!vmap) {
     type = BAD;
     return;
@@ -69,7 +61,7 @@ futex_key::futex_key(va_t addr) {
   } else {
     type = PRIVATE;
     priv.addr = addr;
-    priv.mm = &pcb->vma;
+    priv.mm = pcb->vma;
   }
 }
 

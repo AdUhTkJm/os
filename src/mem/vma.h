@@ -327,7 +327,7 @@ private:
     update(x);
   }
 
-  va_t find_gap_impl(node *n, size_t len, size_t min = 0) const {
+  va_t find_gap_impl(node *n, size_t len, va_t min = 0) const {
     if (n->maxgap < len || n->maxend < min)
       return 0;
 
@@ -439,11 +439,11 @@ private:
     update(l, p);
   }
 
-  va_t id(node *x) {
+  static va_t id(const node *x) {
     return (va_t) x - 0xffff'ffff'c000'0000;
   }
 
-  void dump_node(node *x) {
+  void dump_node(const node *x) const {
     printk("  n%p [label=\"", id(x));
 
     for (int i = 0; i < x->count; i++) {
@@ -459,7 +459,7 @@ private:
     }
   }
 
-  void dump_edge(node *x) {
+  void dump_edge(const node *x) const {
     if (x->leaf)
       return;
 
@@ -765,7 +765,7 @@ public:
 
 #ifndef NDEBUG
   // Dump a .dot file for visualization.
-  void dump() {
+  void dump() const {
     printk("digraph btree { \n  node [shape=record]\n");
     dump_node(root);
     dump_edge(root);
@@ -776,17 +776,17 @@ public:
 
 // Map according to the current process's VMA.
 // Terminates the process when the pointer is not in any VMA.
-void map_current(void *va);
-void map_current(void *va, pte_t *pte);
+[[nodiscard]] bool map_current(void *va);
+[[nodiscard]] bool map_current(void *va, pte_t *pte);
 
 // Map a range. Only maps the addresses that are currently unmapped.
 // If `write` is set to true, also maps COW pages in the range.
-void map_current(void *from, void *to, bool write = false);
+[[nodiscard]] bool map_current(void *from, void *to, bool write = false);
 
 // Initialize VMA.
 void init();
 
-struct addrspace {
+struct addrspace : shared {
   using map = btree<4>;
   using node = map::node;
 

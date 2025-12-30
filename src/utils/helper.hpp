@@ -96,6 +96,11 @@ public:
 #ifndef NDEBUG
   int inspect_refcnt() { return refcnt; }
 #endif
+
+  // We allow cloning, but the newly cloned element should have refcount zero.
+  shared() = default;
+  shared(const shared &): refcnt(0) {}
+  shared &operator=(const shared &) { refcnt = 0; return *this; }
 };
 
 }
