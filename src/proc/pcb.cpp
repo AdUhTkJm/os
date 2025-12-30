@@ -168,23 +168,28 @@ void tcb_t::send_signal(int sig) {
 void pcb_t::send_signal(int sig) {
   // We find one eligible thread.
   for (auto x : threads) {
-    if (x->mask[sig] || x->status == Zombie)
+    if (x->status == Zombie)
       continue;
-    x->pending.add(sig);
-    x->sigresume = sig;
-    if (x->status == Sleeping)
-      scheduler.wakeup(x, /*can_preempt=*/ false);
-    return;
+    // Masked signals will also wake up threads.
+    // TODO: maybe only wake up threads that are in sigtimedwait()?
+    // TODO: implement the correct semantics
+    if (!x->mask[sig]) {
+      x->pending.add(sig);
+      x->sigresume = sig;
+      if (x->status == Sleeping)
+        scheduler.wakeup(x, /*can_preempt=*/ false);
+      return;
+    }
   }
   pending.add(sig);
 }
 
 pcb_t::~pcb_t() {
   // Free all threads.
-  for (auto t = threads.front(); t;) {
-    auto next = t->next;
-    delete t;
-    t = next;
+  for (auto it = threads.begin(); it != threads.end();) {
+    auto next = it; ++next;
+    delete *it;
+    it = next;
   }
 }
 
@@ -238,8 +243,7 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
   // Change all child processes to children of init.
   // It is expected that init will recycle them later.
   auto init = (*pidmap)[1];
-  if (!init)
-    panic("terminate: cannot find init");
+  assert(init);
   for (auto child : pcb->children) {
     child->parent = init;
     init->children.push_back(child);
@@ -262,8 +266,13 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
       has_active = true;
       continue;
     }
+    // It is possible that some other threads are sleeping, for example.
+    for (auto [entry, queue] : t->entr)
+      queue->finish(*entry);
+
     scheduler.erase(t);
   }
+  assert(has_active);
 
   // Wake up parent for wait() system call.
   pcb->zombie = true;
@@ -271,10 +280,9 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
     pcb->parent->wait.wake_all();
 
   // Send a signal to parent.
-  pcb->parent->send_signal(SIGCHLD);
-  if (has_active)
-    // Note: this does not return. It will dispatch a new thread.
-    scheduler.erase(active);
+  pcb->parent->send_signal(pcb->sigonterm);
+  // Note: this does not return. It will dispatch a new thread.
+  scheduler.erase(active);
 }
 
 #ifdef RV
@@ -320,9 +328,6 @@ static void first_time_setup(tcb_t *tcb) {
   tcb->status = Running;
 
   auto trap = (trapframe *) tcb->ksp;
-
-  trap->sepc = tcb->pc;
-  trap->sscratch = tcb->usp;
 
   reg_t prmd = 0;
   prmd |= (3 << 0);   // PRMD.PPLV
@@ -463,7 +468,7 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
 */
 #define COPY(usr, ker, len) \
   if (!copy_to_user(usr, ker, len)) \
-    return -EFAULT;
+    goto cleanup;
 
 #define COPY_ENTRY(ty, val) \
   entry.type = ty; \
@@ -485,7 +490,14 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
 
   auto oldvma = pcb->vma;
   pcb->vma = new vma::addrspace;
+  goto proceed;
+  
+cleanup:
+  delete pcb->vma;
+  pcb->vma = oldvma;
+  return -EFAULT;
 
+proceed:
   // Try parse the shebang.
   char begin[2] {};
   file->read(&begin, 2);
@@ -528,8 +540,6 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
     pcb->vma = oldvma;
     return auxv;
   }
-  // Now we can drop the old vma.
-  oldvma->drop();
 
   // Look at setuid bit.
   if (file->flags & 04000)
@@ -586,9 +596,9 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   
   // TODO: get real random source
   char *random;
-  memcpy(random = usp -= 16, "aduhtkjm_123456", 16);
+  COPY(random = usp -= 16, "aduhtkjm_123456", 16);
   char *platform;
-  memcpy(platform = usp -= 8, "riscv64", 8);
+  COPY(platform = usp -= 8, "riscv64", 8);
   
   // Pad to 16-bytes.
   usp = rounddown<16>(usp);
@@ -642,15 +652,14 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   constexpr size_t ptrsz = sizeof(uintptr_t);
 
   // Insert a null pointer at the end of envp.
-  uintptr_t nulptr = 0;
-  COPY(usp -= ptrsz, &nulptr, ptrsz);
+  COPY(usp -= ptrsz, zeroes, ptrsz);
   for (int i = int(envpp.size()) - 1; i >= 0; i--) {
     auto ptr = envpp[i];
     COPY(usp -= ptrsz, &ptr, ptrsz);
   }
 
   // Insert a null pointer at the end of argv.
-  COPY(usp -= ptrsz, &nulptr, ptrsz);
+  COPY(usp -= ptrsz, zeroes, ptrsz);
   for (int i = int(argvp.size()) - 1; i >= 0; i--) {
     auto ptr = argvp[i];
     COPY(usp -= ptrsz, &ptr, ptrsz);
@@ -660,6 +669,8 @@ int exec(const string &path, const vector<string> &argv, const vector<string> &e
   COPY(usp -= ptrsz, &argc, ptrsz);
   trap->sscratch = (va_t) usp;
   assert(trap->sscratch % 16 == 0);
+  // Now we can drop the old vma.
+  oldvma->drop();
   return 0;
 }
 #undef COPY_ENTRY

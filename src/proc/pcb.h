@@ -139,7 +139,6 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   reg_t a0;               // The previous a0, when returning from a system call.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.
   int ret;                // Thread return code.
-  int sigonterm = SIGCHLD;// The signal to send to parent on termination.
   int sigresume = 0;      // The signal that causes the thread to wake up from sigwait().
   void *stidaddr = 0;     // The tid address for `settid` to operate on.
   void *ctidaddr = 0;     // The tid address for `cleartid` to operate on.
@@ -150,9 +149,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   long last_sched = 0;    // Time before last schedule.
   pusage ruse {};         // Resource usage.
   sigframe sigf;          // The signal frame, for sigreturn().
-#ifndef NDEBUG
   hashmap<wait_entry*, wait_queue*> entr;
-#endif
 
   pcb_t *pcb;             // Parent process.
 
@@ -180,12 +177,13 @@ struct pcb_t {
   bool execd = false;     // Has performed `exec`.
   bool zombie = false;    // Whether this is a zombie.
   bool sigterm;           // Whether the process terminated because of a signal.
-  os::intrusive_list<tcb_t> threads;
+  os::list<tcb_t*> threads;
   os::vector<pcb_t*> children;
   class vfs *vfs;
   void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
   int ret;                // Process return code.
   int umask = 022;        // Mask on mode when creating file.
+  int sigonterm = SIGCHLD;// The signal to send to parent on termination.
   dentry *pwd;            // Process working directory.
   string execpath;        // The path to the executable.
   sigset pending = 0;     // Pending signals.

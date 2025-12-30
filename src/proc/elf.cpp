@@ -148,7 +148,7 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   auxv.phnum = header.e_phnum;
   
   pcb->vma->heap_begin = loadmax;
-  pcb->vma->heap_end = loadmax + PAGE_SIZE;
+  pcb->vma->heap_end = pcb->vma->brkp = loadmax + PAGE_SIZE;
   // Insert a heap and a user stack out there.
   pcb->vma->insert(vma::vma_t {
     loadmax, loadmax + PAGE_SIZE,

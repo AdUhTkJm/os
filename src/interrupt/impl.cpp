@@ -824,9 +824,9 @@ long nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
 
 long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid) {
   auto tcb = active();
-  tcb->sigonterm = flags & 0xff;
 
-  if (tcb->sigonterm != 0 && (flags & CLONE_THREAD))
+  // The signal on termination is for processes, rather than threads.
+  if ((flags & 0xff) != 0 && (flags & CLONE_THREAD))
     return -EINVAL;
 
   // Disallowed: the same handler's user-space address might be different in different address spaces.
@@ -842,6 +842,7 @@ long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *chi
       return -EFAULT;
   }
 
+  tcb->pcb->sigonterm = flags & 0xff;
   tcb_t *ct = os::clone(flags, stack, (void *) tls, (void *) childtid);
   return ct->pcb->pid;
 }

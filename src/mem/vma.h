@@ -791,7 +791,8 @@ struct addrspace : shared {
   using node = map::node;
 
   map vmas;
-  va_t heap_begin, heap_end;
+  // We actually have a map for [heap_begin, heap_end), but the current program break is `brkp`.
+  va_t heap_begin, heap_end, brkp;
   va_t mmap_begin = 0x6000'0000;
   mutable vma_t *cache;
 

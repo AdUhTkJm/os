@@ -81,7 +81,8 @@ public:
       sz = newsz;
       return;
     }
-    reserve(newsz);
+    if (newsz > cap)
+      reserve(newsz * 3 / 2);
     sz = newsz;
   }
 

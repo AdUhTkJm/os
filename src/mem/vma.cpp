@@ -194,26 +194,26 @@ va_t addrspace::find_mmap(unsigned long len, va_t hint) const {
 
   // We might need to start searching from other places.
   printk("mmap: hint = %p, begin = %p, len = %p", hint, mmap_begin, len);
-  vmas.dump();
   assert(false && "TODO: find mmap: mmap_begin change not implemented");
 }
 
 va_t addrspace::brk(va_t addr) {
-  addr = roundup<PAGE_SIZE>(addr);
   if (addr <= heap_begin)
-    return heap_end;
+    return brkp;
 
-  if (addr == heap_end)
-    return heap_end;
+  auto rounded = roundup<PAGE_SIZE>(addr);
+  if (rounded <= roundup<PAGE_SIZE>(heap_end))
+    return brkp = addr;
 
   // On expand, we first need to check if there's anything on the way.
-  if (addr >= heap_end && vmas.has_overlap(heap_end, addr))
-    return heap_end;
+  if (vmas.has_overlap(heap_end, addr))
+    return brkp;
 
   vma_t *vma = vmas.find(heap_begin);
-  vma->end = addr;
+  vma->end = rounded;
   vmas.update_path(vma->begin);
-  return heap_end = addr;
+  heap_end = rounded;
+  return brkp = addr;
 }
 
 void addrspace::split(va_t addr) {

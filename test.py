@@ -52,7 +52,7 @@ CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-fno-threadsafe-statics", "-Wno-invalid-offsetof",
+  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", "-fno-stack-protector"
 ]
 # Note this is included in https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html.
 SFLAGS = [
@@ -98,6 +98,10 @@ if not args.smp:
 if args.unit_test:
   flags += ["-DUNIT_TEST"]
 
+if args.release:
+  flags += ["-flto"]
+  LDFLAGS += ["-flto"]
+
 if args.la:
   # Loongarch.
   # For loongarch documentation, see:
@@ -107,9 +111,9 @@ if args.la:
   MACHINESPEC = ["-march=loongarch64", "-mabi=lp64d"]
 else:
   # RISC-V.
-  MACHINESPEC = ["-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"]
+  MACHINESPEC = ["-mcmodel=medany", "-march=rv64gc_zifencei", "-mabi=lp64"]
   flags += MACHINESPEC
-  LDFLAGS.append("-mcmodel=medany")
+  LDFLAGS += MACHINESPEC
 
 CFLAGS.extend(flags)
 CXXFLAGS.extend(flags)
@@ -212,9 +216,12 @@ flagmap = {
 
 def get_flags(path: Path):
   flags = flagmap[path.suffix]
-  path = str(path)
-  if path in SPECIAL_FLAGS:
-    flags.extend(SPECIAL_FLAGS[path])
+  if str(path) in SPECIAL_FLAGS:
+    flags.extend(SPECIAL_FLAGS[str(path)])
+  if path.name == "libc.cpp":
+    try: flags.remove("-flto")
+    except: pass
+    flags.append("-fno-lto")
   return flags
 
 def compile_file(src_path: Path, obj_path: Path):
@@ -286,7 +293,7 @@ def build():
   commands = []
   for file in cpp_files:
     absolute = str(file.absolute())
-    flags = [x for x in get_flags(file) if x not in ["-mcmodel=medany", "-march=rv64gc", "-mabi=lp64"]]
+    flags = [x for x in get_flags(file) if x not in ["-mcmodel=medany", "-march=rv64gc_zifencei", "-mabi=lp64"]]
     commands.append({
       "directory": os.path.abspath("."),
       "file": absolute,

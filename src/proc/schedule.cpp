@@ -152,7 +152,10 @@ void scheduler_t::tick() {
 }
 
 void scheduler_t::record_itimer_real(pcb_t *pcb) {
-  itimer_real->insert(pcb->pid, pcb);
+  if (pcb->itimers[ITIMER_REAL].timeout == 0)
+    itimer_real->erase(pcb->pid);
+  else
+    itimer_real->insert(pcb->pid, pcb);
 }
 
 }

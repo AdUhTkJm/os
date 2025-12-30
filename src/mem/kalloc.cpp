@@ -112,6 +112,7 @@ void *vm_alloc_pages(size_t total, int flags) {
         vmmap[index + j] = 0;
       }
       vmmap.clear(index, index + actual);
+      panic("vmalloc: out of memory");
       return nullptr;
     }
     pmap(frame, base + i * PAGE_SIZE, MAP_4KB, flags);

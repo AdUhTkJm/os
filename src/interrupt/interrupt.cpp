@@ -854,7 +854,8 @@ HANDLE(getrandom, buf, len, flags) {
   while (len > 0) {
     auto l = min(len, 64l);
     random->read(0, block, l, 0);
-    if (!copy_to_user((void *) buf, block, l)) return -EFAULT;
+    if (!copy_to_user((void *) buf, block, l))
+      return -EFAULT;
     len -= l;
     read += l;
   }
@@ -866,9 +867,11 @@ HANDLE(sched_getaffinity, pid, size, mask) {
   if (size < (int) sizeof(unsigned long))
     return -EINVAL;
 
-  if (!copy_to_user((void *) mask, zeroes, size)) return -EFAULT;
+  if (!copy_to_user((void *) mask, zeroes, size))
+    return -EFAULT;
   char kset = 1;
-  if (!copy_to_user((void *) mask, &kset, 1)) return -EFAULT;
+  if (!copy_to_user((void *) mask, &kset, 1))
+    return -EFAULT;
   return 0;
 }
 
@@ -1634,20 +1637,21 @@ HANDLE(setitimer, which, timer, old) {
   auto intv = time.it_interval.tv_usec * 1000 + time.it_interval.tv_sec * 1_s;
   auto tm = time.it_value.tv_usec * 1000 + time.it_value.tv_sec * 1_s;
 
-  pcb->itimers[which].interval = (intv + tick_length - 1) / tick_length;
-  pcb->itimers[which].timeout = (tm + tick_length - 1) / tick_length;
-  scheduler.record_itimer_real(pcb);
-
   if (old) {
     auto timer = pcb->itimers[which];
     auto intv = timer.interval * tick_length;
-    auto time = timer.timeout * tick_length + now();
+    auto time = timer.timeout * tick_length;
     itimerval v {
-      .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
-      .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
+      .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv % 1_s) / 1000 },
+      .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time % 1_s) / 1000 }
     };
-    if (!copy_to_user((void *) old, &v, sizeof(itimerval))) return -EFAULT;
+    if (!copy_to_user((void *) old, &v, sizeof(itimerval)))
+      return -EFAULT;
   }
+
+  pcb->itimers[which].interval = (intv + tick_length - 1) / tick_length;
+  pcb->itimers[which].timeout = (tm + tick_length - 1) / tick_length;
+  scheduler.record_itimer_real(pcb);
   return 0;
 }
 
@@ -1662,7 +1666,8 @@ HANDLE(getitimer, which, old) {
     .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
     .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
   };
-  if (!copy_to_user((void *) old, &v, sizeof(timeval) * 2)) return -EFAULT;
+  if (!copy_to_user((void *) old, &v, sizeof(timeval) * 2))
+    return -EFAULT;
   return 0;
 }
 

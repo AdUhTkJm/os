@@ -310,20 +310,23 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
     panic("block_device: queue full");
 
   readreq[head] = &entry;
-  // No spurious wake up this time; we only wake the exact one.
-  wait.prepare(entry);
-  lock.release();
+  for (;;) {
+    wait.prepare(entry);
+    lock.release();
 
-  // Tell device that a new request has come.
-  WFENCE;
-  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-  if (suspend() != 0) {
+    // Tell device that a new request has come.
+    WFENCE;
+    mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
+    if (suspend() != 0) {
+      wait.finish(entry);
+      return -EINTR;
+    }
+
+    lock.acquire();
     wait.finish(entry);
-    return -EINTR;
+    if (mmrd<unsigned char>(status) != 0xff)
+      break;
   }
-
-  lock.acquire();
-  wait.finish(entry);
   lock.release();
 
   RFENCE;

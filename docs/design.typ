@@ -172,7 +172,7 @@ for i in range(array.len(bib)) {
 
 这篇文档也算是我的 OS 学习记录，所以并未直接使用 AI 编写（当然，让 Gemini 给了一些参考意见）。相信我，AI 的遣词造句水平是我望尘莫及的。况且你不能指望 AI 真的能写 Typst 代码：我试过，GPT 一直在胡言乱语。
 
-此外，参考文献中被我放了一些#h(-0.3em)#[#set text(stroke: stroke(paint: luma(85%), thickness: 0.5pt)); #strike(stroke: luma(80%))[其实全部都是]]彩蛋。
+此外，我在参考文献中放了一些#h(-0.3em)#[#set text(stroke: stroke(paint: luma(85%), thickness: 0.5pt)); #strike(stroke: luma(80%))[其实全部都是]]彩蛋。
 
 = 启动流程
 
@@ -424,7 +424,11 @@ struct wait_queue {
 
 我额外存储了一个 `queue` 的值，来表示它当前是否在队列中。考虑到每个线程的 ksp 都是独立的，`wait_entry` 可以直接在栈上分配。
 
-关于 `tcb_t` 的更多内容，请见@threads。
+此外，每个线程的 TCB 中都有一个 hashmap，将 `wait_entry*` 映射至 `wait_queue*`。这是为了在线程结束时删除还没有完成的等待。
+
+这个 map 看似是不必要的：线程只有在唤醒之后才会调用 exit() 或者收到信号来终止。但是我们还有 exit_group 这个 system call，会终止一个进程中所有的线程。如果此时有其他的线程还在等待，就需要清理了。
+
+关于 TCB 的更多内容，请见@threads。
 
 = 进程 <process>
 
@@ -432,7 +436,7 @@ struct wait_queue {
 
 为了支持 clone(2)，我需要区分线程和进程。记载进程信息的是 PCB (_process control block_)，而记载线程信息的是 TCB (_thread control block_)。为了避免混淆，我并没有给 TCP 网络协议的控制块单独取名——否则这个也会叫 TCB，而是将字段全部放在了 `tcp_socket_inode` 中（见 @tcp）。
 
-当 clone(2) 的 `SHARE_VM` 存在时，将会创建线程。它们有不同的 TCB，但共享同一个 PCB。当没有这个 flag 的时候，会复制整个 PCB。
+当 clone(2) 的 CLONE_VM 存在时，将会创建线程。它们有不同的 TCB，但共享同一个 PCB。当没有这个 flag 的时候，会复制整个 PCB。
 
 线程独有的信息主要有：
 
@@ -480,9 +484,9 @@ struct wait_queue {
 
 当 exit/exit_group 被调用时，线程就终止了。这时不能直接 ```cpp delete tcb```，而是先释放绝大部分资源，留着 wait4() 调用的时候再 ```cpp delete```。
 
-特别需要注意的是，不能直接释放内核态的栈 `ksp`：我们正在这个栈上。这个留给析构函数删除就好了。
+特别需要注意的是，不能直接释放内核态的栈 `ksp`：我们正在这个栈上。这个需要留给析构函数删除。
 
-接下来，唤醒 wait4() 中的线程，然后给父进程发个 `SIGCHLD` 信号，最后把所有的子进程都交给 `init` (pid 1)，就可以了。
+接下来，唤醒 wait4() 中的线程，然后给父进程发送信号，最后把所有的子进程都交给 `init` (pid 1)，就可以了。
 
 == 地址空间 <addrspace>
 
@@ -549,7 +553,7 @@ struct node {
 
 接下来，我们就可以利用这些值来剪枝。我并不确定具体的时间复杂度，但是总体来说还是比较快速的。
 
-为了支持 brk()，我们需要额外存储堆的开始地址。比起删除原有的堆再插入一个新的 `vma_t`，更快速的方法是直接在原地修改，并且更新从根部到这一条路径上全部的 `minstart`, `maxend` 以及 `maxgap` 这三个值。
+为了支持 brk()，我们需要额外存储堆的开始地址。比起删除原有的堆再插入一个新的 `vma_t`，更快速的方法是直接在原地修改，并且更新从根部到这一条路径上全部的 `minstart`, `maxend` 以及 `maxgap` 这三个值。此外，brk 可以不是按页对齐的，也可以缩小堆的大小，因此我会维护堆的“真实结束点”和当前的 brk 值，只有在真正需要新内存的时候才会分配。
 
 我还加入了一些优化。考虑到 page fault 的时候，大多缺失的页都来自于同一个 `vma_t`（尤其是 .text 段），我会在查询的时候缓存上一次查询的结果，并优先检查这次的地址是否落在上次的那个 `vma_t` 内部。
 
@@ -647,6 +651,20 @@ public:
 
 除了上面提到的 metadata 和虚表之外，inode 还维护了引用计数和链接计数。对于硬盘上的文件系统，当引用计数归零的时候，就可以释放 inode；对于内存中的文件系统，释放 inode 就相当于删除，因此只有在引用计数和链接计数都为零时才可以释放。
 
+== 文件系统的挂载 <dentry>
+
+注意到 inode 并不记录它的父节点——也无法记录，毕竟有 hard link 的存在。它也不会记录自己的名字。为了方便路径查找，我们需要一个额外记录了这两个内容的结构：
+```cpp
+class dentry {
+public:
+  dentry *parent;
+  string name;
+  inode *node;
+};
+```
+
+当然，对于单独的一个文件系统来说，这已经足够了。但是为了支持挂载，我们还需要记录“在当前路径所挂载的文件系统”。
+
 == devfs <devfs>
 
 === random
@@ -659,11 +677,33 @@ public:
 
 === tty
 
+=== 块设备
+
 == 网络
+
+我实现了 Ethernet 与 IP 的收发。这其实并不复杂，只需要知道如何填写 header 和计算 checksum 就可以了。比较复杂的部分是网络设备的驱动。
+
+与块设备相同，我实现了一个 VirtIO MMIO 的 NIC 驱动。在驱动初始化时，我们就可以得知它的 MAC 地址。之后的收发和块设备几乎并无不同，唯一的区别是有两个队列：接收的和发送的。接收队列最开始装满了 descriptor，这是为了最大化接收效率。
+
+为了初始化 IP 层，正如@boot[]中提到的一样，我在内核启动时就开启了一个 DHCP client。它会走完完整的 DHCP 流程，并向 DHCP 服务器请求自己的 IP 地址、DNS IP 以及路由器的 IP。如果没有收到回应，它会不断重试。在完成之后，它会读取服务器发送的 lease time，并在时间过去一半时重新启动 DHCP。
+
+当然，DHCP 理论上需要依赖 UDP，而 UDP 也需要依赖 IP。但是注意到 UDP/IP 的 bind() 和广播机制是不需要初始化的，因此我们仍旧可以依赖 UDP，不必跨过网络协议栈直接向 Ethernet 发送信息。
 
 === UDP <udp>
 
+UDP 的发送是十分简单的，发完了就可以不管了。它在没有 bind() 的时候也可以发送，这时会自动进行端口选择。
+
+至于接收，NIC 驱动的 exception handler 将会通过阅读包头把它分发到对应的 `udp_socket_inode`。每个这样的 `inode` 都会有两个 `receive()` 函数，一个接受错误码，一个接受信息。
+
+当正常的 UDP 包到来时，我们调用接受信息的 `receive()`；当 ICMP 到来时，如果它是因为传输过程中的错误而发送，它应该会带有 UDP 包头。我们截取这一段，并读取 srcport 来确定到底是哪个 inode 出错了，并把 ICMP 包头所代表的 Linux 错误码发给它。
+
 === TCP <tcp>
+
+TCP 是十分复杂的。简单起见，我并没有做 congestion control。
+
+对于 bind()，我们并不需要做太多，只需要检查自身是否处于 CLOSED 状态就可以了。在 bind() 完成之后，这个 inode 会进入 BOUND 状态。在 TCP 标准里并没有这个状态，但是从实现层面来看，加入它是很自然的。
+
+对于 connect()，如果它不在 BOUND 状态，我们会拒绝这个 system call。接下来进行三次握手。这里的包会直接通过 IP 层发出，因为此时 TCP 尚未完全初始化。对于 TCP 的 sequence number，我选择使用一个普通的随机数——既不是 0 （似乎 Python 是这样做的），
 
 = 调试工具 <instr>
 
@@ -783,9 +823,13 @@ void *operator new(size_t len, os::safe_t);
 
 = 中断处理 <interrupt>
 
+各类硬件中断的处理方式已经在前面的章节提及过了。在这里，我们主要关注其他的中断。
+
+== 系统调用
+
+== 信号
+
 = 后记
-
-
 
 = 参考文献
 
