@@ -40,8 +40,8 @@ int tmpfs_inode::create(const string &name, filetype ty, int mode) {
   auto node = cast<tmpfs_inode>(fs->get());
   auto tcb = active();
   node->type = ty;
-  node->uid = tcb->pcb->uid;
-  node->gid = tcb->pcb->gid;
+  node->uid = tcb->pcb->euid;
+  node->gid = tcb->pcb->egid;
   node->mode = mode;
   children[name] = node;
   if (ty == Dir) {
@@ -128,7 +128,7 @@ expected<fs*> tmp_creator(const char*) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  return new class tmpfs(pcb->uid, pcb->gid);
+  return new class tmpfs(pcb->euid, pcb->egid);
 }
 
 }

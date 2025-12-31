@@ -1,5 +1,6 @@
 #include "sysret.h"
 #include "impl.h"
+#include "../mem/shm.h"
 #include "../fs/tmpfs.h"
 #include "../fs/vfs.h"
 #include "../fs/devfs.h"
@@ -400,7 +401,7 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
     pcb->wait.prepare(entry);
     lock.release();
     // It is normal to receive a SIGCHLD, in which case we shouldn't return -EINTR.
-    if (suspend() != 0 && tcb->sigresume != SIGCHLD) {
+    if (suspend() != 0 && tcb->sigresume != SIGCHLD && tcb->sigresume > 0) {
       pcb->wait.finish(entry);
       return -EINTR;
     }
@@ -655,13 +656,11 @@ long setsockopt(int fd, int level, int optname, void *optval, int optlen) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
-  if (level != 0)
-    printk("setsockopt: unknown level: %d\n", level);
 
   switch (optname) {
   case SO_NO_CHECK: {
     // This has to be a UDP socket.
-    if (optlen != 4)
+    if (optlen != 4 || (level != 0 && level != UDP))
       return -EINVAL;
     
     auto udp = dyn_cast<udp_socket_inode>(file->node());
@@ -676,8 +675,8 @@ long setsockopt(int fd, int level, int optname, void *optval, int optlen) {
   }
 
   default:
-    printk("setsockopt: unknown optname %d\n", level, optname);
-    return -EINVAL;
+    printk("setsockopt: unknown optname %d at level %d\n", optname, level);
+    return -ENOPROTOOPT;
   }
 }
 
@@ -842,9 +841,213 @@ long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *chi
       return -EFAULT;
   }
 
-  tcb->pcb->sigonterm = flags & 0xff;
   tcb_t *ct = os::clone(flags, stack, (void *) tls, (void *) childtid);
+  if (!(flags & CLONE_THREAD))
+    ct->pcb->sigonterm = flags & 0xff;
   return ct->pcb->pid;
+}
+
+long shmget(int key, unsigned long len, int flags) {
+  bool create = key == 0 || (flags & IPC_CREAT);
+  bool excl = flags & IPC_EXCL;
+  
+  if (create) {
+    if (key == 0)
+      // Allocate a new key. We would expect most keys are unused.
+      while (shm::shm->count(key = rand()));
+    
+    if (auto it = shm::shm->find(key); it != shm::shm->end()) {
+      if (excl)
+        return -EEXIST;
+      auto file = (*it).second;
+      file->close();
+    }
+    
+    int perm = 0;
+    if (flags & SHM_R)
+      perm |= 0444;
+    if (flags & SHM_W)
+      perm |= 0222;
+
+    inode *node = new tmpfs_inode(&*tmpfs, 0, 0, perm, inode::File);
+    node->truncate(len);
+    auto *file = new class file(new dentry("", node, nullptr), O_RDWR);
+    file->ref();
+    shm::shm->insert(key, file);
+    return key;
+  }
+
+  // Retrieve the key.
+  auto it = shm::shm->find(key);
+  if (it == shm::shm->end())
+    return -ENOENT;
+  return key;
+}
+
+long shmat(int key, unsigned long addr, int flags) {
+  if (addr && (flags & SHM_RND))
+    addr = rounddown<PAGE_SIZE>(addr);
+  else if (addr % PAGE_SIZE != 0)
+    return -EINVAL;
+  
+  auto it = shm::shm->find(key);
+  if (it == shm::shm->end())
+    return -ENOENT;
+
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = (*it).second;
+  auto node = file->node();
+
+  int prot = 0;
+  if (node->mode & 4) {
+    prot |= PROT_READ;
+    if (flags & SHM_EXEC)
+      prot |= PROT_EXEC;
+  }
+  if (node->mode & 2)
+    prot |= PROT_WRITE;
+
+  auto fd = pcb->ftbl->allocate(file);
+  return mmap(addr, node->size(), prot, MAP_SHARED, fd, 0);
+}
+
+long getsockname(int fd, void *sockname, void *_len) {
+  unsigned len;
+  if (!copy_from_user(&len, _len, 4))
+    return -EFAULT;
+
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  auto node = file->node();
+  if (auto udp = dyn_cast<udp_socket_inode>(node)) {
+    sockaddr_in addr = {
+      .sin_family = AF_INET,
+      .sin_port = udp->srcport,
+      .sin_addr = { .s_addr = udp->src },
+    };
+    int copy = min(len, (unsigned) sizeof(sockaddr_in));
+    int needed = max(len, (unsigned) sizeof(sockaddr_in));
+    if (!copy_to_user(sockname, &addr, copy))
+      return -EFAULT;
+    
+    if (copy < needed) {
+      if (!copy_to_user(_len, &needed, 4))
+        return -EFAULT;
+    }
+  }
+
+  if (auto tcp = dyn_cast<tcp_socket_inode>(node)) {
+    sockaddr_in addr = {
+      .sin_family = AF_INET,
+      .sin_port = tcp->srcport,
+      .sin_addr = { .s_addr = tcp->src },
+    };
+    int copy = min(len, (unsigned) sizeof(sockaddr_in));
+    int needed = max(len, (unsigned) sizeof(sockaddr_in));
+    if (!copy_to_user(sockname, &addr, copy))
+      return -EFAULT;
+    
+    if (copy < needed) {
+      if (!copy_to_user(_len, &needed, 4))
+        return -EFAULT;
+    }
+  }
+
+  return -ENOTSOCK;
+}
+
+long ppoll(void *_fds, unsigned int cnt, unsigned long timeout, void *sigmask, bool isuser) {
+  // TODO: Ignore sigmask for now.
+  (void) sigmask;
+  if (cnt <= 0)
+    return -EINVAL;
+
+  // TODO: how to remove dynamic allocation here?
+  unique_ptr<pollfd[]> fds;
+  if (isuser) {
+    fds.reset(new pollfd[cnt]);
+    if (!copy_from_user(fds.get(), (void *) _fds, cnt * sizeof(pollfd)))
+      return -EFAULT;
+  } else {
+    fds.reset((pollfd *) _fds);
+  }
+
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+  
+retry:
+  int available = 0;
+  for (long i = 0; i < cnt; i++) {
+    pollfd &fd = fds[i];
+    if (fd.fd < 0) {
+      fd.revents = POLLNVAL;
+      continue;
+    }
+
+    auto file = pcb->ftbl->at(fd.fd);
+    if (!file)
+      return -EBADF;
+    if (fd.events == 0)
+      continue;
+
+    fd.revents = file->node()->poll(fd.events);
+    if (fd.revents != 0)
+      available++;
+  }
+  if (available) {
+    if (isuser) {
+      if (!copy_to_user((void *) _fds, fds.get(), cnt * sizeof(pollfd)))
+        return -EFAULT;
+    }
+    return available;
+  }
+  // Don't add to wait queue if we don't want to wait.
+  if (!timeout)
+    return 0;
+
+  spinlock lock;
+  lock.acquire();
+  wait_entry *entries = new wait_entry[cnt * 2];
+  for (long i = 0; i < cnt; i++) {
+    pollfd fd = fds[i];
+    auto file = pcb->ftbl->at(fd.fd);
+    if (fd.events & POLLIN)
+      file->node()->prepare_read_wait(entries[i * 2]);
+    if (fd.events & POLLOUT)
+      file->node()->prepare_write_wait(entries[i * 2 + 1]);
+  }
+  lock.release();
+
+  // This calls suspend().
+  auto ret = tcb->sleep(timeout);
+
+  lock.acquire();
+  for (long i = 0; i < cnt; i++) {
+    pollfd fd = fds[i];
+    auto file = pcb->ftbl->at(fd.fd);
+    if (fd.events & POLLIN)
+      file->node()->finish_read_wait(entries[i * 2]);
+    if (fd.events & POLLOUT)
+      file->node()->finish_write_wait(entries[i * 2 + 1]);
+  }
+  lock.release();
+  
+  delete[] entries;
+  // Recovered from sleeping by timeout.
+  if (ret == 0)
+    return 0;
+  // Recovered from sleeping by something other than signal.
+  if (ret == 1)
+    goto retry;
+  // Recovered from sleeping by signal.
+  return -EINTR;
 }
 
 }

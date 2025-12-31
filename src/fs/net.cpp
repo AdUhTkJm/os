@@ -1,5 +1,6 @@
 #include "tcp.h"
 #include "../proc/schedule.h"
+#include "../driver/lo/lo.h"
 #include "../driver/virtio/virtio.h"
 #include "../utils/log.h"
 
@@ -25,13 +26,12 @@ const char *hostname() {
   return buf;
 }
 
-void demux::push(char *buf, int len) {
+void demux::push(const char *buf, int len) {
   // Buffer too small.
   if ((unsigned) len < sizeof(eth::header))
     return;
 
   eth::read(buf, len);
-  delete[] buf;
 }
 
 void eth::read(const char *p, size_t len) {
@@ -625,7 +625,7 @@ request:
       .network = htonl(0x7f000001),
       .mask = 0xffffff00,
       .gateway = 0,
-      .dev = virtio::netdev() // TODO: change into local device
+      .dev = &lo::localhost
     });
 
     // src/netmask (obtained from DHCP)

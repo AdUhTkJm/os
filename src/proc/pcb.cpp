@@ -170,14 +170,19 @@ void pcb_t::send_signal(int sig) {
   for (auto x : threads) {
     if (x->status == Zombie)
       continue;
+    
     // Masked signals will also wake up threads.
     // TODO: maybe only wake up threads that are in sigtimedwait()?
     // TODO: implement the correct semantics
     if (!x->mask[sig]) {
       x->pending.add(sig);
+      return;
+    }
+    if (x->status == Sleeping && x->sigresume == -2) {
+      if (!x->sigwait[sig])
+        continue;
       x->sigresume = sig;
-      if (x->status == Sleeping)
-        scheduler.wakeup(x, /*can_preempt=*/ false);
+      scheduler.wakeup(x, /*can_preempt=*/ false);
       return;
     }
   }
@@ -317,7 +322,7 @@ void trap_return_setup(tcb_t *tcb) {
   [[unlikely]] if (tcb->stidaddr) {
     bool succ = copy_to_user(tcb->stidaddr, &tcb->tid, sizeof(int));
     assert(succ && "the memory should have been checked!");
-    tcb->stidaddr = nullptr; 
+    tcb->stidaddr = nullptr;
   }
 }
 #endif
@@ -710,10 +715,10 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
     return -EFAULT;
   vector<char> vec;
   char *p = usr;
-  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++) {
+  for (; p < roundup<PAGE_SIZE>(usr) && *p; p++)
     vec.push_back(*p);
-  }
-  if (!*p)
+  
+  if ((va_t) p % PAGE_SIZE != 0 && !*p)
     goto finish;
 
   for (int i = 0; i < 4096; i++) {
@@ -722,7 +727,7 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
     for (char *finish = p + PAGE_SIZE; p < finish && *p; p++)
       vec.push_back(*p);
     
-    if (!*p)
+    if ((va_t) p % PAGE_SIZE != 0 && !*p)
       goto finish;
   }
   return -E2BIG;

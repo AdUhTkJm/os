@@ -1,7 +1,5 @@
-#include <stdint.h>
-#include "../utils/libc.h"
-#include "../mem/ptable.h"
 #include "../mem/kalloc.h"
+#include "../mem/shm.h"
 #include "../fs/initramfs.h"
 #include "../fs/devfs.h"
 #include "../fs/ext.h"
@@ -81,10 +79,13 @@ void kernel_main() {
 #endif
 }
 
+// I tried calling `make_zeroes` on idle to make page faults faster.
+// But it turned out that this won't work well - it becomes even slower.
 #ifdef RV
 void idle() {
-  for (;;)
+  for (;;) {
     __asm__ volatile("wfi");
+  }
 }
 #endif
 
@@ -156,9 +157,10 @@ void main_high() {
   
   os::init_bitmap_kalloc();
 
-  // Initialize VMA (TODO: zero-page optimization).
+  // Initialize various global variables.
   os::vma::init();
   os::siginit();
+  os::shm::init();
 
   // Set up (boot-time) kernel stack.
   boot_pcb.construct();

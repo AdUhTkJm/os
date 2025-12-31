@@ -186,6 +186,9 @@ struct string_view {
 
   bool empty() const { return sz == 0; }
   size_t size() const { return sz; }
+
+  string_view() = default;
+  string_view(const char *p, size_t len): start(p), sz(len) {}
 };
 
 class split_range {

@@ -510,7 +510,7 @@ struct clone_args {
   unsigned long cgroup;       /* File descriptor for target cgroup */
 };
 
-// From <linux/capability.h>
+// From <linux/capability.h>.
 struct cap_header {
   unsigned version;
   int      pid;
@@ -525,5 +525,88 @@ struct cap_data {
 #define LINUX_CAPABILITY_VERSION_1 0x19980330
 #define LINUX_CAPABILITY_VERSION_2 0x20071026
 #define LINUX_CAPABILITY_VERSION_3 0x20080522
+
+// From <sys/ipc.h>.
+
+/* Mode bits for `msgget', `semget', and `shmget'.  */
+#define IPC_CREAT	01000		/* Create key if key does not exist. */
+#define IPC_EXCL	02000		/* Fail if key exists.  */
+#define IPC_NOWAIT	04000		/* Return error on wait.  */
+
+/* Control commands for `msgctl', `semctl', and `shmctl'.  */
+#define IPC_RMID	0		/* Remove identifier.  */
+#define IPC_SET		1		/* Set `ipc_perm' options.  */
+#define IPC_STAT	2		/* Get `ipc_perm' options.  */
+#define IPC_INFO	3		/* See ipcs.  */
+
+/* Special key values.  */
+#define IPC_PRIVATE	((__key_t) 0)	/* Private key.  */
+
+// From <sys/shm.h>.
+/* Permission flag for shmget.  */
+#define SHM_R		0400		/* or S_IRUGO from <linux/stat.h> */
+#define SHM_W		0200		/* or S_IWUGO from <linux/stat.h> */
+
+/* Flags for `shmat'.  */
+#define SHM_RDONLY	010000		/* attach read-only else read-write */
+#define SHM_RND		020000		/* round attach address to SHMLBA */
+#define SHM_REMAP	040000		/* take-over region on attach */
+#define SHM_EXEC	0100000		/* execution access */
+
+/* Commands for `shmctl'.  */
+#define SHM_LOCK	11		/* lock segment (root only) */
+#define SHM_UNLOCK	12		/* unlock segment (root only) */
+
+struct ipc_perm {
+  int key;	   			/* Key.  */
+  int uid;					/* Owner's user ID.  */
+  int gid;					/* Owner's group ID.  */
+  int cuid;					/* Creator's user ID.  */
+  int cgid;					/* Creator's group ID.  */
+  int mode;				  /* Read/write permission.  */
+  unsigned short __seq;			/* Sequence number.  */
+  unsigned short __pad2;
+  unsigned long __resv[2];
+};
+
+struct shmid_ds {
+  struct ipc_perm shm_perm;    /* Ownership and permissions */
+  size_t          shm_segsz;   /* Size of segment (bytes) */
+  long            shm_atime;   /* Last attach time */
+  long            shm_dtime;   /* Last detach time */
+  long            shm_ctime;   /* Creation time/time of last
+                                  modification via shmctl() */
+  int             shm_cpid;    /* PID of creator */
+  int             shm_lpid;    /* PID of last shmat(2)/shmdt(2) */
+  unsigned long   shm_nattch;  /* No. of current attaches */
+  unsigned long   __resv[2];
+};
+
+// From <sys/select.h>.
+typedef struct {
+  long fds_bits[16];
+#define __FDS_BITS(set) ((set)->fds_bits)
+} fd_set;
+#define __NFDBITS	(8 * (int) sizeof (long))
+#define	__FD_ELT(d)	((d) / __NFDBITS)
+#define	__FD_MASK(d)	((long) (1UL << ((d) % __NFDBITS)))
+#define __FD_ZERO(s) \
+  do {									      \
+    unsigned int __i;							      \
+    fd_set *__arr = (s);						      \
+    for (__i = 0; __i < sizeof (fd_set) / sizeof (__fd_mask); ++__i)	      \
+      __FDS_BITS (__arr)[__i] = 0;					      \
+  } while (0)
+#define __FD_SET(d, s) \
+  ((void) (__FDS_BITS (s)[__FD_ELT(d)] |= __FD_MASK(d)))
+#define __FD_CLR(d, s) \
+  ((void) (__FDS_BITS (s)[__FD_ELT(d)] &= ~__FD_MASK(d)))
+#define __FD_ISSET(d, s) \
+  ((__FDS_BITS (s)[__FD_ELT (d)] & __FD_MASK (d)) != 0)
+
+#define FD_ZERO  __FD_ZERO
+#define FD_SET   __FD_SET
+#define FD_CLR   __FD_CLR
+#define FD_ISSET __FD_ISSET
 
 #endif

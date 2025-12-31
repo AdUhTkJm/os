@@ -52,7 +52,7 @@ public:
   // Maps port to inode.
   os::hashmap<__big unsigned short, udp_socket_inode*> udps;
   os::hashmap<__big unsigned short, tcp_socket_inode*> tcps;
-  void push(char *buf, int len);
+  void push(const char *buf, int len);
 };
 
 extern static_storage<demux> demux;
@@ -242,7 +242,7 @@ class udp_socket_inode : public inode_impl<udp_socket_inode> {
   friend void udp::read(const char *p, size_t len, int error);
 public:
   ip::address src, dst;
-  int srcport = 0, dstport;
+  udp::port srcport = 0, dstport;
   option options;
 
   FILE_INODE_DEFAULT_IMPL;

@@ -7,6 +7,14 @@
 
 namespace os {
 
+namespace zero {
+
+inline pa_t head;
+inline unsigned len;
+inline spinlock lock;
+
+}
+
 struct pframe_meta {
   // 0 for normal memory; non-zero value `i` for slabs[i].
   unsigned char type;
@@ -19,12 +27,7 @@ constexpr size_t VM_SIZE = 1_gb - PAGE_SIZE;
 constexpr va_t VM_BASE = 0xffff'ffff'c000'0000ul;
 
 // The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
-// When we enable DEBUG_MEMORY, the meta becomes incredibly large.
-#if defined(DEBUG_MEMORY) && defined(FUNC_INSTRUMENT)
-constexpr va_t MAX_PA_SIZE = 128_mb;
-#else
-constexpr va_t MAX_PA_SIZE = 2_gb;
-#endif
+constexpr va_t MAX_PA_SIZE = 1_gb;
 
 // This amount of 4KB frames from __kernel_base will be managed by
 // the free-list allocator, mainly for bootstrapping.
@@ -60,6 +63,9 @@ void vfree(void *p);
 // Initialize the bitmap allocator.
 void init_bitmap_kalloc();
 void init_freelist_kalloc();
+
+// The zeroed free list.
+void make_zeroes();
 
 template<size_t Align = sizeof(size_t)> requires (Align >= sizeof(size_t) && __builtin_popcount(Align) == 1)
 void *vmalloc(size_t len, bool permanent = false) {

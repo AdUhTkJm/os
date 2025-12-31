@@ -781,8 +781,8 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
   memset(&node->meta, 0, sizeof(node->meta));
   node->meta.sz = 0;
   node->meta.type = fromtype(ty) | mode;
-  node->meta.uid = pcb->uid;
-  node->meta.gid = pcb->gid;
+  node->meta.uid = pcb->euid;
+  node->meta.gid = pcb->egid;
   node->meta.lnkcnt = (ty == Dir) ? 2 : 1;
   node->meta.ctime = node->meta.mtime = node->meta.atime = now() / 1_s;
   fs->update_meta(node);

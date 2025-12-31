@@ -146,7 +146,6 @@ void mark_reserved() {
       auto prop = (uint32_t*) property;
       physbegin = (to_big_endian(prop[0]) * 1ull << 32) | to_big_endian(prop[1]);
       physend = physbegin + ((to_big_endian(prop[2]) * 1ull << 32) | to_big_endian(prop[3]));
-      
       return WalkResult::Interrupt;
     }
     return WalkResult::Continue;
@@ -336,6 +335,17 @@ pa_t pframe_zeroed() {
   auto p = pframe();
   memset((void *) as_va(p), 0, PAGE_SIZE);
   return p;
+}
+
+void make_zeroes() {
+  auto p = pframe();
+  memset((void *) as_va(p), 0, PAGE_SIZE);
+
+  synchronized _(zero::lock);
+  auto head = (frame_t *) as_va(p);
+  head->next = zero::head;
+  zero::head = p;
+  zero::len++;
 }
 
 void pfree(pa_t pa) {

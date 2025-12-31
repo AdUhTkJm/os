@@ -40,9 +40,6 @@ args = parser.parse_args()
 SRC_DIR = Path("src")
 BUILD_DIR = Path("build")
 FINAL_BINARY = BUILD_DIR / "kernel"
-COMPILER = "riscv64-unknown-elf-g++"
-QEMU = "qemu-system-riscv64"
-AR = "riscv64-unknown-elf-ar"
 CFLAGS = [
   "-x", "c", "-c", "-std=c11", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
@@ -52,7 +49,8 @@ CXXFLAGS = [
   "-x", "c++", "-c", "-std=c++20", "-O2",
   "-Wall", "-Wextra", "-Wuninitialized", "-fno-strict-aliasing",
   "-ffreestanding", "-nostdlib", "-fno-rtti", "-fno-exceptions",
-  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", "-fno-stack-protector"
+  "-fno-threadsafe-statics", "-Wno-invalid-offsetof", "-fno-stack-protector",
+  "-fno-unwind-tables", "-fno-asynchronous-unwind-tables",
 ]
 # Note this is included in https://gcc.gnu.org/onlinedocs/gcc/Overall-Options.html.
 SFLAGS = [
@@ -63,6 +61,7 @@ LDFLAGS = ["-T", LINK_SCRIPT, "-nostdlib"]
 CACHE_FILE = BUILD_DIR / ".build_cache.pkl"
 INCLUDE_CACHE_FILE = BUILD_DIR / ".include_cache.pkl"
 INITRAMFS_PATH = SRC_DIR / "fs/init"
+BIOS = "" if args.la else "-bios default"
 SPECIAL_FLAGS = {
   "src/interrupt/interrupt.cpp": ["-Wno-unused-variable"]
 }
@@ -108,12 +107,19 @@ if args.la:
   #   https://loongson.github.io/LoongArch-Documentation/LoongArch-Vol1-EN.html
   COMPILER = "loongarch64-unknown-linux-gnu-g++"
   QEMU = "qemu-system-loongarch64"
+  AR = "loongarch64-unknown-linux-gnu-ar"
   MACHINESPEC = ["-march=loongarch64", "-mabi=lp64d"]
+  SDCARD = "sdcard-la"
 else:
   # RISC-V.
+  COMPILER = "riscv64-unknown-elf-g++"
+  QEMU = "qemu-system-riscv64"
+  AR = "riscv64-unknown-elf-ar"
   MACHINESPEC = ["-mcmodel=medany", "-march=rv64gc_zifencei", "-mabi=lp64"]
-  flags += MACHINESPEC
-  LDFLAGS += MACHINESPEC
+  SDCARD = "sdcard-rv"
+
+flags += MACHINESPEC
+LDFLAGS += MACHINESPEC
 
 CFLAGS.extend(flags)
 CXXFLAGS.extend(flags)
@@ -293,7 +299,7 @@ def build():
   commands = []
   for file in cpp_files:
     absolute = str(file.absolute())
-    flags = [x for x in get_flags(file) if x not in ["-mcmodel=medany", "-march=rv64gc_zifencei", "-mabi=lp64"]]
+    flags = [x for x in get_flags(file) if x not in MACHINESPEC]
     commands.append({
       "directory": os.path.abspath("."),
       "file": absolute,
@@ -383,14 +389,14 @@ if __name__ == "__main__":
     gdb = "-S -s" if args.gdb else ""
     proc.run(
 f"""
-~/.local/qemu/build/{QEMU} -nographic \
--machine virt -bios default -kernel {BUILD_DIR}/kernel \
+~/.local/qemu/build/{QEMU} -m 1G -nographic \
+-machine virt {BIOS} -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
 -drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0 \
 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 \
--drive file=testsuite/sdcard-rv.img,if=none,format=raw,id=x1 \
+-drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1 \
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
 \
 -device virtio-net-device,netdev=net -netdev user,id=net \

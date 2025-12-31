@@ -40,7 +40,7 @@ _start_high:
   # Enable the timer interrupt (bit 5) in sie.
   li a0, 32
   csrs sie, a0
-  j _Z9main_highv # void main_high();
+  j _Z9main_highv
 
 .section .text
 .global __handler_end
@@ -156,5 +156,9 @@ __handler_end:
 
 stvec_pos:
 
+.section .text.high
+.globl _start_high
+_start_high:
+  b _Z9main_highv
 
 #endif

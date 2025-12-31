@@ -241,6 +241,25 @@ HANDLE(ftruncate, fd, len) {
   return file->node()->truncate(len);
 }
 
+HANDLE(fallocate, fd, mode, offset, len) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  if (mode != 0) {
+    printk("fallocate: unknown mode: %d\n", mode);
+    return -EINVAL;
+  }
+
+  // TODO: do real allocation. We don't really have holes yet, so let's just truncate.
+  auto node = file->node();
+  auto newsize = (unsigned long) offset + len;
+  if (newsize <= node->size())
+    return 0;
+
+  return node->truncate(newsize);
+}
+
 HANDLE(mkdirat, dirfd, _path, mode) {
   auto pathp = copy_from_user((char *) _path);
   if (!pathp)
@@ -374,7 +393,7 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
     node = file->node();
   } else node = pcb->pwd->node;
 
-  if (!writable(pcb->uid, pcb->gid, node))
+  if (!writable(pcb->euid, pcb->egid, node))
     return -EACCES;
 
   auto now = os::now();
@@ -399,12 +418,18 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
       changed = true, mtime = time[1].tv_nsec + time[1].tv_sec * 1_s;
   }
 
-  if (changed && node->uid != pcb->uid)
+  if (changed && node->uid != pcb->euid)
     return -EACCES;
 
   inode::meta meta(atime, now, mtime);
   node->set_meta(meta);
   return 0;
+}
+
+// TODO: handle it properly and add a rename() call in VFS.
+// `mv` will fall back to unlink + copy if we return -EXDEV, but this isn't the correct thing to do.
+HANDLE(renameat2, olddirfd, oldpath, newdirfd, newpath, flags) {
+  return -EXDEV;
 }
 
 HANDLE(umask, mask) {
@@ -437,12 +462,17 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
 
 HANDLE(chdir, _path) {
   auto path = copy_from_user((char *) _path);
-  if (!path)
+  if (!path || !*path)
     return -EFAULT;
   auto fd = pcb->open_file(path->get(), O_RDONLY);
   if (fd < 0)
     return fd;
-  pcb->pwd = pcb->ftbl->at(fd)->entry;
+
+  auto file = pcb->ftbl->at(fd);
+  if (file->node()->type != inode::Dir)
+    return -ENOTDIR;
+
+  pcb->pwd = file->entry;
   return 0;
 }
 
@@ -450,6 +480,8 @@ HANDLE(fchdir, fd) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+  if (file->node()->type != inode::Dir)
+    return -ENOTDIR;
   pcb->pwd = file->entry;
   return 0;
 }
@@ -459,7 +491,7 @@ HANDLE(fchown, fd, uid, gid) {
   if (!file)
     return -EBADF;
   auto node = file->node();
-  if (node->uid != pcb->uid && pcb->uid != 0)
+  if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
   if (uid != -1)
     node->uid = uid;
@@ -483,7 +515,7 @@ HANDLE(fchownat, dirfd, _path, uid, gid, flags) {
   if (fd < 0)
     return fd;
   auto node = pcb->ftbl->at(fd)->node();
-  if (node->uid != pcb->uid && pcb->uid != 0)
+  if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
   if (uid != -1)
     node->uid = uid;
@@ -503,7 +535,7 @@ HANDLE(fchmod, fd, mode) {
     return -EINVAL;
 
   auto node = file->node();
-  if (node->uid != pcb->uid && pcb->uid != 0)
+  if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
 
   node->mode = mode;
@@ -524,7 +556,7 @@ HANDLE(fchmodat, dirfd, _path, mode, flags) {
   if (fd < 0)
     return fd;
   auto node = pcb->ftbl->at(fd)->node();
-  if (node->uid != pcb->uid && pcb->uid != 0)
+  if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
 
   node->mode = mode;
@@ -690,7 +722,7 @@ HANDLE(unlinkat, dirfd, _path, flags) {
   if (file->node()->type == inode::Dir)
     return -EISDIR;
 
-  if (!writable(pcb->uid, pcb->gid, dir))
+  if (!writable(pcb->euid, pcb->egid, dir))
     return -EACCES;
 
   // unlink() will check whether `dir` is indeed a dir.
@@ -792,6 +824,30 @@ HANDLE(setreuid, ruid, euid) {
   return 0;
 }
 
+HANDLE(setresuid, ruid, euid, suid) {
+  if (ruid < -1 || euid < -1 || suid < -1)
+    return -EINVAL;
+  // Nothing changes.
+  if (ruid == -1 && euid == -1 && suid == -1)
+    return 0;
+
+  if (ruid != -1 && pcb->euid != 0 && ruid != pcb->suid && ruid != pcb->uid && ruid != pcb->euid)
+    return -EPERM;
+  if (euid != -1 && pcb->euid != 0 && euid != pcb->suid && euid != pcb->uid && euid != pcb->euid)
+    return -EPERM;
+  if (suid != -1 && pcb->euid != 0 && suid != pcb->suid && suid != pcb->uid && suid != pcb->euid)
+    return -EPERM;
+  
+  if (ruid != -1)
+    pcb->uid = ruid;
+  if (euid != -1)
+    pcb->euid = euid;
+  if (suid != -1)
+    pcb->suid = suid;
+
+  return 0;
+}
+
 HANDLE(getegid, _) {
   return pcb->egid;
 }
@@ -809,6 +865,51 @@ HANDLE(setgid, gid) {
     return -EPERM;
   
   pcb->egid = pcb->sgid = gid;
+  return 0;
+}
+
+HANDLE(setregid, rgid, egid) {
+  if (rgid < -1 || egid < -1)
+    return -EINVAL;
+  // Nothing changes.
+  if (rgid == -1 && egid == -1)
+    return 0;
+
+  if (rgid != -1 && pcb->euid != 0 && rgid != pcb->sgid && rgid != pcb->gid && rgid != pcb->egid)
+    return -EPERM;
+  if (egid != -1 && pcb->euid != 0 && egid != pcb->sgid && egid != pcb->gid && egid != pcb->egid)
+    return -EPERM;
+  
+  if (rgid != -1)
+    pcb->gid = rgid;
+  if (egid != -1)
+    pcb->egid = egid;
+
+  pcb->sgid = pcb->egid;
+  return 0;
+}
+
+HANDLE(setresgid, rgid, egid, sgid) {
+  if (rgid < -1 || egid < -1 || sgid < -1)
+    return -EINVAL;
+  // Nothing changes.
+  if (rgid == -1 && egid == -1 && sgid == -1)
+    return 0;
+
+  if (rgid != -1 && pcb->euid != 0 && rgid != pcb->sgid && rgid != pcb->gid && rgid != pcb->egid)
+    return -EPERM;
+  if (egid != -1 && pcb->euid != 0 && egid != pcb->sgid && egid != pcb->gid && egid != pcb->egid)
+    return -EPERM;
+  if (sgid != -1 && pcb->euid != 0 && sgid != pcb->sgid && sgid != pcb->gid && sgid != pcb->egid)
+    return -EPERM;
+  
+  if (rgid != -1)
+    pcb->gid = rgid;
+  if (egid != -1)
+    pcb->egid = egid;
+  if (sgid != -1)
+    pcb->sgid = sgid;
+
   return 0;
 }
 
@@ -1267,6 +1368,14 @@ HANDLE(munmap, addr, len) {
   return detail::munmap(addr, len);
 }
 
+HANDLE(shmget, key, len, flags) {
+  return detail::shmget(key, len, flags);
+}
+
+HANDLE(shmat, key, addr, flags) {
+  return detail::shmat(key, addr, flags);
+}
+
 HANDLE(madvise, addr, len, type) {
   if (len < 0 || addr % PAGE_SIZE != 0)
     return -EINVAL;
@@ -1343,12 +1452,12 @@ HANDLE(rt_sigtimedwait, sig, info, timeout) {
     return -EAGAIN;
   }
 
-  tcb->sigresume = -1;
+  tcb->sigresume = -2;
   tcb->sigwait = wait;
   tcb->sleep(tm);
   
-  auto ret = tcb->sigresume != -1 ? tcb->sigresume : -EAGAIN;
-  tcb->sigresume = -1;
+  auto ret = tcb->sigresume != -2 ? tcb->sigresume : -EAGAIN;
+  tcb->sigresume = 0;
   return ret;
 }
 
@@ -1399,87 +1508,59 @@ HANDLE(tgkill, pid, tid, sig) {
   return 0;
 }
 
-HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
-  // TODO: Ignore sigmask for now.
-  if (cnt <= 0)
+HANDLE(pselect6, maxcnt, _read, _write, _except, tmo, sigmask) {
+  size_t timeout = 1.8e19;
+  if (tmo) {
+    timeval t;
+    if (!copy_from_user(&t, (void *) tmo, sizeof(timeval)))
+      return -EFAULT;
+    if (t.tv_usec < 0 || t.tv_usec > 999'999)
+      return -EINVAL;
+    timeout = t.tv_usec * 1000 + t.tv_sec * 1_s;
+  }
+  if (maxcnt <= 0)
     return -EINVAL;
 
-  // TODO: how to remove dynamic allocation here?
-  unique_ptr<pollfd[]> fds(new pollfd[cnt]);
-  if (!copy_from_user(fds.get(), (void *) _fds, cnt * sizeof(pollfd)))
+  fd_set read, write, except;
+  if (!copy_from_user(&read, (void *) _read, sizeof(fd_set)))
     return -EFAULT;
-  
-  size_t timeout = -1ul;
+  if (!copy_from_user(&write, (void *) _write, sizeof(fd_set)))
+    return -EFAULT;
+  if (!copy_from_user(&except, (void *) _except, sizeof(fd_set)))
+    return -EFAULT;
+
+  // This will be freed by ppoll().
+  auto fds = new pollfd[maxcnt];
+  int cnt = 0;
+  for (int i = 0; i < 1024 && cnt < maxcnt; i++) {
+    int events = 0;
+    if (FD_ISSET(i, &read))
+      events |= POLLIN;
+    if (FD_ISSET(i, &write))
+      events |= POLLOUT;
+    
+    if (events) {
+      fds[cnt].fd = i;
+      fds[cnt].events = events;
+      cnt++;
+    }
+  }
+
+  return detail::ppoll(fds, cnt, timeout, (void *) sigmask, false);
+}
+
+HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
+  size_t timeout = 1.8e19;
   if (tmo) {
     timespec t;
     if (!copy_from_user(&t, (void *) tmo, sizeof(timespec)))
       return -EFAULT;
+    if (t.tv_nsec < 0 || t.tv_nsec > 999'999'999)
+      return -EINVAL;
     timeout = t.tv_nsec + t.tv_sec * 1_s;
   }
-retry:
-  int available = 0;
-  for (long i = 0; i < cnt; i++) {
-    pollfd &fd = fds[i];
-    if (fd.fd < 0) {
-      fd.revents = POLLNVAL;
-      continue;
-    }
 
-    auto file = pcb->ftbl->at(fd.fd);
-    if (!file)
-      return -EBADF;
-    if (fd.events == 0)
-      continue;
-
-    fd.revents = file->node()->poll(fd.events);
-    if (fd.revents != 0)
-      available++;
-  }
-  if (available) {
-    if (!copy_to_user((void *) _fds, fds.get(), cnt * sizeof(pollfd)))
-      return -EFAULT;
-    return available;
-  }
-  // Don't add to wait queue if we don't want to wait.
-  if (!timeout)
-    return 0;
-
-  spinlock lock;
-  lock.acquire();
-  wait_entry *entries = new wait_entry[cnt * 2];
-  for (long i = 0; i < cnt; i++) {
-    pollfd fd = fds[i];
-    auto file = pcb->ftbl->at(fd.fd);
-    if (fd.events & POLLIN)
-      file->node()->prepare_read_wait(entries[i * 2]);
-    if (fd.events & POLLOUT)
-      file->node()->prepare_write_wait(entries[i * 2 + 1]);
-  }
-  lock.release();
-
-  // This calls suspend().
-  auto ret = tcb->sleep(timeout);
-
-  lock.acquire();
-  for (long i = 0; i < cnt; i++) {
-    pollfd fd = fds[i];
-    auto file = pcb->ftbl->at(fd.fd);
-    if (fd.events & POLLIN)
-      file->node()->finish_read_wait(entries[i * 2]);
-    if (fd.events & POLLOUT)
-      file->node()->finish_write_wait(entries[i * 2 + 1]);
-  }
-  lock.release();
-  
-  delete[] entries;
-  // Recovered from sleeping by timeout.
-  if (ret == 0)
-    return 0;
-  // Recovered from sleeping by something other than signal.
-  if (ret == 1)
-    goto retry;
-  // Recovered from sleeping by signal.
-  return -EINTR;
+  return detail::ppoll((void *) _fds, cnt, timeout, (void *) sigmask, true);
 }
 
 HANDLE(nanosleep, rqtp, rmtp) {
@@ -1569,6 +1650,10 @@ HANDLE(connect, fd, sockaddr, size) {
 
 HANDLE(setsockopt, fd, level, optname, optval, optlen) {
   return detail::setsockopt(fd, level, optname, (void *) optval, optlen);
+}
+
+HANDLE(getsockname, fd, sock, len) {
+  return detail::getsockname(fd, (void *) sock, (void *) len);
 }
 
 HANDLE(sendto, fd, buf, size, flags, dest, addrlen) {

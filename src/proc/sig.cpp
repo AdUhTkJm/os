@@ -4,15 +4,15 @@
 namespace os {
 
 void sigset::add(int signum) {
-  sig |= (1 << signum);
+  sig |= (1ul << signum);
 }
 
 void sigset::remove(int signum) {
-  sig &= ~(1 << signum);
+  sig &= ~(1ul << signum);
 }
 
 bool sigset::operator[](int signum) const {
-  return sig & (1 << signum);
+  return sig & (1ul << signum);
 }
 
 int sigset::next(const sigset &ignored) const {

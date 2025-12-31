@@ -29,6 +29,9 @@ namespace os::vma {
     return false;
   }
   const auto &vma = *vmap;
+  // We cannot map a page with 0 permission, as it would violate Sv39 requirement.
+  if (vma.prot == 0)
+    return false;
 
   pa_t pa = (vma.flags & MAP_SHARED)
     ? (pa_t) (*vma.backup->node()->cache)[(addr - vma.begin + vma.offset) / PAGE_SIZE]->data - KERNEL_OFFSET
@@ -202,17 +205,16 @@ va_t addrspace::brk(va_t addr) {
     return brkp;
 
   auto rounded = roundup<PAGE_SIZE>(addr);
-  if (rounded <= roundup<PAGE_SIZE>(heap_end))
+  if (rounded <= heap_end)
     return brkp = addr;
 
   // On expand, we first need to check if there's anything on the way.
-  if (vmas.has_overlap(heap_end, addr))
+  if (vmas.has_overlap(heap_end, rounded))
     return brkp;
 
   vma_t *vma = vmas.find(heap_begin);
-  vma->end = rounded;
+  heap_end = vma->end = rounded;
   vmas.update_path(vma->begin);
-  heap_end = rounded;
   return brkp = addr;
 }
 

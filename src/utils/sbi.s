@@ -14,6 +14,6 @@ _Z6rdtimev:
 
 #ifdef __loongarch__
 _Z6rdtimev:
-  rdtime.d $a0
+  rdtime.d $a0, $a1
   ret
 #endif

@@ -1,5 +1,5 @@
-OUTPUT_ARCH(riscv)
-ENTRY(_start)
+OUTPUT_ARCH(loongarch)
+ENTRY(_Z11kernel_mainv)
 
 VIRT_OFFSET = 0xffffffc000000000;
 

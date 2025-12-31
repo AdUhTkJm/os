@@ -249,15 +249,16 @@ extern "C" void _start() {
     const char *test = 
       // CD "/basic && sh ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
-      // CD " && sh ./libctest_testcode.sh; echo 'done'";
-      CD " && sh ./libcbench_testcode.sh";
+      // CD " && sh ./libctest_testcode.sh";
+      // CD " && sh ./libcbench_testcode.sh";
       // CD " && sh ./unixbench_testcode.sh";
       // CD " && sh ./lmbench_testcode.sh";
       // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       // CD " && sh ./ltp_testcode.sh";
-      // CD "/ltp/testcases/bin && ./chdir01; echo 'done'";
+      // CD "/ltp/testcases/bin && ./chmod03; echo 'done'";
+      "echo 'start python...'; python -m http.server 8080 --bind 0.0.0.0";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };

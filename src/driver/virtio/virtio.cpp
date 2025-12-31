@@ -331,7 +331,6 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
 
   RFENCE;
   auto stat = mmrd<unsigned char>(status);
-  assert(stat != 0xff);
   if (stat == 0)
     memcpy(buffer, (void *) as_va(buf), 512 * len);
   random->mix(rdtime() ^ *(unsigned *) buffer);
@@ -557,12 +556,9 @@ int net_device::read() {
 
   // Read the packet, and skip the header.
   unsigned lpacket = elem.len - sizeof(header);
-  if (lpacket > 0) {
-    // Send this to the demultiplexer. It owns the pointer.
-    auto buf = new char[lpacket];
-    memcpy(buf, (char*) as_va(rxbuf[elem.id]) + sizeof(header), lpacket);
-    demux->push(buf, lpacket);
-  }
+  if (lpacket > 0)
+    // Send this to the demultiplexer.
+    demux->push((char*) as_va(rxbuf[elem.id]) + sizeof(header), lpacket);
 
   // Now the descriptor is free. Return it to available ring.
   rx->avail.ring[rx->avail.idx % vq::size] = elem.id;

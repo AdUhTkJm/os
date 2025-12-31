@@ -40,7 +40,7 @@ class pipefs : public fs {
 public:
   pipe_inode *get() override {
     auto pcb = active()->pcb;
-    return new pipe_inode(this, pcb->uid, pcb->gid);
+    return new pipe_inode(this, pcb->euid, pcb->egid);
   }
 
   void erase(inode *) override { }

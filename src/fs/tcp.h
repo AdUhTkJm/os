@@ -61,9 +61,6 @@ namespace os {
 
 class tcp_socket_inode : public inode_impl<tcp_socket_inode> {
   tcp::state state;
-  
-  ip::address dst, src;
-  tcp::port dstport, srcport;
 
   // Remember to convert them on send:
   //
@@ -115,6 +112,9 @@ class tcp_socket_inode : public inode_impl<tcp_socket_inode> {
   friend class demux;
   friend void tcp::read(const char *p, size_t len, int error);
 public:
+  ip::address dst, src;
+  tcp::port dstport, srcport;
+
   FILE_INODE_DEFAULT_IMPL;
   tcp_socket_inode();
   ~tcp_socket_inode();

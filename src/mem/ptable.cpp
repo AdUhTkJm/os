@@ -187,7 +187,7 @@ static int pmap_software(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root
 }
 
 #ifdef LA
-int pmap(pa_t pa, va_t va, int mode, int flags, pte_t *root) {
+int pmap(pa_t pa, va_t va, int mode, unsigned flags, pte_t *root) {
   // Populate software page table.
   pmap_software(pa, va, mode, flags, root);
   // We should only map the page into TLB for current process.
