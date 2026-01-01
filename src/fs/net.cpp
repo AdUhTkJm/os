@@ -247,8 +247,15 @@ void udp::read(const char *p, size_t len, int error) {
     return;
   }
   auto node = demux->udps[port];
-  if (error != 0)
+  if (error != 0) {
     node->receive(error);
+    return;
+  }
+  
+  // To get the IP address, we must examine the IP header.
+  auto ip_header = (const ip::header *) (p - sizeof(ip::header));
+  node->recv = ip_header->src;
+  node->recvport = header->srcport;
   udp_socket_inode::datagram g(p + sizeof(udp::header), len - sizeof(udp::header));
   node->receive(os::move(g));
 }
@@ -284,8 +291,9 @@ void icmp::read(const char *p, size_t len) {
     return;
   case 3: // Destination unreachable.
     switch (header->code) {
-    case 3: error = ECONNREFUSED; break;
-    case 1: error = EHOSTUNREACH; break;
+    case 3: error = EHOSTUNREACH; break; // Dest port unreachable
+    case 1: error = EHOSTUNREACH; break; // Dest host unreachable
+    case 0: error = ENETUNREACH;  break; // Dest net  unreachable
     default: error = ENETUNREACH;
     }
     break;
@@ -443,7 +451,13 @@ void udp_socket_inode::wake_read() {
   readwait.wake_all();
 }
 
-void udp_socket_inode::wake_write() {}
+void udp_socket_inode::prepare_read_wait(wait_entry &entry) {
+  readwait.prepare(entry);
+}
+
+void udp_socket_inode::finish_read_wait(wait_entry &entry) {
+  readwait.finish(entry);
+}
 
 void dhcp::fill_option(unsigned char *&dst, unsigned char type, const char *src, unsigned char len) {
   dst[0] = type;

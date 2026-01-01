@@ -1686,6 +1686,10 @@ HANDLE(sendmmsg, fd, msg, n, flags) {
   return i;
 }
 
+HANDLE(recvfrom, fd, buf, size, flags, src, addrlen) {
+  return detail::recvfrom(fd, (void *) buf, size, flags, (void *) src, addrlen);
+}
+
 HANDLE(syslog, type, buf, size) {
   return detail::syslog(type, (char *) buf, size);
 }

@@ -241,8 +241,8 @@ class udp_socket_inode : public inode_impl<udp_socket_inode> {
   friend class demux;
   friend void udp::read(const char *p, size_t len, int error);
 public:
-  ip::address src, dst;
-  udp::port srcport = 0, dstport;
+  ip::address src, dst, recv;
+  udp::port srcport = 0, dstport, recvport;
   option options;
 
   FILE_INODE_DEFAULT_IMPL;
@@ -252,8 +252,11 @@ public:
   ssize_t read(size_t, void *buf, size_t len, int flags) override;
   ssize_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
+
+  void prepare_read_wait(wait_entry &entry) override;
+  void finish_read_wait(wait_entry &entry) override;
   void wake_read() override;
-  void wake_write() override;
+  
   // Sockets do not support things like `fstatat`.
   meta get_meta() override { return meta(0, 0, 0); }
   void set_meta(const inode::meta &) override {}

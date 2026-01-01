@@ -31,6 +31,8 @@ long getsockname(int fd, void *sockname, void *len);
 long sendto(int fd, void *buf, unsigned long size, int flags, void *dest, unsigned addrlen);
 long sendmsg(int fd, void *msg, int flags);
 long sendmsg(int fd, const msghdr &msg, int flags);
+long recvfrom(int fd, void *buf, unsigned long size, int flags, void *src, unsigned addrlen);
+long recvmsg(int fd, void *msg, int flags);
 long prlimit64(int pid, int resource, void *newrlim, void *oldrlim);
 long nanosleep(int clock, int flags, void *rqtp, void *rmtp);
 long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid);

@@ -40,7 +40,7 @@ ssize_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
   }
 
   auto sz = buffer.size();
-  auto l = min(buffer.size(), len);
+  auto l = min(buffer.size() - rpos, len);
   memcpy(buf, buffer.data() + rpos, l);
   rpos += l;
 

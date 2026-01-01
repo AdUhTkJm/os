@@ -93,7 +93,13 @@ inline int pmap(pa_t pa, const void *va, int mode, unsigned flags, pte_t *root) 
   BADSIZE,
 };
 
+#ifdef RV
 constexpr pa_t __kernel_pt_root = 0x8020'1000;
+#endif
+
+#ifdef LA
+constexpr pa_t __kernel_pt_root = 0x201000;
+#endif
 
 /*
 Unmaps the given virtual address. If it is mapped to some physical address,

@@ -146,16 +146,22 @@ __handler_end:
 #endif
 
 #ifdef __loongarch__
-
-# Unlike RISC-V, we do not need a separate _start,
-# as we don't really need to store a0 (FDT address) and a1 (hart id).
-# The linker will place kernel_main() at the correct place.
+.section .text.low
+.global _start
+_start:
+  addi.d $t0, $zero, 0x202
+  slli.d $t0, $t0, 12 # 0x202000
+  st.d $a0, $t0, 0
+  st.d $a1, $t0, 8
+  st.d $a2, $t0, 16
+  b _Z11kernel_mainv
 
 .section .text.high
 .globl _start_high
 .globl stvec_pos
 .globl __handler_end
 _start_high:
+  la.local $sp, __stack_top
   b _Z9main_highv
 
 stvec_pos:

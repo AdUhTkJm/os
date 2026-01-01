@@ -57,37 +57,35 @@ void kernel_main() {
 
 #ifdef LA
 #define MAP_2G(pa, va, index) \
-  CSRW(tlbehi, ((pa) & (~((1ul << 31) - 1)))); \
-  CSRW(tlblo0, TLBLO_PPN(pa) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0); \
-  CSRW(tlblo1, TLBLO_PPN(pa + (1 << 30)) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0); \
+  CSRW(tlbehi, ((va) & (~((1ul << 31) - 1)))); \
+  CSRW(tlblo0, ((pa) & (~((1UL << TLBLO_PPN_SHIFT) - 1))) | TLBLO_V | TLBLO_D | TLBLO_G); /* PLV0 == 0, so isn't or'ed here. */ \
+  CSRW(tlblo1, ((pa + (1 << 30)) & (~((1UL << TLBLO_PPN_SHIFT) - 1))) | TLBLO_V | TLBLO_D | TLBLO_G); \
   CSRW(tlbidx, (30ul << 24) | index); \
-  __asm__ volatile("tlbwr");
+  __asm__ volatile("tlbfill");
 
+  // First invalidate all TLBs in case there are any remaining.
+  __asm__ volatile("invtlb 0, $zero, $zero");
+  // Disable hardware walkers.
+  CSRW(pwcl, 0);
+  // Disable direct memory.
+  CSRW(dmw0, 0); CSRW(dmw1, 0); CSRW(dmw2, 0); CSRW(dmw3, 0);
+
+  // Map the first 16 GB memory as is done in RISC-V.
   for (unsigned long i = 0; i < 8; i++) {
-    MAP_2G((i << 31), as_va(i << 31), i)
+    MAP_2G((i << 31), as_va(i << 31), i);
   }
   MAP_2G(0, 0, 16);
 #undef MAP_1G
   __asm__ volatile("ibar 0");
   CSRW(asid, 0);
   CSRW(tlbrentry, 0x8);
-  
-  CSRW(tlbehi, 0);
-  __asm__ volatile("tlbsrch");
-  unsigned long check_idx;
-  CSRR(tlbidx, check_idx);
-  // TODO: looks like the TLB entry is never mapped?
-  if (check_idx & (1UL << 31)) {
-    for (;;) ;
-  }
 
   unsigned long crmd;
   CSRR(crmd, crmd);
   crmd &= ~CRMD_DA;
   crmd |= CRMD_PG;
   CSRW(crmd, crmd);
-  *(volatile char*) as_va(0x10000000) = 'A';
-  __asm__ volatile("jirl $zero, %0, 0\n" :: "r"(as_va(0x202000)));
+  __asm__ volatile("jirl $zero, %0, 0\n" :: "r"(as_va(0x203000)));
   __builtin_unreachable();
 #endif
 }
@@ -106,6 +104,28 @@ void idle() {
 void idle() {
   for (;;)
     __asm__ volatile("idle 0");
+}
+
+// The Loongarch boot interface.
+struct boot_tag {
+  unsigned magic;
+  unsigned len;
+  // Data follows...
+};
+
+struct efi {
+
+};
+
+pa_t find_dtb(pa_t start) {
+  auto tag = (boot_tag *) as_va(start);
+  for (int i = 0; i < 100; i++) {
+    if (tag->magic == 0x66424454) // fDTB
+      return *(unsigned long *)((char *) tag + 8);
+    
+    tag = (boot_tag *) ((char *) tag + tag->len);
+  }
+  return 0;
 }
 #endif
 
@@ -154,8 +174,21 @@ void main_high() {
   // Set up page table.
   // Don't directly subtract the arrays: that is UB.
   memset(__bss_begin, 0, (pa_t) __bss_end - (pa_t) __bss_begin);
-  auto pt_root = (pte_t *) as_va((pa_t) 0x80201000);
+  auto pt_root = (pte_t *) as_va((pa_t) __kernel_pt_root);
+#ifdef RV
   punmap((va_t) 0x80000000ul, MAP_1GB, pt_root);
+#endif
+
+#ifdef LA
+  // In Loongarch, we haven't actually populated the software page table.
+  // So we do it manually here.
+  for (unsigned long i = 0; i < 16; i++) {
+    auto pa = i << 30, va = as_va(i << 30);
+    pte_t pte = (PA_LVL2(pa) << PTE_PPN2_OFFSET) | PTE_RWX | PTE_G | PTE_V;
+    pt_root[VA_LVL2(va)] = pte;
+  }
+#endif
+
   // Clear the half of user-space to make sure there won't be bad entries when copying.
   memset(pt_root, 0, PAGE_SIZE / 2);
 
@@ -163,8 +196,21 @@ void main_high() {
   os::init_freelist_kalloc();
 
   // Verify FDT.
+#ifdef RV
   pa_t pfdt = *(pa_t *) as_va(0x80202010);
   int hart_id = *(uint64_t *) as_va(0x80202008);
+#endif
+
+#ifdef LA
+  int hart_id = 0;
+  // This points to the EFI system table.
+  printk("%p\n", mmrd<unsigned>(0x10200));
+  pa_t pfdt = 0;
+  if (!pfdt)
+    panic("no dtb found");
+
+  printk("dtb = %p\n", pfdt);
+#endif
   fdt::read(hart_id, pfdt);
   fdt::check();
   

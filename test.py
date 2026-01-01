@@ -20,6 +20,7 @@ parser.add_argument("--rebuild", action="store_true")
 parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
 parser.add_argument("-m", "--mount", action="store_true")
+parser.add_argument("-s", "--snapshot", action="store_true")
 parser.add_argument("--docs", action="store_true")
 parser.add_argument("--log-refcnt", action="store_true")
 parser.add_argument("--log-syscall", action="store_true")
@@ -65,6 +66,7 @@ BIOS = "" if args.la else "-bios default"
 SPECIAL_FLAGS = {
   "src/interrupt/interrupt.cpp": ["-Wno-unused-variable"]
 }
+SNAPSHOT = ",snapshot=on" if args.snapshot else ""
 
 flags = []
 
@@ -100,6 +102,7 @@ if args.unit_test:
 if args.release:
   flags += ["-flto"]
   LDFLAGS += ["-flto"]
+
 
 if args.la:
   # Loongarch.
@@ -394,10 +397,10 @@ f"""
 -machine virt {BIOS} -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
--drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0 \
+-drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0{SNAPSHOT} \
 -device virtio-blk-pci,drive=x0 \
 \
--drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1 \
+-drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1{SNAPSHOT} \
 -device virtio-blk-pci,drive=x1 \
 \
 -device virtio-net-pci,netdev=net -netdev user,id=net \
@@ -412,10 +415,10 @@ f"""
 -machine virt {BIOS} -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
--drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0 \
+-drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0{SNAPSHOT} \
 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 \
--drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1 \
+-drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1{SNAPSHOT} \
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
 \
 -device virtio-net-device,netdev=net -netdev user,id=net \

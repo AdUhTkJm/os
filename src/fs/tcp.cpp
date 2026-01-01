@@ -44,8 +44,10 @@ void tcp::read(const char *p, size_t len, int error) {
     return;
   }
   auto node = demux->tcps[port];
-  if (error != 0)
+  if (error != 0) {
     node->receive(error);
+    return;
+  }
 
   // We don't strip header here, unlike UDP; we need its info inside the inode.
   tcp_socket_inode::packet g(p, len);
@@ -254,7 +256,6 @@ ssize_t tcp_socket_inode::read(size_t offset, void *buf, size_t len, int flags) 
     }
 
     hangon(readwait, lock, entry);
-    printk("resume\n");
 
     if (rxerr) {
       int err = rxerr;
@@ -334,6 +335,15 @@ ssize_t tcp_socket_inode::write(size_t offset, const void *buf, size_t len, int 
   return l;
 }
 
+short tcp_socket_inode::poll(unsigned short events) {
+  short result = 0;
+  if ((events & POLLIN) && rxbuf.size != 0)
+    result |= POLLIN;
+  if ((events & POLLOUT) && txbuf.size != txbuf.cap)
+    result |= POLLOUT;
+  return result;
+}
+
 int tcp_socket_inode::connect(ip::address addr, tcp::port port) {
   // Haven't bound yet; perform an implicit bind.
   if (state == tcp::state::CLOSED) {
@@ -407,7 +417,7 @@ int tcp_socket_inode::connect(ip::address addr, tcp::port port) {
       continue;
     }
 
-    // Look at the received message
+    // Look at the received message.
     const auto *header = (const tcp::header *) recv.c_str();
     // Actively refused.
     if (header->flags & tcp::RST) {

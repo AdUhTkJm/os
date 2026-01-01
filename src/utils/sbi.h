@@ -58,7 +58,7 @@ C [[noreturn]] inline void sbi_system_reset() {
 C inline sbiret_t sbi_console_write(reg_t len, reg_t s) {
   auto str = (char *) (s + 0xffff'ffc0'0000'0000);
   for (long i = 0; i < len; i++)
-    *(volatile char *) 0xffff'ffc0'1000'0000 = str[i];
+    *(volatile char *) 0xffff'ffc0'1fe0'01e0 = str[i];
   return { .err = 0, .ret = 0 };
 }
 

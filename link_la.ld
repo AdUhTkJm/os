@@ -1,5 +1,5 @@
 OUTPUT_ARCH(loongarch)
-ENTRY(_Z11kernel_mainv)
+ENTRY(_start)
 
 PHYS_BEGIN = 0x200000;
 VIRT_OFFSET = 0xffffffc000000000;
@@ -10,7 +10,7 @@ SECTIONS {
     *(.text.low)
   }
 
-  LMA_START = PHYS_BEGIN + 0x2000;
+  LMA_START = PHYS_BEGIN + 0x3000;
 
   . = VIRT_OFFSET + LMA_START;
   __kernel_begin = .;
@@ -18,7 +18,7 @@ SECTIONS {
     *(.text.high)
   }
 
-  . = ALIGN(8);
+  . = ALIGN(4096);
   LMA_NEXT = . - VIRT_OFFSET;
   .text : AT(LMA_NEXT) {
     __text_begin = .;
@@ -26,7 +26,7 @@ SECTIONS {
     __text_end = .;
   }
 
-  . = ALIGN(8);
+  . = ALIGN(4096);
   LMA_NEXT = . - VIRT_OFFSET;
   .rodata : AT(LMA_NEXT) {
     __rodata_begin = .;
@@ -34,7 +34,7 @@ SECTIONS {
     __rodata_end = .;
   }
 
-  . = ALIGN(8);
+  . = ALIGN(4096);
   LMA_NEXT = . - VIRT_OFFSET;
   .data : AT(LMA_NEXT) {
     __data_begin = .;

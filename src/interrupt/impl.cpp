@@ -704,11 +704,11 @@ long sendto(int fd, void *_buf, unsigned long size, int flags, void *dest, unsig
   if (flags & MSG_DONTWAIT)
     writeflags |= O_NONBLOCK;
 
-  char buf[1024];
-  int written = 0;
-  for (size_t i = 0; i < size; i += 1024) {
+  char buf[1460];
+  size_t written = 0;
+  while (written < size) {
     size_t l = min(1024ul, size);
-    if (!copy_from_user(buf, (char *) _buf + i, l))
+    if (!copy_from_user(buf, (char *) _buf + written, l))
       return -EFAULT;
 
     auto ret = node->write(0, buf, l, writeflags);
@@ -746,6 +746,45 @@ long sendmsg(int fd, void *msg, int flags) {
     return -EFAULT;
 
   return sendmsg(fd, header, flags);
+}
+
+long recvfrom(int fd, void *_buf, unsigned long size, int flags, void *src, unsigned int addrlen) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  auto node = file->node();
+  int readflags = 0;
+  if (flags & MSG_DONTWAIT)
+    readflags |= O_NONBLOCK;
+
+
+  // We read a single packet.
+  char buf[1460];
+  size_t l = min(1460ul, size);
+  auto ret = node->read(0, buf, l, readflags);
+  if (ret <= 0)
+    return ret;
+
+  if (!copy_to_user((char *) _buf, buf, l))
+    return -EFAULT;
+  size -= l;
+  // We should copy incoming message's destination into `src`.
+  if (src) {
+    if (auto udp = dyn_cast<udp_socket_inode>(node)) {
+      sockaddr_in result {
+        .sin_family = AF_INET,
+        .sin_port = udp->recvport,
+        .sin_addr = { .s_addr = udp->recv },
+      };
+      if (!copy_to_user(src, &result, min(8u, addrlen)))
+        return -EFAULT; 
+    }
+  }
+  return ret;
 }
 
 long prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {

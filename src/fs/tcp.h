@@ -121,10 +121,12 @@ public:
 
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
+  short poll(unsigned short events) override;
   void set_meta(const meta &) override {}
   meta get_meta() override { return meta(0, 0, 0); }
 
   void prepare_read_wait(wait_entry &entry) override { readwait.prepare(entry); }
+  void finish_read_wait(wait_entry &entry) override { readwait.finish(entry); }
   void wake_read() override { readwait.wake_all(); }
   void onclose(int) override;
 
