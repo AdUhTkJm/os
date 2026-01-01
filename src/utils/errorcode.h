@@ -36,6 +36,7 @@ enum error_code {
   ENAMETOOLONG = 36,
   ENOSYS = 38,
   ELOOP = 40,
+  EIDRM = 43,
   ENOTSOCK = 88,
   ENOPROTOOPT = 92,
   EADDRINUSE = 98,

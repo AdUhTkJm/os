@@ -850,6 +850,8 @@ long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *chi
 long shmget(int key, unsigned long len, int flags) {
   bool create = key == 0 || (flags & IPC_CREAT);
   bool excl = flags & IPC_EXCL;
+  auto tcb = active();
+  auto pcb = tcb->pcb;
   
   if (create) {
     if (key == 0)
@@ -859,7 +861,7 @@ long shmget(int key, unsigned long len, int flags) {
     if (auto it = shm::shm->find(key); it != shm::shm->end()) {
       if (excl)
         return -EEXIST;
-      auto file = (*it).second;
+      auto [file, _] = (*it).second;
       file->close();
     }
     
@@ -869,11 +871,14 @@ long shmget(int key, unsigned long len, int flags) {
     if (flags & SHM_W)
       perm |= 0222;
 
-    inode *node = new tmpfs_inode(&*tmpfs, 0, 0, perm, inode::File);
+    auto node = new tmpfs_inode(&*tmpfs, pcb->uid, pcb->gid, perm, inode::File);
     node->truncate(len);
     auto *file = new class file(new dentry("", node, nullptr), O_RDWR);
     file->ref();
-    shm::shm->insert(key, file);
+    struct shm::shared_memory::meta meta {
+      .atime = 0, .dtime = 0, .ctime = now()
+    };
+    shm::shm->insert(key, { file, meta });
     return key;
   }
 
@@ -897,7 +902,10 @@ long shmat(int key, unsigned long addr, int flags) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  auto file = (*it).second;
+  auto &[file, meta] = (*it).second;
+  if (meta.removed)
+    return -EIDRM;
+
   auto node = file->node();
 
   int prot = 0;
@@ -909,8 +917,66 @@ long shmat(int key, unsigned long addr, int flags) {
   if (node->mode & 2)
     prot |= PROT_WRITE;
 
+  meta.atime = now();
+  meta.attach++;
+
   auto fd = pcb->ftbl->allocate(file);
   return mmap(addr, node->size(), prot, MAP_SHARED, fd, 0);
+}
+
+long shmdt(unsigned long addr) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  // We find the exact starting point, rather than anything containing it.
+  auto vma = pcb->vma->vmas.find(addr);
+  if (!vma)
+    return -EINVAL;
+  auto backup = vma->backup;
+  if (!backup)
+    return -EINVAL;
+
+  optional<int> key = nullopt;
+  for (const auto &[k, value] : *shm::shm) {
+    if (value.backup == backup) {
+      key = k;
+      break;
+    }
+  }
+  if (!key)
+    return -EINVAL;
+
+  auto &[file, meta] = shm::shm->at(*key);
+  meta.dtime = now();
+  meta.attach--;
+  pcb->vma->vmas.erase(vma->begin);
+  return 0;
+}
+
+long shmctl(int key, int op, void *buf) {
+  auto it = shm::shm->find(key);
+  if (it == shm::shm->end())
+    return -ENOENT;
+  
+  shmid_ds option;
+  // Some operations don't need the option.
+  if (op != IPC_RMID) {
+    if (!copy_from_user(&option, buf, sizeof(shmid_ds)))
+      return -EFAULT;
+  }
+
+  auto &[file, meta] = (*it).second;
+  meta.ctime = now();
+  switch (op) {
+  case IPC_RMID:
+    meta.removed = true;
+    file->drop();
+    return 0;
+    
+  default:
+    printk("unknown op: %d\n", op);
+    return -EINVAL;
+  }
 }
 
 long getsockname(int fd, void *sockname, void *_len) {
@@ -1048,6 +1114,41 @@ retry:
     goto retry;
   // Recovered from sleeping by signal.
   return -EINTR;
+}
+
+long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long newpath, int flags) {
+  auto pcb = active()->pcb;
+  
+  auto path = copy_from_user((char *) oldpath);
+  if (!path || !*path)
+    return -EFAULT;
+
+  auto npath = copy_from_user((char *) newpath);
+  if (!npath || !*npath)
+    return -EFAULT;
+
+  auto dir = dirname(path->get());
+  int fd = pcb->open_file_from(dir, olddirfd, O_PATH);
+  if (fd < 0)
+    return fd;
+    
+  auto newdir = dirname(npath->get());
+  int nfd = pcb->open_file_from(newdir, newdirfd, O_PATH);
+  if (nfd < 0)
+    return nfd;
+
+  auto file = pcb->ftbl->at(fd);
+  auto newfile = pcb->ftbl->at(nfd);
+  auto node = file->node(), nnode = newfile->node();
+  if (node->type != inode::Dir || nnode->type != inode::Dir)
+    return -ENOTDIR;
+
+  if (node->fs != nnode->fs)
+    return -EXDEV;
+  
+  auto name = basename(path->get());
+  vfs::invalidate(node, name);
+  return node->move(name, nnode, basename(npath->get()), flags);
 }
 
 }

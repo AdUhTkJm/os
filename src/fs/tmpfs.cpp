@@ -33,6 +33,34 @@ int tmpfs_inode::truncate(size_t len) {
   return 0;
 }
 
+int tmpfs_inode::move(const string &name, inode *other, const string &newname, int flags) {
+  auto tmp = cast<tmpfs_inode>(other);
+
+  auto it = children.find(name);
+  if (it == children.end())
+    return -ENOENT;
+
+  auto node = (*it).second;
+  children.erase(name);
+
+  auto existing = tmp->children.find(newname);
+  if (existing == children.end() && (flags & RENAME_EXCHANGE))
+    return -ENOENT;
+  
+  if (existing != children.end() && flags & RENAME_NOREPLACE)
+    return -EEXIST;
+
+  if (existing != children.end()) {
+    tmp->children.erase(newname);
+    if (flags & RENAME_EXCHANGE)
+      children[name] = (*existing).second;
+  }
+  
+  tmp->children[newname] = node;
+  tmp->meta.mtime = meta.mtime = now();
+  return 0;
+}
+
 int tmpfs_inode::create(const string &name, filetype ty, int mode) {
   if (type != Dir)
     return -ENOTDIR;

@@ -37,18 +37,26 @@ static_storage<os::hashmap<int, net_device*>> net_devs;
   if (!(status & 1))
     return;
 
-  auto queue = (vq::queue_legacy *) dev->queue;
-  for (unsigned i = dev->rxlast; i < queue->used.idx; i++) {
-    const auto &used = queue->used.ring[i % vq::size];
+  for (unsigned i = dev->last; i < dev->q->used.idx; i++) {
+    const auto &used = dev->q->used.ring[i % vq::size];
     auto id = used.id;
-    assert(id < vq::size && dev->readreq[id]);
+    assert(id < vq::size);
+    // The request must present in exactly one wait queue.
+    // We still want to keep two separate wait queues, in case we'd want to wake readers/writers later on.
+    assert(!!dev->readreq[id] ^ !!dev->writereq[id]);
 
-    dev->wait.wake(*dev->readreq[id], /*can_preempt=*/ false);
-    dev->readreq[id] = nullptr;
+    if (dev->readreq[id]) {
+      dev->readwait.wake(*dev->readreq[id], /*can_preempt=*/ false);
+      dev->readreq[id] = nullptr;
+    }
+    if (dev->writereq[id]) {
+      dev->writewait.wake(*dev->writereq[id], /*can_preempt=*/ false);
+      dev->writereq[id] = nullptr;
+    }
 
     dev->free_chain(id);
   }
-  dev->rxlast = queue->used.idx;
+  dev->last = dev->q->used.idx;
 
   mmwr(dev->base + INTERRUPT_ACK, status);
   os::mmwr(PLIC_BASE + PLIC_CLAIM_S_OFFSET, irq);
@@ -135,6 +143,7 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
 
   // Do device-specific set up. See section 4.2.3.2.
   // Select virtqueue 0, and see max queue size.
+  // This block device has only one queue available; we cannot set up separate read/write queues.
   mmwr(base + QUEUE_SEL, 0);
   if (!legacy && mmrd<int32_t>(base + QUEUE_READY) != 0)
     panic("block device: queue occupied");
@@ -149,46 +158,20 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
   // Set the queue length.
   mmwr(base + QUEUE_SIZE, vq::size);
 
-  // We assume a split virtqueue.
-  // Allocate the three areas. See section 2.7.
-  if (!legacy) {
-    // TODO: This has to be physically contiguous.
-    pa_t desc = to_pa(vmalloc<16>(16 * vq::size));
-    pa_t avail = to_pa(vmalloc<2>(6 + 2 * vq::size));
-    pa_t used = to_pa(vmalloc<4>(6 + 8 * vq::size));
+  // See section 2.7.2 for the legacy layout.
+  mmwr(base + QUEUE_ALIGN, vq::align);
+  mmwr(base + DRIVER_PAGE_SIZE, PAGE_SIZE);
 
-    mmwr<uint32_t>(base + QUEUE_DESC_LOW, desc & 0xffff'ffff);
-    mmwr<uint32_t>(base + QUEUE_DESC_HIGH, desc >> 32);
-    mmwr<uint32_t>(base + QUEUE_DRIVER_LOW, avail & 0xffff'ffff);
-    mmwr<uint32_t>(base + QUEUE_DRIVER_HIGH, avail >> 32);
-    mmwr<uint32_t>(base + QUEUE_DEVICE_LOW, used & 0xffff'ffff);
-    mmwr<uint32_t>(base + QUEUE_DEVICE_HIGH, used >> 32);
-    queue = new (os::permanent) vq::queue {
-      (vq::desc(*)[vq::size]) as_va(desc),
-      (vq::avail_ring*) as_va(avail),
-      (vq::used_ring*) as_va(used)
-    };
+  // Allocate space for queue.
+  constexpr auto size = roundup<vq::align>(sizeof(vq::desc) * vq::size + 2 * (3 + vq::size))
+    + roundup<vq::align>(6 + sizeof(vq::used_ring::element) * vq::size);
+  static_assert(roundup<PAGE_SIZE>(sizeof(vq::queue_legacy)) == size);
+  pa_t mem = pmalloc(size / PAGE_SIZE);
 
-    // Now the queue is ready.
-    mmwr(base + QUEUE_READY, 1);
-  } else {
-    // See section 2.7.2 for the legacy layout.
-    mmwr(base + QUEUE_ALIGN, vq::align);
-    mmwr(base + DRIVER_PAGE_SIZE, PAGE_SIZE);
-
-    // Allocate space for queue.
-    constexpr auto size = roundup<vq::align>(sizeof(vq::desc) * vq::size + 2 * (3 + vq::size))
-      + roundup<vq::align>(6 + sizeof(vq::used_ring::element) * vq::size);
-    static_assert(roundup<PAGE_SIZE>(sizeof(vq::queue_legacy)) == size);
-    pa_t mem = pmalloc(size / PAGE_SIZE);
-
-    // Set up the registers and the queue.
-    mmwr<uint32_t>(base + QUEUE_PFN, mem / PAGE_SIZE);
-    queue = (vq::queue_legacy *) as_va(mem);
-    memset(queue, 0, size);
-
-    // In legacy we shouldn't set up QueueReady.
-  }
+  // Set up the registers and the queue.
+  mmwr<uint32_t>(base + QUEUE_PFN, mem / PAGE_SIZE);
+  memset(q = (vq::queue_legacy *) as_va(mem), 0, size);
+  
 
   // Read the capacity and the max segment size.
   cap = mmrd<unsigned long>(base + CONFIG_BASE);
@@ -203,6 +186,7 @@ block_device::block_device(const device &device, bool legacy): descid(0), legacy
   for (int i = 0; i < vq::size; i++)
     free[i] = i;
   memset(readreq, 0, sizeof(readreq));
+  memset(writereq, 0, sizeof(writereq));
 
   // Finish the setup.
   status |= device_status::DRIVER_OK;
@@ -278,10 +262,9 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   descriptor d[3];
   if (!alloc_chain(3, d))
     panic("block device: read: no descriptors available");
-  auto queue = (vq::queue_legacy *) this->queue;
-  vq::desc &d0 = queue->desc[d[0]];
-  vq::desc &d1 = queue->desc[d[1]];
-  vq::desc &d2 = queue->desc[d[2]];
+  vq::desc &d0 = q->desc[d[0]];
+  vq::desc &d1 = q->desc[d[1]];
+  vq::desc &d2 = q->desc[d[2]];
 
   d0.addr = req;
   d0.len = sizeof(request_legacy);
@@ -300,34 +283,24 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
 
   // Put the head of chain into available ring for the device to read.
   uint16_t head = d[0];
-  queue->avail.ring[queue->avail.idx % vq::size] = head;
-  queue->avail.idx++;
+  q->avail.ring[q->avail.idx % vq::size] = head;
+  q->avail.idx++;
 
   wait_entry entry;
 
-  lock.acquire();
-  if (readreq[head])
-    panic("block_device: queue full");
+  readlock.acquire();
+  assert(!readreq[head]);
 
   readreq[head] = &entry;
+  // Tell device that a new request has come.
+  mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
+  WFENCE;
   for (;;) {
-    wait.prepare(entry);
-    lock.release();
-
-    // Tell device that a new request has come.
-    WFENCE;
-    mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-    if (suspend() != 0) {
-      wait.finish(entry);
-      return -EINTR;
-    }
-
-    lock.acquire();
-    wait.finish(entry);
+    hangon(readwait, readlock, entry);
     if (mmrd<unsigned char>(status) != 0xff)
       break;
   }
-  lock.release();
+  readlock.release();
 
   RFENCE;
   auto stat = mmrd<unsigned char>(status);
@@ -357,10 +330,9 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   descriptor d[3];
   if (!alloc_chain(3, d))
     panic("block device: write: no descriptors available");
-  auto queue = (vq::queue_legacy *) this->queue;
-  vq::desc &d0 = queue->desc[d[0]];
-  vq::desc &d1 = queue->desc[d[1]];
-  vq::desc &d2 = queue->desc[d[2]];
+  vq::desc &d0 = q->desc[d[0]];
+  vq::desc &d1 = q->desc[d[1]];
+  vq::desc &d2 = q->desc[d[2]];
 
   d0.addr = req;
   d0.len = sizeof(request_legacy);
@@ -378,14 +350,28 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   d2.next = 0;
 
   // Put the head of chain into available ring for the device to read.
-  queue->avail.ring[queue->avail.idx % vq::size] = d[0];
-  queue->avail.idx++;
+  unsigned short head = d[0];
+  q->avail.ring[q->avail.idx % vq::size] = head;
+  q->avail.idx++;
 
   // Tell device that a new request has come.
+
+  wait_entry entry;
+  writelock.acquire();
+  assert(!writereq[head]);
+
+  writereq[head] = &entry;
   WFENCE;
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
+  for (;;) {
+    hangon(writewait, writelock, entry);
+    if (mmrd<unsigned char>(status) != 0xff)
+      break;
+  }
+  writelock.release();
   pfree(buf);
   pfree(req);
+  pfree(status);
   return mmrd<unsigned char>(status);
 }
 

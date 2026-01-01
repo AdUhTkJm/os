@@ -35,8 +35,11 @@ long prlimit64(int pid, int resource, void *newrlim, void *oldrlim);
 long nanosleep(int clock, int flags, void *rqtp, void *rmtp);
 long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid);
 long shmget(int key, unsigned long len, int flags);
-long shmat(int shmid, unsigned long addr, int flags);
+long shmat(int key, unsigned long addr, int flags);
+long shmdt(unsigned long addr);
+long shmctl(int key, int op, void *buf);
 long ppoll(void *_fds, unsigned cnt, unsigned long tmo, void *sigmask, bool isuser);
+long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long newpath, int flags);
 
 long fromtype(inode::filetype ty);
 

@@ -154,18 +154,18 @@ static_assert(offsetof(queue_legacy, used) % PAGE_SIZE == 0);
 
 class block_device : public os::block_device {
   pa_t base;
-  void *queue; // Either queue or queue_legacy.
-  unsigned rxlast = 0;
+  vq::queue_legacy *q;
+  unsigned last = 0;
   int descid;
   bool legacy;
-  spinlock lock;
-  wait_queue wait;
+  spinlock readlock, writelock;
+  wait_queue readwait, writewait;
   unsigned long cap;
   unsigned segment_size_max;
 
   // Track read requests.
   // Maps `head` to the request's wait entry.
-  wait_entry *readreq[vq::size];
+  wait_entry *readreq[vq::size], *writereq[vq::size];
 
   // Track free descriptors.
   using descriptor = uint16_t;

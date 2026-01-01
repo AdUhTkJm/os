@@ -78,6 +78,7 @@ class block_inode : public inode_impl<block_inode> {
 
   cached_sector *load_page(unsigned page, bool force_reload = false);
   void flush_page(unsigned page);
+  void flush_impl(cached_sector *root);
 public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;

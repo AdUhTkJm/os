@@ -84,6 +84,8 @@ typedef enum {
   asid   = 0x18,
   pgdl   = 0x19,
   pgdh   = 0x20,
+  tlbrentry = 0x88,
+  dmw0   = 0x180,
 } loongarch_csrs_t;
 
 #define CRMD_PLV (1 << 0) /* Privilege level */

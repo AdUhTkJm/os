@@ -799,6 +799,27 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
   return 0;
 }
 
+int ext_inode::move(const string &name, inode *other, const string &newname, int flags) {
+  auto extn = cast<ext_inode>(other);
+  auto inode = lookup(name);
+  auto old = other->lookup(newname);
+  if (old && (flags & RENAME_NOREPLACE))
+    return -EEXIST;
+
+  if (!old && (flags & RENAME_EXCHANGE))
+    return -ENOENT;
+  
+  unlink(name);
+  if (old) {
+    other->unlink(newname);
+    if (flags & RENAME_EXCHANGE)
+      add_dirent(name, old->inum(), old->type);
+  }
+
+  extn->add_dirent(newname, inode->inum(), inode->type);
+  return 0;
+}
+
 inode::meta ext_inode::get_meta() {
   return inode::meta(
     meta.atime * 1_s,

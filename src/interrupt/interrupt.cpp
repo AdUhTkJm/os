@@ -426,10 +426,8 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
   return 0;
 }
 
-// TODO: handle it properly and add a rename() call in VFS.
-// `mv` will fall back to unlink + copy if we return -EXDEV, but this isn't the correct thing to do.
 HANDLE(renameat2, olddirfd, oldpath, newdirfd, newpath, flags) {
-  return -EXDEV;
+  return detail::rename(olddirfd, oldpath, newdirfd, newpath, flags);
 }
 
 HANDLE(umask, mask) {
@@ -1374,6 +1372,14 @@ HANDLE(shmget, key, len, flags) {
 
 HANDLE(shmat, key, addr, flags) {
   return detail::shmat(key, addr, flags);
+}
+
+HANDLE(shmdt, addr) {
+  return detail::shmdt(addr);
+}
+
+HANDLE(shmctl, key, op, buf) {
+  return detail::shmctl(key, op, (void *) buf);
 }
 
 HANDLE(madvise, addr, len, type) {

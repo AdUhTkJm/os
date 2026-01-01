@@ -20,8 +20,6 @@ struct rb_node {
 
 template <typename K, typename V>
 class rb_tree {
-  V *root = nullptr;
-
   void rotate_left(V *x) {
     V *y = x->r;
     x->r = y->l;
@@ -96,6 +94,8 @@ class rb_tree {
     root->color = Black;
   }
 public:
+  V *root = nullptr;
+  
   V *find(K key) const {
     for (V *cur = root; cur; cur = (key < cur->key) ? cur->l : cur->r) {
       if (key == cur->key)

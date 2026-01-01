@@ -1,17 +1,18 @@
 OUTPUT_ARCH(loongarch)
 ENTRY(_Z11kernel_mainv)
 
+PHYS_BEGIN = 0x200000;
 VIRT_OFFSET = 0xffffffc000000000;
 
 SECTIONS {
-  . = 0x90000000;
+  . = PHYS_BEGIN;
   .text.low : {
     *(.text.low)
   }
 
-  LMA_START = 0x90002000;
+  LMA_START = PHYS_BEGIN + 0x2000;
 
-  . = 0xffffffc090002000;
+  . = VIRT_OFFSET + LMA_START;
   __kernel_begin = .;
   .text.high : AT(LMA_START) {
     *(.text.high)

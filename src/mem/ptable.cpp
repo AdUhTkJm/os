@@ -396,4 +396,8 @@ void setroot(int asid, pa_t pt_root) {
 }
 #endif
 
+#ifdef LA
+void setroot(int, pa_t) {}
+#endif
+
 }

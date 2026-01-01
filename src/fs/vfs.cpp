@@ -546,8 +546,12 @@ void page_cache::erase(size_t i) {
 
 void page_cache::flush() {
   synchronized _(lock);
-  // TODO: enumerate
+  auto oldpage = pages;
   pages.clear();
+
+  // We do a copy to avoid concurrency issues.
+  for (auto [_, page] : oldpage)
+    delete page;
 }
 
 page_cache::~page_cache() {

@@ -24,6 +24,7 @@ public:
   int create(const string &name, filetype ty, int mode) override;
   int unlink(const string &name) override;
   int rmdir(const string &name) override;
+  int move(const string &name, inode *other, const string &newname, int flags) override;
   inode *lookup(const string &name) override;
   os::vector<item> list() override;
   optional<string> readlink() override;

@@ -387,7 +387,26 @@ if __name__ == "__main__":
     # -d in_asm -D qemu.log
     asm = "-d in_asm" if args.assembly else ""
     gdb = "-S -s" if args.gdb else ""
-    proc.run(
+    if args.la:
+      proc.run(
+f"""
+~/.local/qemu/build/{QEMU} -m 1G -nographic \
+-machine virt {BIOS} -kernel {BUILD_DIR}/kernel \
+-initrd {BUILD_DIR}/initramfs.cpio \
+\
+-drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0 \
+-device virtio-blk-pci,drive=x0 \
+\
+-drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1 \
+-device virtio-blk-pci,drive=x1 \
+\
+-device virtio-net-pci,netdev=net -netdev user,id=net \
+-d guest_errors -D qemu.log \
+-rtc base=utc \
+{asm} {gdb}
+""", shell=True)
+    else:
+      proc.run(
 f"""
 ~/.local/qemu/build/{QEMU} -m 1G -nographic \
 -machine virt {BIOS} -kernel {BUILD_DIR}/kernel \

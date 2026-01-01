@@ -257,8 +257,8 @@ extern "C" void _start() {
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       // CD " && sh ./ltp_testcode.sh";
-      // CD "/ltp/testcases/bin && ./chmod03; echo 'done'";
-      "echo 'start python...'; python -m http.server 8080 --bind 0.0.0.0";
+      CD "/ltp/testcases/bin && ./shmt05; echo 'done'";
+      // "echo 'start python...'; python -m http.server 8080 --bind 0.0.0.0";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };

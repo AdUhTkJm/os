@@ -56,25 +56,38 @@ void kernel_main() {
 #endif
 
 #ifdef LA
-#define MAP_1G(pa, va) \
-  CSRW(tlbehi, TLBEHI_VPPA(va)); \
+#define MAP_2G(pa, va, index) \
+  CSRW(tlbehi, ((pa) & (~((1ul << 31) - 1)))); \
   CSRW(tlblo0, TLBLO_PPN(pa) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0); \
-  CSRW(tlblo1, 0); \
-  CSRW(tlbidx, 30ul << 24); \
+  CSRW(tlblo1, TLBLO_PPN(pa + (1 << 30)) | TLBLO_V | TLBLO_D | TLBLO_G | TLBLO_PLV0); \
+  CSRW(tlbidx, (30ul << 24) | index); \
   __asm__ volatile("tlbwr");
 
-  for (unsigned long i = 0; i < 16; i++) {
-    MAP_1G((i << 30), as_va(i << 30))
+  for (unsigned long i = 0; i < 8; i++) {
+    MAP_2G((i << 31), as_va(i << 31), i)
   }
-  MAP_1G(0x9000'0000ul, 0x9000'0000ul);
+  MAP_2G(0, 0, 16);
 #undef MAP_1G
+  __asm__ volatile("ibar 0");
+  CSRW(asid, 0);
+  CSRW(tlbrentry, 0x8);
+  
+  CSRW(tlbehi, 0);
+  __asm__ volatile("tlbsrch");
+  unsigned long check_idx;
+  CSRR(tlbidx, check_idx);
+  // TODO: looks like the TLB entry is never mapped?
+  if (check_idx & (1UL << 31)) {
+    for (;;) ;
+  }
 
   unsigned long crmd;
   CSRR(crmd, crmd);
   crmd &= ~CRMD_DA;
   crmd |= CRMD_PG;
   CSRW(crmd, crmd);
-  __asm__ volatile("jirl $zero, %0, 0\n" :: "r"(as_va(0x9000'2000)));
+  *(volatile char*) as_va(0x10000000) = 'A';
+  __asm__ volatile("jirl $zero, %0, 0\n" :: "r"(as_va(0x202000)));
   __builtin_unreachable();
 #endif
 }

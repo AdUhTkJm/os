@@ -77,11 +77,10 @@ block_inode::cached_sector *block_inode::load_page(unsigned page, bool force_rel
     c = new cached_sector();
     c->key = page;
     c->data = (unsigned char *) as_va(pframe());
-  } else if (!force_reload)
+  } else [[likely]] if (!force_reload)
     return c;
   
-  unsigned sector = page * 8;
-  if (auto ret = dev->read(sector, c->data, 8); ret != 0)
+  if (auto ret = dev->read(page * 8, c->data, 8); ret != 0)
     return printk("device: error code %d\n", ret), nullptr;
   active()->ruse.ru_inblock++;
 
@@ -149,8 +148,19 @@ ssize_t block_inode::write(size_t offset, const void *buf, size_t len, int flags
   return pos;
 }
 
+void block_inode::flush_impl(block_inode::cached_sector *root) {
+  dev->write(root->key * 8, root->data, 8);
+  if (root->l)
+    flush_impl(root->l);
+  if (root->r)
+    flush_impl(root->r);
+}
+
 void block_inode::flush() {
-  // TODO: enumerate an RB-tree!
+  auto oldroot = cache.root;
+  cache.root = nullptr;
+  if (oldroot)
+    flush_impl(oldroot);
 }
 
 void *block_inode::get_page(unsigned i) {

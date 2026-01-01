@@ -1,9 +1,7 @@
-#ifdef __riscv
-
 .global _ZN2os12context_saveEPvPb
 .global context_restore
 .section .text
-
+#ifdef __riscv
 # int context_save(void *ctx, bool *ctx_valid)
 _ZN2os12context_saveEPvPb:
   # Store all necessary registers into ctx.
@@ -73,3 +71,60 @@ context_restore:
 
 #endif
 
+#ifdef __loongarch__
+# int context_save(void *ctx, bool *ctx_valid)
+# Note that Loongarch has 9 temporaries (2 more than RISC-V) and hence 10 callee-saved ones (2 less).
+# We don't try to save space here.
+_ZN2os12context_saveEPvPb:
+  st.d $s0, $a0, 0
+  st.d $s1, $a0, 8
+  st.d $s2, $a0, 16
+  st.d $s3, $a0, 24
+  st.d $s4, $a0, 32
+  st.d $s5, $a0, 40
+  st.d $s6, $a0, 48
+  st.d $s7, $a0, 56
+  st.d $s8, $a0, 64
+  st.d $s9, $a0, 72
+  st.d $ra, $a0, 96
+  st.d $sp, $a0, 104
+  csrrd $t0, 6 # ERA
+  st.d $t0, $a0, 112
+  csrrd $t0, 1  # PRMD
+  st.d $t0, $a0, 120
+
+  # Mark ctx as valid.
+  li.w $t0, 1
+  st.b $t0, $a1, 0
+
+  # scheduler.dispatch()
+  la.local $a0, _ZN2os9schedulerE
+  bl _ZN2os11scheduler_t8dispatchEv  # noreturn
+
+context_restore:
+  ld.d $s0, $a0, 0
+  ld.d $s1, $a0, 8
+  ld.d $s2, $a0, 16
+  ld.d $s3, $a0, 24
+  ld.d $s4, $a0, 32
+  ld.d $s5, $a0, 40
+  ld.d $s6, $a0, 48
+  ld.d $s7, $a0, 56
+  ld.d $s8, $a0, 64
+  ld.d $s9, $a0, 72
+  ld.d $ra, $a0, 96
+  ld.d $sp, $a0, 104
+  ld.d $t0, $a0, 112
+  csrwr $t0, 6 # ERA
+  ld.d $t0, $a0, 120
+  csrwr $t0, 1 # PRMD
+
+2:
+  # return a1 ? -EINTR : 0
+  bnez $a1, 3f
+  li.w $a0, 0
+  ret
+3:
+  li.w $a0, -4
+  ret
+#endif
