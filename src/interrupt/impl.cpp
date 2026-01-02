@@ -139,6 +139,12 @@ long mount(const char *src, const char *tgt, const char *fsty, unsigned long fla
   if (!fs)
     return fs;
 
+  vfs::mounted->push_back({
+    .fstype = fsty,
+    .device = "none", // TODO: how to fill it in?
+    .mntpoint = mntpoint->path(),
+    .prot = PROT_READ | PROT_WRITE
+  });
   vfs::mount(mntpoint, (*fs)->root);
   return 0;
 }
@@ -893,16 +899,22 @@ long shmget(int key, unsigned long len, int flags) {
   auto pcb = tcb->pcb;
   
   if (create) {
-    if (key == 0)
-      // Allocate a new key. We would expect most keys are unused.
-      while (shm::shm->count(key = rand()));
+    int id;
+    // We will never find `key == 0` since it is not inserted.
+    auto i = shm::key2id->find(key);
+    if (excl && i != shm::key2id->end())
+      return -EEXIST;
+
+    if (len == 0)
+      return -EINVAL;
+
+    id = i != shm::key2id->end() ? (*i).second : shm::nextid++;
+    if (key != 0)
+      shm::key2id->insert(key, id);
     
-    if (auto it = shm::shm->find(key); it != shm::shm->end()) {
-      if (excl)
-        return -EEXIST;
-      auto [file, _] = (*it).second;
-      file->close();
-    }
+    // Even with `IPC_CREAT`, we don't replace the segment.
+    if (shm::shm->count(id))
+      return id;
     
     int perm = 0;
     if (flags & SHM_R)
@@ -917,24 +929,25 @@ long shmget(int key, unsigned long len, int flags) {
     struct shm::shared_memory::meta meta {
       .atime = 0, .dtime = 0, .ctime = now()
     };
-    shm::shm->insert(key, { file, meta });
-    return key;
+    shm::shm->insert(id, { file, meta });
+    return id;
   }
 
   // Retrieve the key.
-  auto it = shm::shm->find(key);
-  if (it == shm::shm->end())
+  auto i = shm::key2id->find(key);
+  if (i == shm::key2id->end())
     return -ENOENT;
-  return key;
+
+  return (*i).second;
 }
 
-long shmat(int key, unsigned long addr, int flags) {
+long shmat(int id, unsigned long addr, int flags) {
   if (addr && (flags & SHM_RND))
     addr = rounddown<PAGE_SIZE>(addr);
   else if (addr % PAGE_SIZE != 0)
     return -EINVAL;
   
-  auto it = shm::shm->find(key);
+  auto it = shm::shm->find(id);
   if (it == shm::shm->end())
     return -ENOENT;
 
@@ -960,7 +973,7 @@ long shmat(int key, unsigned long addr, int flags) {
   meta.attach++;
 
   auto fd = pcb->ftbl->allocate(file);
-  return mmap(addr, node->size(), prot, MAP_SHARED, fd, 0);
+  return mmap(addr, node->size(), prot, MAP_SHARED | MAP_FIXED, fd, 0);
 }
 
 long shmdt(unsigned long addr) {
@@ -975,25 +988,25 @@ long shmdt(unsigned long addr) {
   if (!backup)
     return -EINVAL;
 
-  optional<int> key = nullopt;
+  optional<int> id = nullopt;
   for (const auto &[k, value] : *shm::shm) {
     if (value.backup == backup) {
-      key = k;
+      id = k;
       break;
     }
   }
-  if (!key)
+  if (!id)
     return -EINVAL;
 
-  auto &[file, meta] = shm::shm->at(*key);
+  auto &[file, meta] = shm::shm->at(*id);
   meta.dtime = now();
   meta.attach--;
   pcb->vma->vmas.erase(vma->begin);
   return 0;
 }
 
-long shmctl(int key, int op, void *buf) {
-  auto it = shm::shm->find(key);
+long shmctl(int id, int op, void *buf) {
+  auto it = shm::shm->find(id);
   if (it == shm::shm->end())
     return -ENOENT;
   
@@ -1074,15 +1087,19 @@ long ppoll(void *_fds, unsigned int cnt, unsigned long timeout, void *sigmask, b
   if (cnt <= 0)
     return -EINVAL;
 
-  // TODO: how to remove dynamic allocation here?
-  unique_ptr<pollfd[]> fds;
+  pollfd *fds;
   if (isuser) {
-    fds.reset(new pollfd[cnt]);
-    if (!copy_from_user(fds.get(), (void *) _fds, cnt * sizeof(pollfd)))
+    fds = new pollfd[cnt];
+    if (!copy_from_user(fds, (void *) _fds, cnt * sizeof(pollfd)))
       return -EFAULT;
-  } else {
-    fds.reset((pollfd *) _fds);
-  }
+  } else
+    fds = (pollfd *) _fds;
+
+  struct finisher {
+    pollfd *fds;
+    bool isuser;
+    ~finisher() { if (isuser) delete[] fds; }
+  } _takeback(fds, isuser);
 
   auto tcb = active();
   auto pcb = tcb->pcb;
@@ -1108,7 +1125,7 @@ retry:
   }
   if (available) {
     if (isuser) {
-      if (!copy_to_user((void *) _fds, fds.get(), cnt * sizeof(pollfd)))
+      if (!copy_to_user((void *) _fds, fds, cnt * sizeof(pollfd)))
         return -EFAULT;
     }
     return available;

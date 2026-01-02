@@ -8,6 +8,7 @@ spinlock vfs::mountlock;
 // TODO: make it an LRU cache.
 static_storage<os::hashmap<pair<inode*, string>, dentry*>> vfs::dcache;
 static_storage<os::vector<fs*>> vfs::tosync;
+static_storage<os::vector<vfs::mount_data>> vfs::mounted;
 
 inode *file::node() const {
   return entry->node;
@@ -507,6 +508,7 @@ void vfs::init() {
   dcache.construct();
   creators.construct();
   tosync.construct();
+  mounted.construct();
 }
 
 page_cache::page::page(page_cache *parent, size_t index) : parent(parent), data((char*) as_va(pframe())), index(index), dirty(false) {

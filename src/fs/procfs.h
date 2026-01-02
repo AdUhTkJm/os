@@ -68,10 +68,22 @@ public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
 
-  oom_score_adj(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0444, File), pcb(pcb) {}
+  oom_score_adj(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0644, File), pcb(pcb) {}
   ssize_t read(size_t, void *, size_t, int) override;
   ssize_t write(size_t, const void *, size_t, int) override;
   int truncate(size_t) override { return -EINVAL; }
+};
+
+class mounts : public inode_impl<mounts> {
+  inode::meta meta;
+  pcb_t *pcb;
+public:
+  FILE_INODE_DEFAULT_IMPL;
+  READONLY_FILE;
+  META_DEFAULT_IMPL;
+
+  mounts(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0444, File), pcb(pcb) {}
+  ssize_t read(size_t, void *, size_t, int) override;
 };
 
 }
@@ -80,7 +92,8 @@ class process : public inode_impl<process> {
   inode::meta meta;
   pcb_t *pcb;
   link *exe;
-  inode *oom;
+  pid::oom_score_adj *oom;
+  pid::mounts *mounts;
 public:
   DIR_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;

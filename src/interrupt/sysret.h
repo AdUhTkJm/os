@@ -445,8 +445,8 @@ struct pusage {
 
   operator struct rusage() {
     return rusage {
-      .ru_utime = { .tv_sec = ru_utime / 1'000'000'000, .tv_usec = (ru_utime / 1000) % 1'000'000 },
-      .ru_stime = { .tv_sec = ru_utime / 1'000'000'000, .tv_usec = (ru_utime / 1000) % 1'000'000 },
+      .ru_utime = { .tv_sec = ru_utime / 1'000'000'000, .tv_usec = (ru_utime % 1'000'000'000) / 1000 },
+      .ru_stime = { .tv_sec = ru_utime / 1'000'000'000, .tv_usec = (ru_utime % 1'000'000'000) / 1000 },
       .ru_maxrss = ru_maxrss,
       .ru_ixrss = 0,
       .ru_idrss = 0,

@@ -293,6 +293,15 @@ private:
 
   expected<dentry *> lookup_impl(const string &path, dentry *dentry, bool lastsym, int depth);
 public:
+  struct mount_data {
+    string fstype;
+    string device;
+    string mntpoint;
+    int prot;
+  };
+  // Since the `device` is 
+  static static_storage<os::vector<mount_data>> mounted;
+
   struct mount_t : intrusive_list_node<mount_t> {
     // The path in the host filesystem.
     dentry *host;

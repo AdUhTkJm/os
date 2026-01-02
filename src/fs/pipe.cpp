@@ -67,7 +67,7 @@ ssize_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags)
   lock.acquire();
 
   wait_entry entry;
-  bool empty = buffer.empty();
+  bool empty = buffer.size() == rpos;
   while (buffer.size() == maxbuf) {
     // No more readers. Don't write.
     if (readers == 0) {

@@ -23,9 +23,15 @@ namespace os::vma {
       va_t sepc = ((trapframe *) tcb->ksp)->sepc;
       printk("Unmapped address %p on %s, requested from instruction %p of process %d (thread %d).\n",
         va, type, sepc, pcb->pid, tcb->tid);
+    } else if (scause == 8) {
+      printk("Unmapped address %p, requested from system call %d of process %d (thread %d).\n",
+        va, ((trapframe *) tcb->ksp)->regs[15], pcb->pid, tcb->tid);
     } else
+      printk("Unmapped address %p; scause = %d.\n", va, scause);
 #endif
-      printk("Unmapped address %p.\n", va);
+#ifdef LA
+      printk("Unmapped address %p (scause = %d).\n", va);
+#endif
     return false;
   }
   const auto &vma = *vmap;

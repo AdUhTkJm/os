@@ -16,6 +16,10 @@ struct shared_memory {
   } meta;
 };
 
+// A map from the key to shmid. We don't recycle shmids for now.
+extern int nextid;
+extern static_storage<os::hashmap<int, int>> key2id;
+
 extern static_storage<os::hashmap<int, shared_memory>> shm;
 
 void init();

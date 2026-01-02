@@ -59,14 +59,26 @@ long syshandle(trapframe *ksp) { \
 #define ARGS5(a, b, c, d, e) reg_t a = a0, b = a1, c = a2, d = a3, e = a4;
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
+#ifndef NO_SYSCALL_LOG
+const int IGNORED[] = { syscall::clock_gettime, syscall::getrusage, syscall::getppid, syscall::pselect6 };
+static bool ignored(int x) {
+  for (auto ignore : IGNORED) {
+    if (x == ignore)
+      return true;
+  }
+  return false;
+}
+#endif
+
 #define PRINT_FORMAT(x) #x " (%d): "
 #define LOG_METHOD printk
-#define PRINT1(x, a) LOG_METHOD(PRINT_FORMAT(x) #a " = %p", syscall::x, a0);
-#define PRINT2(x, a, b) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p", syscall::x, a0, a1);
-#define PRINT3(x, a, b, c) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p", syscall::x, a0, a1, a2);
-#define PRINT4(x, a, b, c, d) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p", syscall::x, a0, a1, a2, a3);
-#define PRINT5(x, a, b, c, d, e) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p", syscall::x, a0, a1, a2, a3, a4);
-#define PRINT6(x, a, b, c, d, e, f) LOG_METHOD(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p", syscall::x, a0, a1, a2, a3, a4, a5);
+#define LOG(fmt, call, ...) (ignored(call) ? 0 : LOG_METHOD(fmt " (tid %d)", call, __VA_ARGS__, tcb->tid))
+#define PRINT1(x, a) LOG(PRINT_FORMAT(x) #a " = %p", syscall::x, a0);
+#define PRINT2(x, a, b) LOG(PRINT_FORMAT(x) #a " = %p, " #b " = %p", syscall::x, a0, a1);
+#define PRINT3(x, a, b, c) LOG(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p", syscall::x, a0, a1, a2);
+#define PRINT4(x, a, b, c, d) LOG(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p", syscall::x, a0, a1, a2, a3);
+#define PRINT5(x, a, b, c, d, e) LOG(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p", syscall::x, a0, a1, a2, a3, a4);
+#define PRINT6(x, a, b, c, d, e, f) LOG(PRINT_FORMAT(x) #a " = %p, " #b " = %p, " #c " = %p, " #d " = %p, " #e " = %p, " #f " = %p", syscall::x, a0, a1, a2, a3, a4, a5);
 
 #define PP_NARG(...) PP_NARG_(__VA_ARGS__, PP_RSEQ_N())
 #define PP_NARG_(...) PP_ARG_N(__VA_ARGS__)
@@ -346,11 +358,8 @@ HANDLE(openat, dirfd, _path, flags, mode) {
   if (!path || !*path)
     return -EFAULT;
 
-  bool relative = (*path)[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, flags)
-    : pcb->open_file(path->get(), flags);
-  return fd;
+  printk("openat: %s\n", path->get());
+  return pcb->open_file_from(path->get(), dirfd, flags);
 }
 
 HANDLE(close, fd) {
@@ -572,12 +581,16 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   int openflags = 0;
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
-  bool relative = (*path)[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
-    : pcb->open_file(path->get(), O_PATH | openflags);
+
+  int fd;
+  if (!(flags & AT_EMPTY_PATH))
+    fd = pcb->open_file_from(path->get(), dirfd, O_PATH | openflags);
+  else
+    fd = dirfd;
+
   if (fd < 0)
     return fd;
+
   auto node = pcb->ftbl->at(fd)->node();
   auto meta = node->get_meta();
   stat stat {
@@ -595,7 +608,8 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
     .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
   };
-  pcb->close_file(fd);
+  if (!(flags & AT_EMPTY_PATH))
+    pcb->close_file(fd);
   if (!copy_to_user((void *) buf, &stat, sizeof(stat)))
     return -EFAULT;
   return 0;
@@ -616,7 +630,7 @@ HANDLE(fstat, fd, buf) {
     .st_gid = (unsigned) node->gid,
     .st_rdev = 0,
     .st_size = (long) node->size(),
-    .st_blksize = 1024,
+    .st_blksize = 4096,
     .st_blocks = 0,
     .st_atim = { .tv_sec = long(meta.atime / 1_s), .tv_nsec = long(meta.atime % 1_s) },
     .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
@@ -1308,13 +1322,15 @@ HANDLE(clock_gettime, id, tp) {
 
   spec.tv_sec = time / 1_s;
   spec.tv_nsec = time % 1_s;
-  if (!copy_to_user((void *) tp, &spec, sizeof(timespec))) return -EFAULT;
+  if (!copy_to_user((void *) tp, &spec, sizeof(timespec)))
+    return -EFAULT;
   return 0;
 }
 
 HANDLE(gettimeofday, tv, tz) {
   if (tz)
-    if (!copy_to_user((void*) tz, &zone, sizeof(timezone))) return -EFAULT;
+    if (!copy_to_user((void*) tz, &zone, sizeof(timezone)))
+      return -EFAULT;
   
   if (tv) {
     auto cur = now();
@@ -1322,7 +1338,8 @@ HANDLE(gettimeofday, tv, tz) {
       .tv_sec = long(cur / 1_s),
       .tv_usec = long(cur % 1_s) / 1000,
     };
-    if (!copy_to_user((void*) tv, &ts, sizeof(timeval))) return -EFAULT;
+    if (!copy_to_user((void*) tv, &ts, sizeof(timeval)))
+      return -EFAULT;
   }
   return 0;
 }
@@ -1517,28 +1534,35 @@ HANDLE(tgkill, pid, tid, sig) {
 HANDLE(pselect6, maxcnt, _read, _write, _except, tmo, sigmask) {
   size_t timeout = 1.8e19;
   if (tmo) {
-    timeval t;
-    if (!copy_from_user(&t, (void *) tmo, sizeof(timeval)))
+    timespec t;
+    if (!copy_from_user(&t, (void *) tmo, sizeof(timespec)))
       return -EFAULT;
-    if (t.tv_usec < 0 || t.tv_usec > 999'999)
+    if (t.tv_nsec < 0 || t.tv_nsec > 999'999'999)
       return -EINVAL;
-    timeout = t.tv_usec * 1000 + t.tv_sec * 1_s;
+    timeout = t.tv_nsec + t.tv_sec * 1_s;
   }
-  if (maxcnt <= 0)
+  if (maxcnt <= 0 || maxcnt >= 1024)
     return -EINVAL;
 
-  fd_set read, write, except;
-  if (!copy_from_user(&read, (void *) _read, sizeof(fd_set)))
+  fd_set read {}, write {}, except {};
+  if (_read && !copy_from_user(&read, (void *) _read, sizeof(fd_set)))
     return -EFAULT;
-  if (!copy_from_user(&write, (void *) _write, sizeof(fd_set)))
+  if (_write && !copy_from_user(&write, (void *) _write, sizeof(fd_set)))
     return -EFAULT;
-  if (!copy_from_user(&except, (void *) _except, sizeof(fd_set)))
+  if (_except && !copy_from_user(&except, (void *) _except, sizeof(fd_set)))
     return -EFAULT;
 
-  // This will be freed by ppoll().
-  auto fds = new pollfd[maxcnt];
+  // sizeof(pollfd) == 8, so this is an 1 KB buffer.
+  pollfd _fds[128];
+  pollfd *fds;
+  [[likely]]
+  if (maxcnt < 128)
+    fds = _fds;
+  else
+    fds = new pollfd[maxcnt];
+  
   int cnt = 0;
-  for (int i = 0; i < 1024 && cnt < maxcnt; i++) {
+  for (int i = 0; i < maxcnt; i++) {
     int events = 0;
     if (FD_ISSET(i, &read))
       events |= POLLIN;
@@ -1552,7 +1576,28 @@ HANDLE(pselect6, maxcnt, _read, _write, _except, tmo, sigmask) {
     }
   }
 
-  return detail::ppoll(fds, cnt, timeout, (void *) sigmask, false);
+  auto ret = detail::ppoll(fds, cnt, timeout, (void *) sigmask, false);
+  if (ret >= 0) {
+    fd_set read {}, write {}, except {};
+    for (int i = 0; i < cnt; i++) {
+      if (fds[i].revents & POLLIN)
+        FD_SET(fds[i].fd, &read);
+      if (fds[i].revents & POLLOUT)
+        FD_SET(fds[i].fd, &write);
+      if (fds[i].revents & POLLPRI)
+        FD_SET(fds[i].fd, &except);
+    }
+    
+    if (_read && !copy_to_user((void *) _read, &read, sizeof(fd_set)))
+      return -EFAULT;
+    if (_write && !copy_to_user((void *) _write, &write, sizeof(fd_set)))
+      return -EFAULT;
+    if (_except && !copy_to_user((void *) _except, &except, sizeof(fd_set)))
+      return -EFAULT;
+  }
+  [[unlikely]] if (maxcnt > 128)
+    delete[] fds;
+  return ret;
 }
 
 HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
@@ -1851,7 +1896,8 @@ namespace os {
       tcb->sysret = true;
       trap->regs[8] = syshandle(trap); // a0
 #ifndef NO_SYSCALL_LOG
-      LOG_METHOD(" -> (%p)\n", trap->regs[8]);
+      if (!ignored(trap->regs[15]))
+        LOG_METHOD(" -> (%p)\n", trap->regs[8]);
 #endif
       break;
     }

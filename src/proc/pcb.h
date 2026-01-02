@@ -135,6 +135,7 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   bool kthread = false;   // Whether this is a kernel thread.
   bool kmode = false;     // Whether this executed in kernel mode.
   bool sysret = false;    // Whether the thread is returning from a system call.
+  bool intr = true;       // Whether the thread is interruptible from the current sleep.
   unsigned char sclock;   // The clock that the thread sleeps on.
   reg_t a0;               // The previous a0, when returning from a system call.
   ctxframe ctx;           // Context frame for blocking syscalls / context switch.

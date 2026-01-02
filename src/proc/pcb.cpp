@@ -170,19 +170,22 @@ void pcb_t::send_signal(int sig) {
   for (auto x : threads) {
     if (x->status == Zombie)
       continue;
+    bool masked = x->mask[sig];
+    bool waiting = x->sigresume == -2 && x->sigwait[sig];
     
     // Masked signals will also wake up threads.
-    // TODO: maybe only wake up threads that are in sigtimedwait()?
-    // TODO: implement the correct semantics
-    if (!x->mask[sig]) {
-      x->pending.add(sig);
-      return;
+    if (x->status == Sleeping && x->intr) {
+      if (waiting || !masked) {
+        x->sigresume = sig;
+        scheduler.wakeup(x, /*can_preempt=*/ false);
+      }
+
+      // If we're waking up a thread from sigtimedwait, then this consumes the signal.
+      if (waiting)
+        return;
     }
-    if (x->status == Sleeping && x->sigresume == -2) {
-      if (!x->sigwait[sig])
-        continue;
-      x->sigresume = sig;
-      scheduler.wakeup(x, /*can_preempt=*/ false);
+    if (!masked) {
+      x->pending.add(sig);
       return;
     }
   }

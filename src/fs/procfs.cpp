@@ -64,15 +64,37 @@ ssize_t pid::oom_score_adj::write(size_t offset, const void *buf, size_t len, in
 #pragma clang diagnostic pop
 #endif
 
+ssize_t pid::mounts::read(size_t offset, void *buf, size_t len, int) {
+  string value;
+  for (const auto &data : *vfs::mounted) {
+    value += data.device;
+    value += " ";
+    value += data.mntpoint;
+    value += " "; 
+    value += data.fstype;
+    value += " ";
+    value += data.prot & PROT_WRITE ? "rw" : "ro";
+    value += " 0 0\n";
+  }
+  if (offset >= value.size())
+    return 0;
+
+  size_t l = min(value.size() - offset, len);
+  memcpy(buf, value.c_str() + offset, len);
+  return l;
+}
+
 process::process(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb),
-  exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)) {
+  exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)) {
   exe->ref();
   oom->ref();
+  mounts->ref();
 }
 
 process::~process() {
   exe->drop();
   oom->drop();
+  mounts->drop();
 }
 
 inode *process::lookup(const string &name) {
@@ -80,6 +102,8 @@ inode *process::lookup(const string &name) {
     return exe;
   if (name == "oom_score_adj")
     return oom;
+  if (name == "mounts")
+    return mounts;
   
   printk("process: unknown name: %s\n", name.c_str());
   return nullptr;
@@ -90,6 +114,7 @@ vector<inode::item> process::list() {
   if (pcb->execpath.size())
     result.push_back({ exe->inum(), "exe", File });
   result.push_back({ oom->inum(), "oom_score_adj", File });
+  result.push_back({ mounts->inum(), "mounts", File });
   return result;
 }
 

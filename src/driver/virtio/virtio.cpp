@@ -295,11 +295,15 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   // Tell device that a new request has come.
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   WFENCE;
+  // The sleep is non-interruptible.
+  auto tcb = active();
+  tcb->intr = false;
   for (;;) {
     hangon(readwait, readlock, entry);
     if (mmrd<unsigned char>(status) != 0xff)
       break;
   }
+  tcb->intr = true;
   readlock.release();
 
   RFENCE;
