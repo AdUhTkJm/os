@@ -16,23 +16,6 @@
 #  define C
 #endif
 
-/* Note that we're using clangd for IDE, but gcc for compilation. */
-#ifdef __has_cpp_attribute
-#  if __has_cpp_attribute(assume)
-#     define assume(...) [[assume(__VA_ARGS__)]]
-#  endif
-#endif
-#ifndef assume
-#  if defined(__clang__)
-#    define assume(...) __builtin_assume(__VA_ARGS__)
-#  elif defined(__GNUC__) && __GNUC__ >= 13
-#    define assume(...) __attribute__((__assume__(__VA_ARGS__)))
-#  endif
-#endif
-#ifndef assume
-#  define assume(...)
-#endif
-
 /* I always don't remember the exact form of test macros, so redefine them here. */
 /* This also helps VSCode to highlight - just change position of IN_VSCODE. */
 #if defined(__riscv) || IN_VSCODE

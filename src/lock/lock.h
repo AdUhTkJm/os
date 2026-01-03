@@ -166,13 +166,14 @@ struct wait_queue {
 
   void prepare(wait_entry &entry);
   void finish(wait_entry &entry);
-  int wake_all();
+  int wake_all(bool can_preempt = true);
   int wake(int n = 1, bool can_preempt = true);
   void wake(wait_entry &entry, bool can_preempt = true);
 };
 
 }
 
+// Interruptible.
 #define hangon(wait, lock, entry) \
   wait.prepare(entry); \
   lock.release(); \
@@ -180,6 +181,14 @@ struct wait_queue {
     wait.finish(entry); \
     return -EINTR; \
   } \
+  lock.acquire(); \
+  wait.finish(entry); \
+
+// Not interruptible.
+#define soundsleep(wait, lock, entry) \
+  wait.prepare(entry); \
+  lock.release(); \
+  suspend(); \
   lock.acquire(); \
   wait.finish(entry); \
 

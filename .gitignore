@@ -1,5 +1,6 @@
 build/
 temp/
+autotest/
 compile_commands.json
 .cache
 qemu.log
@@ -10,3 +11,5 @@ scripts/debian
 mnt
 docker
 .vscode
+*.img
+*.txt

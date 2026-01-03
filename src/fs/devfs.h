@@ -168,6 +168,18 @@ public:
   int truncate(size_t) override { return 0; }
 };
 
+class zero_inode : public inode_impl<zero_inode> {
+  inode::meta meta;
+public:
+  FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+
+  zero_inode();
+  ssize_t read(size_t, void *buf, size_t len, int) override { memset(buf, 0, len); return len; }
+  ssize_t write(size_t, const void*, size_t len, int) override { return len; }
+  int truncate(size_t) override { return 0; }
+};
+
 extern static_storage<console_inode> console;
 extern static_storage<random_inode> random;
 

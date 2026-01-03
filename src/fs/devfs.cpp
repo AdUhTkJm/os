@@ -300,6 +300,8 @@ void random_inode::mix(unsigned v) {
 
 null_inode::null_inode(): inode_impl(&*devfs, 0, 0, 0666, File) {}
 
+zero_inode::zero_inode(): inode_impl(&*devfs, 0, 0, 0666, File) {}
+
 devroot::devroot(class fs *fs) : inode_impl(fs, 0, 0, 0755, Dir) {}
 
 inode *devroot::lookup(const string &name) {
@@ -342,6 +344,7 @@ void mount_dev() {
 
   root->record("tty",  new (permanent) tty_inode(console));
   root->record("null", new (permanent) null_inode());
+  root->record("zero", new (permanent) zero_inode());
   // They are essentially the same thing, just that urandom won't block on early boot.
   // We don't really use them on boot, so doesn't matter too much.
   root->record("urandom", &*random);

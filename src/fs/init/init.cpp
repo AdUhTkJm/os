@@ -210,7 +210,7 @@ extern "C" void _start() {
   constexpr int stdin = 0, stdout = 1, stderr = 2;
 
   // Mount ext2.
-  syscall((reg_t) "/dev/vda", (reg_t) "/mnt", (reg_t) "ext2", mount);
+  syscall((reg_t) "/dev/vdb", (reg_t) "/mnt", (reg_t) "ext2", mount);
   // Move mount.
   syscall((reg_t) "/tmp", (reg_t) "/mnt/tmp", 0, /*MS_MOVE=*/8192, mount);
   syscall((reg_t) "/dev", (reg_t) "/mnt/dev", 0, /*MS_MOVE=*/8192, mount);
@@ -223,8 +223,7 @@ extern "C" void _start() {
 
   // Mount proc, and the ext4 for testing (which is also ext2).
   syscall((reg_t) "", (reg_t) "/proc", (reg_t) "procfs", mount);
-  syscall((reg_t) "/dev/vdb", (reg_t) "/mnt", (reg_t) "ext2", mount);
-
+  syscall((reg_t) "/dev/vda", (reg_t) "/mnt", (reg_t) "ext2", mount);
 
   int pid = syscall(0x11, 0, clone);
   if (pid == 0) {
@@ -243,9 +242,22 @@ extern "C" void _start() {
     syscall(stdin, /*TIOCSPGRP=*/ 0x5410, (reg_t) &pgid, ioctl);
     
     // Execute the shell.
-#ifdef TEST
+#if defined(TEST)
 #define LIBC "glibc"
 #define CD "cd /mnt/" LIBC
+    [[gnu::unused]] const char *ltp = R"( 
+cd /mnt/glibc/ltp/testcases/bin
+echo "#### OS COMP TEST GROUP START ltp-$1 ####"
+for f in *; do
+  [ -f "$f" ] || continue
+  case "$f" in
+      *.sh) continue ;;
+  esac
+
+  "./$f"
+done
+echo "#### OS COMP TEST GROUP END ltp-$1 ####"
+)";
     const char *test = 
       // CD "/basic && sh ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
@@ -256,9 +268,37 @@ extern "C" void _start() {
       // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
-      // CD " && sh ./ltp_testcode.sh";
-      // CD "/ltp/testcases/bin && ./shmt05; echo 'done'";
-      CD " && ./lmbench_all lat_syscall -P 1 read";
+      // ltp;
+      CD "/ltp/testcases/bin && ./access04; echo 'done'";
+    const char *argv[] = { "/bin/sh", "-c", test, nullptr };
+#elif defined(REMOTE_TEST)
+    const char *test = R"(
+single() {
+  chmod +x basic/run-all.sh
+  sh ./basic_testcode.sh
+  sh ./busybox_testcode.sh
+  sh ./libcbench_testcode.sh
+
+  # sh ./lmbench_testcode.sh
+  cd ltp/testcases/bin
+  echo "#### OS COMP TEST GROUP START ltp-$1 ####"
+  for f in *; do
+    [ -f "$f" ] || continue
+    case "$f" in
+        *.sh) continue ;;
+    esac
+
+    "./$f"
+  done
+  echo "#### OS COMP TEST GROUP END ltp-$1 ####"
+}
+
+cd /mnt/glibc
+single glibc
+# cd /mnt/musl
+# single musl
+halt -f
+)";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #else
     const char *argv[] = { "/bin/sh", nullptr };

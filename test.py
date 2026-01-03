@@ -21,6 +21,9 @@ parser.add_argument("-d", "--objdump", action="store_true")
 parser.add_argument("-a", "--assembly", action="store_true")
 parser.add_argument("-m", "--mount", action="store_true")
 parser.add_argument("-s", "--snapshot", action="store_true")
+parser.add_argument("--lto", action="store_true")
+parser.add_argument("--docker", action="store_true")
+parser.add_argument("--docker-interactive", action="store_true")
 parser.add_argument("--docs", action="store_true")
 parser.add_argument("--log-refcnt", action="store_true")
 parser.add_argument("--log-syscall", action="store_true")
@@ -35,6 +38,7 @@ parser.add_argument("--test", action="store_true")
 parser.add_argument("--unit-test", action="store_true")
 parser.add_argument("--dot", action="store_true")
 parser.add_argument("--release", action="store_true")
+parser.add_argument("--remote-test", action="store_true")
 
 args = parser.parse_args()
 
@@ -67,6 +71,7 @@ SPECIAL_FLAGS = {
   "src/interrupt/interrupt.cpp": ["-Wno-unused-variable"]
 }
 SNAPSHOT = ",snapshot=on" if args.snapshot else ""
+INIT_SYMBOL = "initrd_start"
 
 flags = []
 
@@ -99,10 +104,12 @@ if not args.smp:
 if args.unit_test:
   flags += ["-DUNIT_TEST"]
 
-if args.release:
+if args.release or args.lto:
   flags += ["-flto"]
   LDFLAGS += ["-flto"]
 
+if args.remote_test:
+  flags += ["-DREMOTE_TEST"]
 
 if args.la:
   # Loongarch.
@@ -243,6 +250,8 @@ def compile_initramfs(src_path: Path, obj_path: Path):
   flags = ["-ffreestanding", "-nostdlib", "-O2", *MACHINESPEC]
   if args.test:
     flags += ["-DTEST"]
+  if args.remote_test:
+    flags += ["-DREMOTE_TEST"]
   proc.check_call([COMPILER, *flags, "-o", str(obj_path),  str(src_path)])
 
 def archive_objects(obj_files, lib_path: Path):
@@ -279,14 +288,34 @@ def build_initramfs():
     print(f"Bundling {total} {file_prompt}")
   with mp.Pool() as pool:
     pool.starmap(compile_initramfs, tasks)
-  proc.check_call(f"cd {obj_dir} && find . -print | cpio -oH newc > ../initramfs.cpio 2> /dev/null", shell=True)
   (obj_dir / "dev").mkdir(exist_ok=True)
   (obj_dir / "tmp").mkdir(exist_ok=True)
   (obj_dir / "mnt").mkdir(exist_ok=True)
+  proc.check_call(f"cd {obj_dir} && find . -print | cpio -oH newc > ../initramfs.cpio 2> /dev/null", shell=True)
+
+  with (BUILD_DIR / "initramfs.cpio").open("rb") as f:
+    data = f.read()
+
+  with (BUILD_DIR / "initramfs.inc").open("w") as out:
+    out.write("/* Auto-generated file. Do not edit. */\n")
+    out.write("#include <stddef.h>\n\n")
+
+    out.write(f"const unsigned char {INIT_SYMBOL}[] = {{\n")
+
+    bytes_per_line = 16
+    for i in range(0, len(data), bytes_per_line):
+      chunk = data[i:i + bytes_per_line]
+      out.write("    ")
+      out.write(", ".join(f"0x{b:02x}" for b in chunk))
+      if i + bytes_per_line < len(data):
+        out.write(",")
+      out.write("\n")
+    out.write("};\n\n")
 
 def build():
   # Create a symbol table.
-  proc.check_call(["scripts/symtbl.sh"])
+  if not args.no_instrument and not args.release:
+    proc.check_call(["scripts/symtbl.sh"])
 
   build_initramfs()
 
@@ -381,6 +410,23 @@ if __name__ == "__main__":
     proc.run(f"sudo mount -o loop build/rootfs/rootfs.ext2 mnt", shell=True)
     exit(0)
 
+  data = Path("autotest/data").absolute()
+  test = Path("autotest/test").absolute()
+  project = Path(".").absolute()
+  if args.docker:
+    proc.run(
+f"""
+cd autotest/test/kernel; zip ../kernel.zip -r * > /dev/null; cd {project}; ln -s build/kernel ./kernel-rv; sudo docker run --rm -v {project}:/coursegrader/submit -v {data}:/coursegrader/testdata -v {test}:/cg -v {data}:/mnt/cghook/ docker.educg.net/cg/os-contest:20250714 python3 /cg/kernel.zip; rm -f kernel-rv kernel-la
+""", shell=True)
+    exit(0)
+
+  if args.docker_interactive:
+    proc.run(
+f"""
+sudo docker run -it -v {project}:/coursegrader/submit -v {data}:/coursegrader/testdata -v {test}:/cg -v {data}:/mnt/cghook/ docker.educg.net/cg/os-contest:20250714 /bin/sh
+""", shell=True)
+    exit(0)
+
   build()
   if args.objdump:
     proc.run(f"riscv64-unknown-elf-objdump -d build/kernel > temp/kernel.s", shell=True)
@@ -397,11 +443,11 @@ f"""
 -machine virt {BIOS} -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
--drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0{SNAPSHOT} \
--device virtio-blk-pci,drive=x0 \
-\
--drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1{SNAPSHOT} \
+-drive file=disk.img,if=none,format=raw,id=x1{SNAPSHOT} \
 -device virtio-blk-pci,drive=x1 \
+\
+-drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x0{SNAPSHOT} \
+-device virtio-blk-pci,drive=x0 \
 \
 -device virtio-net-pci,netdev=net -netdev user,id=net \
 -d guest_errors -D qemu.log \
@@ -415,10 +461,10 @@ f"""
 -machine virt {BIOS} -kernel {BUILD_DIR}/kernel \
 -initrd {BUILD_DIR}/initramfs.cpio \
 \
--drive file=scripts/rootfs.ext2,if=none,format=raw,id=x0{SNAPSHOT} \
+-drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x0{SNAPSHOT} \
 -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0 \
 \
--drive file=testsuite/{SDCARD}.img,if=none,format=raw,id=x1{SNAPSHOT} \
+-drive file=disk.img,if=none,format=raw,id=x1{SNAPSHOT} \
 -device virtio-blk-device,drive=x1,bus=virtio-mmio-bus.1 \
 \
 -device virtio-net-device,netdev=net -netdev user,id=net \

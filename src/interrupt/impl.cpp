@@ -5,6 +5,7 @@
 #include "../fs/vfs.h"
 #include "../fs/devfs.h"
 #include "../fs/net.h"
+#include "../fs/pipe.h"
 #include "../fs/tcp.h"
 #include "../proc/schedule.h"
 #include "../driver/tty/tty.h"
@@ -139,13 +140,13 @@ long mount(const char *src, const char *tgt, const char *fsty, unsigned long fla
   if (!fs)
     return fs;
 
+  vfs::mount(mntpoint, (*fs)->root);
   vfs::mounted->push_back({
     .fstype = fsty,
     .device = "none", // TODO: how to fill it in?
     .mntpoint = mntpoint->path(),
     .prot = PROT_READ | PROT_WRITE
   });
-  vfs::mount(mntpoint, (*fs)->root);
   return 0;
 }
 
@@ -213,7 +214,7 @@ long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, un
     backup = pcb->ftbl->at(fd);
     bool readable = (backup->flags & 3) != O_WRONLY;
     bool writable = (backup->flags & 3) != O_RDONLY;
-    if (!readable || (shared && !writable))
+    if (!readable || (shared && (prot & PROT_WRITE) && !writable))
       return -EACCES;
   } else if (shared)
     backup = new file(new dentry("<anon>", tmpfs->get(), nullptr), O_RDWR);
@@ -1205,6 +1206,80 @@ long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long new
   auto name = basename(path->get());
   vfs::invalidate(node, name);
   return node->move(name, nnode, basename(npath->get()), flags);
+}
+
+long read_to_user(file *f, void *buf, unsigned long len) {
+  char *p = (char *) buf, *q = (char *) buf + len;
+  auto root = pt_root();
+  long read = 0;
+
+  for (auto cur = p; cur < q;) {
+    // Ensure the page is writable.
+    pte_t pte = pte_of((va_t) cur, root);
+    int flags = PTE_FLAGS(pte);
+    if (!(flags & PTE_V) || (flags & PTE_COW && !(flags & PTE_W))) {
+      if (!vma::map_single(cur, root))
+        return read ? read : -EFAULT;
+      // Re-read the PTE: this is crucial.
+      pte = pte_of((va_t) cur, root);
+      // Check whether we have write permission.
+      if (!(PTE_FLAGS(pte) & PTE_W))
+        return read ? read : -EFAULT;
+    }
+    
+    size_t offset = (va_t) cur % PAGE_SIZE;
+    long chunk = min(q - cur, (long) (PAGE_SIZE - offset));
+
+    // Perform the read directly to the kernel's view of that page.
+    auto ret = f->read((void *) (PTE_TO_VA(pte) + offset), chunk);
+    if (ret < 0)
+      return read ? read : ret;
+    
+    read += ret;
+    cur += ret;
+    
+    if (ret < chunk)
+      break;
+  }
+  return read;
+}
+
+long write_from_user(file *f, void *buf, unsigned long len) {
+  char *p = (char *) buf, *q = (char *) buf + len;
+  auto root = pt_root();
+  long written = 0;
+
+  for (auto cur = p; cur < q;) {
+    // Ensure the page is writable.
+    pte_t pte = pte_of((va_t) cur, root);
+    int flags = PTE_FLAGS(pte);
+    // Since we only need to read, we don't care whether the page is COW.
+    if (!(flags & PTE_V)) {
+      if (!vma::map_single(cur, root))
+        return written ? written : -EFAULT;
+
+      // Re-read the PTE.
+      pte = pte_of((va_t) cur, root);
+      // Check whether we have read permission.
+      if (!(PTE_FLAGS(pte) & PTE_R))
+        return written ? written : -EFAULT;
+    }
+    
+    size_t offset = (va_t) cur % PAGE_SIZE;
+    long chunk = min(q - cur, (long) (PAGE_SIZE - offset));
+
+    // Perform the write directly to the kernel's view of that page.
+    auto ret = f->write((void *) (PTE_TO_VA(pte) + offset), chunk);
+    if (ret < 0)
+      return written ? written : ret;
+    
+    written += ret;
+    cur += ret;
+    
+    if (ret < chunk)
+      break;
+  }
+  return written;
 }
 
 }

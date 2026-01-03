@@ -10,10 +10,7 @@ void wait_queue::prepare(wait_entry &entry) {
     entry.queued = true;
     q.push_back(&entry);
     
-#ifndef NDEBUG
     entry.tcb->entr.insert(&entry, this);
-#endif
-
     scheduler.prepare_to_sleep();
   }
 }
@@ -23,15 +20,12 @@ void wait_queue::finish(wait_entry &entry) {
   if (entry.queued) {
     q.erase(&entry);
     
-#ifndef NDEBUG
     entry.tcb->entr.erase(&entry);
-#endif
-
     entry.queued = false;
   }
 }
 
-int wait_queue::wake_all() {
+int wait_queue::wake_all(bool can_preempt) {
   lock.acquire();
   int woken = 0;
   for (auto entry : q) {
@@ -41,7 +35,8 @@ int wait_queue::wake_all() {
   }
   lock.release();
 
-  scheduler.maybe_preempt();
+  if (can_preempt)
+    scheduler.maybe_preempt();
   return woken;
 }
 

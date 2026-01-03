@@ -1189,6 +1189,10 @@ ext::ext(block_inode *device): device(device) {
   }
   if (fs_64)
     gdsz = superblock.gd_size;
+  if (gdsz > sizeof(block_group)) {
+    printk("mount: ext2: group descriptor too large");
+    return;
+  }
 
   blksz = 1 << (10 + superblock.block_size);
   size_t total_blocks = read_64(superblock.total_blocks, superblock.total_blocks_hi);
@@ -1202,7 +1206,7 @@ ext::ext(block_inode *device): device(device) {
   device->read(gdt_start * blksz, buf, len, 0);
   // Note this is not necessarily contiguous.
   for (unsigned i = 0; i < group_count; i++)
-    memcpy(&gdt[i], buf + gdsz * i, len);
+    memcpy(&gdt[i], buf + gdsz * i, gdsz);
   delete[] buf;
 
   // Root is always at inode 2.
@@ -1448,6 +1452,8 @@ ext_inode *ext::read_from_inum(size_t inum) {
 
   auto group = (inum - 1) / superblock.inodes_per_group;
   auto index = (inum - 1) % superblock.inodes_per_group;
+  if (group >= gdt.size())
+    on_corrupt();
 
   const block_group &gd = gdt[group];
   // Compute byte offset.

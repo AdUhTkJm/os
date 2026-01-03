@@ -60,7 +60,7 @@ long syshandle(trapframe *ksp) { \
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #ifndef NO_SYSCALL_LOG
-const int IGNORED[] = { syscall::clock_gettime, syscall::getrusage, syscall::getppid, syscall::pselect6 };
+const int IGNORED[] = { syscall::clock_gettime, syscall::getrusage, /*syscall::pselect6*/ };
 static bool ignored(int x) {
   for (auto ignore : IGNORED) {
     if (x == ignore)
@@ -122,16 +122,12 @@ HANDLE(lseek, fd, offset, _whence) {
   return f->offset;
 }
 
-HANDLE(read, fd, _buf, len) {
+HANDLE(read, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
 
-  char *buf = new char[len];
-  auto ret = file->read(buf, len);
-  if (!copy_to_user((void *) _buf, buf, len))
-    return -EFAULT;
-  return ret;
+  return detail::read_to_user(file, (void *) buf, len);
 }
 
 HANDLE(readv, fd, iov, cnt) {
@@ -152,13 +148,9 @@ HANDLE(readv, fd, iov, cnt) {
       continue;
 
     // Copy a single buffer.
-    unique_ptr<char[]> buf(new char[v.iov_len]);
-    ssize_t n = file->read(buf.get(), v.iov_len);
+    ssize_t n = detail::read_to_user(file, (void *) v.iov_base, v.iov_len);
     if (n <= 0)
       return total ? total : n;
-
-    if (!copy_to_user(v.iov_base, buf.get(), v.iov_len))
-      return -EFAULT;
 
     total += n;
     // If we have a partial read, then we stop immediately.
@@ -169,25 +161,12 @@ HANDLE(readv, fd, iov, cnt) {
   return total;
 }
 
-HANDLE(write, fd, _buf, len) {
+HANDLE(write, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
 
-  char buf[1024];
-  size_t written = 0;
-  for (long i = 0; i < len; i += 1024) {
-    long l = min(len, 1024l);
-    if (!copy_from_user(buf, (char*) _buf + i, l))
-      return -EFAULT;
-    int ret = file->write(buf, l);
-    if (ret <= 0)
-      return written ? written : ret;
-
-    written += ret;
-    len -= l;
-  }
-  return written;
+  return detail::write_from_user(file, (void *) buf, len);
 }
 
 HANDLE(writev, fd, iov, cnt) {
@@ -209,19 +188,9 @@ HANDLE(writev, fd, iov, cnt) {
       continue;
 
     // Copy a single buffer.
-    size_t n = 0;
-    for (size_t j = 0; j < v.iov_len; j += 1024) {
-      size_t l = min(v.iov_len, 1024ul);
-      if (!copy_from_user(buf, v.iov_base, l))
-        return -EFAULT;
-
-      auto ret = file->write(buf, l);
-      if (ret < 0)
-        return total ? total : ret;
-      if (ret == 0)
-        break;
-      n += ret;
-    }
+    size_t n = detail::write_from_user(file, (void *) v.iov_base, v.iov_len);
+    if (n <= 0)
+      return total ? total : n;
 
     total += n;
     // If we have a partial write, then we stop immediately.
@@ -358,8 +327,7 @@ HANDLE(openat, dirfd, _path, flags, mode) {
   if (!path || !*path)
     return -EFAULT;
 
-  printk("openat: %s\n", path->get());
-  return pcb->open_file_from(path->get(), dirfd, flags);
+  return pcb->open_file_from(path->get(), dirfd, flags, mode);
 }
 
 HANDLE(close, fd) {
@@ -667,6 +635,21 @@ HANDLE(fdatasync, fd) {
   return 0;
 }
 
+HANDLE(msync, addr, len, flags) {
+  if (addr % PAGE_SIZE != 0)
+    return -EINVAL;
+  
+  auto vma = pcb->vma->find(addr);
+  if (!vma->backup || vma->end < (unsigned long) addr + len)
+    return -ENOMEM;
+
+  if (flags & MS_ASYNC && !(flags & MS_INVALIDATE))
+    return 0;
+
+  vma->backup->sync();
+  return 0;
+}
+
 HANDLE(symlinkat, target, dirfd, linkpath) {
   auto path = copy_from_user((char *) linkpath);
   if (!path)
@@ -695,7 +678,7 @@ HANDLE(symlinkat, target, dirfd, linkpath) {
   if (file->node()->lookup(basename))
     return -EEXIST;
 
-  if (auto ret = file->node()->create(basename, inode::Link, 0666 & pcb->umask); ret < 0)
+  if (auto ret = file->node()->create(basename, inode::Link, 0666 & ~pcb->umask); ret < 0)
     return ret;
 
   auto inode = file->node()->lookup(basename);
@@ -721,8 +704,14 @@ HANDLE(unlinkat, dirfd, _path, flags) {
 
   // We cannot unlink a directory.
   auto dir = file->entry->parent->node;
+  if (!writable(pcb->euid, pcb->egid, dir))
+    return -EACCES;
+
   bool rmdir = flags & AT_REMOVEDIR;
   if (rmdir) {
+    if (file->node()->type != inode::Dir)
+      return -ENOTDIR;
+
     if (int ret = dir->rmdir(file->entry->name); ret < 0)
       return ret;
     
@@ -733,9 +722,6 @@ HANDLE(unlinkat, dirfd, _path, flags) {
 
   if (file->node()->type == inode::Dir)
     return -EISDIR;
-
-  if (!writable(pcb->euid, pcb->egid, dir))
-    return -EACCES;
 
   // unlink() will check whether `dir` is indeed a dir.
   int ret = dir->unlink(file->entry->name);
@@ -1274,8 +1260,11 @@ HANDLE(mount, _src, _tgt, _fsty, flags, data) {
   if (!fsty)
     return fsty;
 
-  auto ret = detail::mount(src->get(), tgt->get(), fsty->get(), flags);
   (void) data;
+  auto ret = detail::mount(src->get(), tgt->get(), fsty->get(), flags);
+  // I don't know, but it looks like QEMU 9.2.0 requires this to work.
+  // On my host (v 9.2.4), it just works.
+  asm volatile("fence iorw, iorw" ::: "memory");
   return ret;
 }
 
@@ -1660,7 +1649,7 @@ HANDLE(wait4, pid, wstatus, options, rusage) {
 }
 
 HANDLE(reboot, magic, magic2, op, arg) {
-  if (magic != 0xfee1dead)
+  if (int(magic) != int(0xfee1dead))
     return -EINVAL;
   if (magic2 != 0x28121969 && magic2 != 0x05121996 && magic2 != 0x16041998 && magic2 != 0x20112000)
     return -EINVAL;
@@ -1856,6 +1845,9 @@ namespace os {
     }
   } else if (from_kernel) {
     switch (scause) {
+    case 2: // Illegal instruction
+      printk("exception: illegal instruction (%p) when executing %p\n", *(unsigned*) sepc, sepc);
+      break;
     case 4: // Load address misaligned
       printk("exception: load address misaligned at %p when executing %p\n", stval, sepc);
       break;

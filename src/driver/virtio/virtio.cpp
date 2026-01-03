@@ -284,6 +284,7 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   // Put the head of chain into available ring for the device to read.
   uint16_t head = d[0];
   q->avail.ring[q->avail.idx % vq::size] = head;
+  WFENCE;
   q->avail.idx++;
 
   wait_entry entry;
@@ -292,18 +293,16 @@ int block_device::read_legacy(uint64_t lba, void *buffer, int len) {
   assert(!readreq[head]);
 
   readreq[head] = &entry;
+  WFENCE;
   // Tell device that a new request has come.
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
-  WFENCE;
-  // The sleep is non-interruptible.
   auto tcb = active();
-  tcb->intr = false;
   for (;;) {
-    hangon(readwait, readlock, entry);
+    soundsleep(readwait, readlock, entry);
+    RFENCE;
     if (mmrd<unsigned char>(status) != 0xff)
       break;
   }
-  tcb->intr = true;
   readlock.release();
 
   RFENCE;
@@ -359,6 +358,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   q->avail.idx++;
 
   // Tell device that a new request has come.
+  auto tcb = active();
 
   wait_entry entry;
   writelock.acquire();
@@ -368,7 +368,7 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
   WFENCE;
   mmwr(base + QUEUE_NOTIFY, /*queue_index=*/0);
   for (;;) {
-    hangon(writewait, writelock, entry);
+    soundsleep(writewait, writelock, entry);
     if (mmrd<unsigned char>(status) != 0xff)
       break;
   }
@@ -382,13 +382,13 @@ int block_device::write_legacy(uint64_t lba, const void *buffer, int len) {
 int block_device::read(uint64_t lba, void *buffer, int len) {
   if (legacy)
     return read_legacy(lba, buffer, len);
-  assert(false && "NYI for non-legacy devices");
+  panic("NYI for non-legacy devices");
 }
 
 int block_device::write(size_t lba, const void *buffer, int len) {
   if (legacy)
     return write_legacy(lba, buffer, len);
-  assert(false && "NYI for non-legacy devices");
+  panic("NYI for non-legacy devices");
 }
 
 net_device::net_device(const device &dev, bool legacy): legacy(legacy) {
@@ -628,7 +628,7 @@ void probe() {
 
     if (strcmp(cprop, "reg") == 0) {
       // TODO: read /soc #address-size.
-      assert(len == 16);
+      assert(len == 16); (void) len;
 
       devs[cdev].base = (read((uint32_t*) property) * 1ull << 32)
         | read((uint32_t*) property + 1);

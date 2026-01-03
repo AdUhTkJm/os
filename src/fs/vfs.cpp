@@ -96,6 +96,13 @@ void file::close() {
   drop();
 }
 
+void file::sync() {
+  if (!node()->cache)
+    return;
+
+  node()->cache->flush();
+}
+
 // Finds the next path to look up, given the current path and the symlink target.
 string resolve_link(string path, const string &link) {
   return link[0] == '/' ? link : normalize(path + "/" + link);
@@ -551,7 +558,7 @@ void page_cache::flush() {
   auto oldpage = pages;
   pages.clear();
 
-  // We do a copy to avoid concurrency issues.
+  // Does copying really avoid concurrency issues?
   for (auto [_, page] : oldpage)
     delete page;
 }

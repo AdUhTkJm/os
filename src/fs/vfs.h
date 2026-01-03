@@ -134,6 +134,7 @@ public:
   ssize_t write(const void *buf, size_t len);
   ssize_t seek(long pos, whence whence); // Returns the old offset.
   void close();
+  void sync();
 
 #if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
   void ondrop() override;

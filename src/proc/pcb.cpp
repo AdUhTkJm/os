@@ -86,9 +86,9 @@ int pcb_t::open_file(const string &path, int flags, int mode, inode::filetype ty
 }
 
 int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode, inode::filetype type) {
-  if (dirfd == AT_FDCWD)
+  if (dirfd == AT_FDCWD || path[0] == '/')
     return open_file_from(path, pwd, flags, mode, type);
-  
+
   if (!ftbl->count(dirfd))
     return -EBADF;
 
@@ -124,7 +124,7 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
       return maybe_parent;
 
     auto node = (*maybe_parent)->node;
-    if (int err = node->create(basename(path), type, mode); err != 0)
+    if (int err = node->create(basename(path), type, mode & ~umask); err != 0)
       return err;
 
     return open_file(path, flags & ~O_CREAT);
@@ -268,7 +268,7 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
 
   // Erase all remaining threads.
   auto active = os::active();
-  bool has_active = false;
+  bool has_active = false; (void) has_active;
   for (auto t : pcb->threads) {
     if (t == active) {
       has_active = true;
@@ -323,7 +323,7 @@ void trap_return_setup(tcb_t *tcb) {
   setroot(pcb->pid, pcb->pt_root);
 
   [[unlikely]] if (tcb->stidaddr) {
-    bool succ = copy_to_user(tcb->stidaddr, &tcb->tid, sizeof(int));
+    bool succ = copy_to_user(tcb->stidaddr, &tcb->tid, sizeof(int)); (void) succ;
     assert(succ && "the memory should have been checked!");
     tcb->stidaddr = nullptr;
   }

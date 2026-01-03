@@ -5,12 +5,9 @@
 #include "../mem/ptable.h"
 #include "../proc/elf.h"
 #include "../proc/schedule.h"
+#include "../../build/initramfs.inc"
 
 namespace {
-
-uint32_t read_int(void *p) {
-  return to_big_endian(*(uint32_t *) p);
-}
 
 size_t as_int(const char *p) {
   char size[9];
@@ -63,15 +60,6 @@ vector<inode::item> initramfs_inode::list() {
 }
 
 void mount_initramfs() {
-  char *initrd_start;
-  void *pstart = fdt::query("/chosen", "linux,initrd-start");
-  void *pend = fdt::query("/chosen", "linux,initrd-end");
-  if (!pstart || !pend)
-    panic("device tree: cannot find initrd");
-  
-  // Read the device tree and find the chosen node.
-  initrd_start = (char *) as_va((read_int(pstart) * 1ul << 32) + read_int((char*) pstart + 4));
-  
   // Initialize the initramfs and register it in vfs.
   initramfs = new (os::permanent) class initramfs;
   auto *dentry = initramfs->root;

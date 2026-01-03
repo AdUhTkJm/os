@@ -44,6 +44,8 @@ long ppoll(void *_fds, unsigned cnt, unsigned long tmo, void *sigmask, bool isus
 long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long newpath, int flags);
 
 long fromtype(inode::filetype ty);
+long read_to_user(file *f, void *buf, size_t len);
+long write_from_user(file *f, void *buf, size_t len);
 
 }
 

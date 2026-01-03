@@ -107,9 +107,9 @@ ssize_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags)
 short pipe_inode::poll(unsigned short event) {
   bool out = event & POLLOUT, in = event & POLLIN;
   auto result = 0;
-  if (in && !buffer.empty())
+  if (in && (buffer.size() != rpos || writers == 0))
     result |= POLLIN;
-  if (out && buffer.size() < maxbuf)
+  if (out && (buffer.size() < maxbuf || readers == 0))
     result |= POLLOUT;
   return result;
 }
@@ -134,18 +134,17 @@ void pipe_inode::onclose(int flags) {
   bool read = (flags & 0x3) == O_RDONLY || (flags & 0x3) == O_RDWR;
   bool write = (flags & 0x3) == O_WRONLY || (flags & 0x3) == O_RDWR;
 
-  {
-    synchronized _(lock);
-    if (read)
-      readers--;
-    if (write)
-      writers--;
+  lock.acquire();
+  if (read && !--readers) {
+    CONCURRENCY_LOG("readers empty: wake writers\n");
+    write_wait.wake_all();
   }
-
-  if (!readers)
-    CONCURRENCY_LOG("readers empty: wake writers\n"), write_wait.wake_all();
-  if (!writers)
-    CONCURRENCY_LOG("writers empty: wake readers\n"), read_wait.wake_all();
+  if (write && !--writers) {
+    CONCURRENCY_LOG("writers empty: wake readers\n");
+    read_wait.wake_all();
+  }
+  lock.release();
+  scheduler.maybe_preempt();
 }
 
 void pipe_inode::incf(const file *file) {

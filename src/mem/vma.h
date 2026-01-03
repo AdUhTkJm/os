@@ -776,6 +776,8 @@ public:
 
 // Map according to the current process's VMA.
 // Terminates the process when the pointer is not in any VMA.
+[[nodiscard]] bool map_single(void *va, pte_t *root);
+
 [[nodiscard]] bool map_current(void *va);
 [[nodiscard]] bool map_current(void *va, pte_t *pte);
 

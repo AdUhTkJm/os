@@ -170,6 +170,8 @@ for i in range(array.len(bib)) {
 
 文档接下来的部分将详细解释各个模块的具体实现细节。如果没有特殊说明，这些细节默认是 RISC-V 的。
 
+这是一个*单核* OS。考虑到多核的复杂度（和更加难以调试的 race condition），想要一个人实现恐怕是不太现实的。此外，比赛的测试平台上提到不能同时运行多个测试用例，涉及多线程的用例也较少，因此单核的劣势并不明显。
+
 这篇文档也算是我的 OS 学习记录，所以并未直接使用 AI 编写（当然，让 Gemini 给了一些参考意见）。相信我，AI 的遣词造句水平是我望尘莫及的。况且你不能指望 AI 真的能写 Typst 代码：我试过，GPT 一直在胡言乱语。
 
 此外，我在参考文献中放了一些#h(-0.3em)#[#set text(stroke: stroke(paint: luma(85%), thickness: 0.5pt)); #strike(stroke: luma(80%))[其实全部都是]]彩蛋。
@@ -291,7 +293,9 @@ class btree;
 
 在地址空间一节中，我在处理地址空间的时候使用了特化的 B-tree，具体请见 @addrspace。
 
-*红黑树* 
+*红黑树* `os::rbtree`。有时，我无法避免在持有迭代器的情况下修改容器。这时，不论是 B-tree 还是哈希表都无法工作，因此我必须使用红黑树。一个例子是 page cache。
+
+这是一个 intrusive 的红黑树，目前只支持插入和清空，暂时无法删除。
 
 == 错误处理工具
 
@@ -313,7 +317,7 @@ if (!ret)             // If error happens...
 dentry *entry = *ret; // Extract value
 ```
 
-同时，这里的 `expected<T, E>` 支持移动语义以及不可默认构造的类型，比如可以在其中放入 `unique_ptr`。这在内核的很多地方都有应用，比如@interrupt 所提到的 `copy_to_user` 与 `copy_from_user`。
+同时，这里的 `expected<T, E>` 支持移动语义以及不可默认构造的类型，比如可以在其中放入 `unique_ptr`。
 
 类似地，当不需要 E 时，我也实现了 `optional<T>`。这是因为 C++ 没有零长度的类型，所以无法直接复用 `expected<T, unit>`。
 
@@ -557,7 +561,7 @@ struct node {
 
 我还加入了一些优化。考虑到 page fault 的时候，大多缺失的页都来自于同一个 `vma_t`（尤其是 .text 段），我会在查询的时候缓存上一次查询的结果，并优先检查这次的地址是否落在上次的那个 `vma_t` 内部。
 
-== 共享内存
+== 共享内存 <sharedmem>
 
 共享内存由它的文件 `backup` 中的 page cache 实现。这里的 page cache 和@devfs[]中提到的 `block_inode` 的按页缓存是不一样的。它是 ```cpp struct file``` 的一部分，而不是 inode 的一部分，而且默认不会开启。
 
@@ -565,7 +569,7 @@ struct node {
 
 对于 MAP_SHARED | MAP_ANONYMOUS 的情况，我会创建一个 tmpfs_inode，并以它为基础创建一个 ```cpp struct file```。它不加入正常的 VFS 查找。
 
-== 缺页处理
+== 缺页处理 <pagefault>
 
 在缺页处理时，我们有的时候需要调用 `inode::read()`，而它可能暂停当前进程。如果处理不当，这就会导致 race condition。
 
@@ -651,7 +655,7 @@ public:
 
 除了上面提到的 metadata 和虚表之外，inode 还维护了引用计数和链接计数。对于硬盘上的文件系统，当引用计数归零的时候，就可以释放 inode；对于内存中的文件系统，释放 inode 就相当于删除，因此只有在引用计数和链接计数都为零时才可以释放。
 
-== 文件系统的挂载 <dentry>
+== 挂载 <dentry>
 
 注意到 inode 并不记录它的父节点——也无法记录，毕竟有 hard link 的存在。它也不会记录自己的名字。为了方便路径查找，我们需要一个额外记录了这两个内容的结构：
 ```cpp
@@ -663,7 +667,46 @@ public:
 };
 ```
 
-当然，对于单独的一个文件系统来说，这已经足够了。但是为了支持挂载，我们还需要记录“在当前路径所挂载的文件系统”。
+当然，对于单独的一个文件系统来说，这已经足够了。但是为了支持挂载，我们还需要记录“在当前路径所挂载的文件系统”。所以，我们需要加入额外的两个字段：
+
+```cpp
+struct mount_t : intrusive_list_node<mount_t> {
+  dentry *host;    // The path in the host filesystem.
+  dentry *root;    // The root of the mounted filesystem.
+  mount_t *parent; // The parent mount.
+  intrusive_list<mount_t> children; // The submounts.
+  int flags;
+};
+
+class dentry {
+  ...
+  vfs::mount_t *belong;        // The mount that this dentry belongs to.
+  vfs::mount_t *mnt = nullptr; // The mount point here.
+};
+```
+
+在查询时，如果 `mnt` 非空，我们就会切换到 `mnt->root`。在构建新的 dentry 时，如果它恰好等于 `belong->children` 中某个挂载的 `host`，我们就会将 `mnt` 置为对应的 `mount_t`。在这种实现方式下，即使 dentry 离开缓存后被删除，重新构建的 dentry 依然具有正确的信息。
+
+刚才提到的缓存用于加速路径查找，它会把父节点和名字 `pair<inode, string>` 映射到子节点的 `dentry`。注意到这里的 key 是 inode 而不是 dentry： 在我的 OS 中，inode 可以直接通过比较指针判断相等，但 dentry 不可以——指针相等是 dentry 相等的充分不必要条件。如果一个 inode 被 hard link 了，为了保证正确性，我们将不会把它放入缓存。
+
+== 文件
+
+在这个 OS 中，文件实际上只是在 inode 外包上一层，管理它的 offset。当然，需要记录的东西还包括 flags 和引用计数。
+
+与 Linux 不同，socket 与管道*并不是*文件，而是 *inode*：它们的读取、写入也是通过重写虚基类 `inode` 的函数来派发的。它们会忽略 read/write 传入的 `offset` 参数。
+
+```cpp
+class file : public shared {
+public:
+  dentry *entry;
+  // For ordinary file, this is the byte offset;
+  // For other things, this is meaningless.
+  size_t offset;
+  int flags;
+}
+```
+
+在@sharedmem[]中提到，文件可能具有 page cache。当 page cache 启用时，文件将会优先写入这里，而不是调用 inode 的 read/write。这个 page cache 和下方提到块设备的 page cache 想法是类似的，但实现不一样：我们不需要在持有迭代器的同时修改这个容器，而且不需要键值对有序，因此使用哈希表就足够了。
 
 == devfs <devfs>
 
@@ -675,9 +718,63 @@ public:
 
 === console
 
+读取通过 UART，写入通过 OpenSBI。实际上直接向 UART 写入也完全可以；但是既然 SBI 都提供了，那不用白不用。
+
 === tty
 
+（目前只有按行读入的功能，未完工）
+
 === 块设备
+
+块设备具有一个单独的，inode-level 的 page cache（而不需要等到打开成文件）。因此，这就引入了 race condition:
+
+#context {
+set rect(stroke: none)
+set align(center)
+
+let line = line(stroke: stroke(dash: "dashed", paint: blue), length: 10%);
+let underline(str) = pad(
+  stack(dir: ltr, spacing: 3pt, text(str, baseline: -5pt, stroke: stroke(thickness: 0.5pt, paint: blue)), line),
+  left: -100pt);
+
+box(
+stack(
+  dir:ltr,
+  stack(dir: ttb, spacing: 0pt,
+    rect()[*进程 A*],
+    rect()[请求 page 542],
+    underline("preempt"),
+    v(50pt),
+    underline("resume"),
+    rect(inset: 0pt, outset: 0pt)[写入 sector 4336],
+  ),
+  h(60pt),
+  stack(dir: ttb,
+    rect()[*进程 B*],
+    pad(rect()[请求 page 542], top: 30pt),
+    rect()[写入 sector 4336#footnote()[这是 page 值的 8 倍，因为 VirtIO 驱动的 sector 大小总是 512 字节。调试时 OS 在 QEMU 上运行，所以总是会使用 VirtIO 驱动。]]
+  ),
+),
+)
+}
+
+这会导致写入丢失——和之前@pagefault[]处，缺页处理时的写入丢失几乎完全一致。解决方法也是类似的：在最终放入 cache 前，重新检查一下 cache 里是否有当前的 key。
+
+在其他的文件系统读取块设备的时候，它们实际上会直接从这个 cache 中取一整页，并且在原地读取/改写。这样可以使得整个读写过程几乎是零复制的。
+
+对于真正需要读写的情况，这个块设备将会调用我的 `block_device` 基类的虚函数，而真正实现它的是各个驱动。
+
+对于 VirtIO 驱动，它支持一次读写多个 sector。但是 QEMU 提供的 VirtIO 设备似乎并没有设置对应的 feature，所以我也不知道它一次究竟能读多少；不过读一整页（8 个）还是没问题的。像这样一次多读一点可以提速不少。
+
+== ext 系列
+
+我实现了 ext2 和极不完整的 ext4（几乎只有读取和写入）。我没有采用 lwext4，主要有下面几个原因：
+
+- 为了更好地学习这些文件系统。正如开头所言的一样，这是我的第一个 OS，直接使用我看不懂的库对学习是不利的。
+
+- 为了性能。如果采用现成的库，就很难再把我的 page cache 直接接进去了，会引入大量复制。
+
+- 说不定自己写还没调库麻烦。C++ 和 C 虽然可以互操作，但确实有点麻烦，尤其是在我不会用 make/CMake 的情况下。我是用手搓的 Python 脚本构建的，而要把它修改到能编译并链接 lwext4 的程度还是太困难了。
 
 == 网络
 
@@ -697,13 +794,55 @@ UDP 的发送是十分简单的，发完了就可以不管了。它在没有 bin
 
 当正常的 UDP 包到来时，我们调用接受信息的 `receive()`；当 ICMP 到来时，如果它是因为传输过程中的错误而发送，它应该会带有 UDP 包头。我们截取这一段，并读取 srcport 来确定到底是哪个 inode 出错了，并把 ICMP 包头所代表的 Linux 错误码发给它。
 
+DNS 是基于 UDP 的 level-7 协议，因此完全是用户态的，不需要专门支持。
+
 === TCP <tcp>
 
 TCP 是十分复杂的。简单起见，我并没有做 congestion control。
 
 对于 bind()，我们并不需要做太多，只需要检查自身是否处于 CLOSED 状态就可以了。在 bind() 完成之后，这个 inode 会进入 BOUND 状态。在 TCP 标准里并没有这个状态，但是从实现层面来看，加入它是很自然的。
 
-对于 connect()，如果它不在 BOUND 状态，我们会拒绝这个 system call。接下来进行三次握手。这里的包会直接通过 IP 层发出，因为此时 TCP 尚未完全初始化。对于 TCP 的 sequence number，我选择使用一个普通的随机数——既不是 0 （似乎 Python 是这样做的），
+对于 connect()，如果它不在 BOUND 状态，我们会拒绝这个 system call。接下来进行三次握手。这里的包会直接通过 IP 层发出，因为此时 TCP 尚未完全初始化。对于 TCP 的 sequence number，我选择使用一个普通的随机数。
+
+接下来，TCP 将会进入 ESTABLISHED 状态，并开始执行标准的滑动窗口算法。我并没有使用 Nagle 之类的优化，也没有把 ACK 放到下一个 write 中——毕竟我也不知道下一个 read/write 什么时候会来。
+
+在收到 FIN 之后，理论上应该进入 4-way teardown。其实不做也没啥事来着，反正该收的都收到了（确信）。或许之后有时间了会补全的。
+
+=== 零复制
+
+在整个网络协议栈的传递过程中，我保持了零复制。
+
+在写入的时候，调用栈大概是这样的：
+```cpp
+   tcp_socket_inode::write(p, len)
+=> tcp::write(p, len)
+=> ip::write(p - 20, len + 20)
+=> eth::write(p - 40, len + 40)
+=> net_device::write(p - 54, len + 54)
+```
+
+它们使用了同一个指针 `p`。在 `tcp_socket_inode` 调用下面的函数时，它会提前在头部预留好足够大的空间，这样就不需要复制了。
+
+更进一步地，如果这里的 `net_device` 是 loopback device，那么它的 write 也不会复制：
+
+```cpp
+int lo::write(const void *buf, int len, bool block) {
+  (void) block; // This should never block.
+  demux->push((const char*) buf, len);
+  return len;
+}
+```
+
+同样，`demux->push` 的分发也不会复制：
+```cpp
+   demux->push(p, len)
+=> eth::read(p + 14, len - 14)
+=> ip::read(p + 34, len - 34)
+=> tcp::read(p + 54, len - 54)
+=> tcp_socket_inode::receive()
+```
+
+对于一个普通的 NIC，它将不会进行动态内存分配。考虑到我们只会使用 IP 协议，我的网卡驱动只会接受 <= 1500 字节（MTU）的包，超过这个的部分将会被丢弃。这个固定长度缓冲区可以直接分配在栈上。
 
 = 调试工具 <instr>
 

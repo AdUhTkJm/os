@@ -609,9 +609,14 @@ typedef struct {
 #define FD_CLR   __FD_CLR
 #define FD_ISSET __FD_ISSET
 
-// From <stdio.h>
+// From <stdio.h>.
 #define RENAME_NOREPLACE (1 << 0)
 #define RENAME_EXCHANGE  (1 << 1)
 #define RENAME_WHITEOUT  (1 << 2)
+
+// From <sys/mman.h>.
+#define MS_ASYNC      1		/* Sync memory asynchronously.  */
+#define MS_SYNC       4		/* Synchronous memory sync.  */
+#define MS_INVALIDATE	2		/* Invalidate the caches.  */
 
 #endif
