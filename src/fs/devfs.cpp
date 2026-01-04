@@ -1,4 +1,5 @@
 #include "devfs.h"
+#include "../driver/lo/loblock.h"
 #include "../driver/plic/plic.h"
 #include "../driver/virtio/virtio.h"
 #include "../proc/schedule.h"
@@ -345,8 +346,13 @@ void mount_dev() {
   root->record("tty",  new (permanent) tty_inode(console));
   root->record("null", new (permanent) null_inode());
   root->record("zero", new (permanent) zero_inode());
+  for (int i = 0; i < loblock::lomax; i++) {
+    static_assert(loblock::lomax < 10);
+    char x[6] = { 'l', 'o', 'o', 'p', char(i + '0'), '\0' };
+    root->record(x, new (permanent) block_inode(&loblock::los[i], MAKE_DEV(7, i)));
+  }
   // They are essentially the same thing, just that urandom won't block on early boot.
-  // We don't really use them on boot, so doesn't matter too much.
+  // We don't really use them on boot, so it doesn't matter.
   root->record("urandom", &*random);
   root->record("random", &*random);
   root->record(".", root);

@@ -798,6 +798,11 @@ struct addrspace : shared {
   va_t mmap_begin = 0x6000'0000;
   mutable vma_t *cache;
 
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
+  void ondrop() override;
+  void onref() override;
+#endif
+
   addrspace() = default;
   ~addrspace() { vmas.clear(); }
 

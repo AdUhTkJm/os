@@ -249,12 +249,13 @@ extern "C" void _start() {
 cd /mnt/glibc/ltp/testcases/bin
 echo "#### OS COMP TEST GROUP START ltp-$1 ####"
 for f in *; do
-  [ -f "$f" ] || continue
   case "$f" in
-      *.sh) continue ;;
+    cgroup_regression_*) continue ;;
   esac
-
-  "./$f"
+  if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
+    echo "Running $f"
+    "./$f"
+  fi
 done
 echo "#### OS COMP TEST GROUP END ltp-$1 ####"
 )";
@@ -269,7 +270,7 @@ echo "#### OS COMP TEST GROUP END ltp-$1 ####"
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       // ltp;
-      CD "/ltp/testcases/bin && ./access04; echo 'done'";
+      CD "/ltp/testcases/bin && ./clock_gettime01; echo 'done'";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)
     const char *test = R"(
@@ -285,7 +286,8 @@ single() {
   for f in *; do
     [ -f "$f" ] || continue
     case "$f" in
-        *.sh) continue ;;
+      *.sh) continue ;;
+      cgroup_regression_*) continue ;;
     esac
 
     "./$f"

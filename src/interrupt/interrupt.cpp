@@ -324,7 +324,9 @@ HANDLE(sendfile, out, in, offptr, len) {
 
 HANDLE(openat, dirfd, _path, flags, mode) {
   auto path = copy_from_user((char *) _path);
-  if (!path || !*path)
+  if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
 
   return pcb->open_file_from(path->get(), dirfd, flags, mode);
@@ -337,7 +339,10 @@ HANDLE(close, fd) {
 HANDLE(faccessat, dirfd, _path, mode) {
   auto path = copy_from_user((char *) _path);
   if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
+
   return detail::faccessat(dirfd, path->get(), mode);
 }
 
@@ -370,8 +375,8 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
     node = file->node();
   } else node = pcb->pwd->node;
 
-  if (!writable(pcb->euid, pcb->egid, node))
-    return -EACCES;
+  if (auto ret = writable(pcb->euid, pcb->egid, node); ret < 0)
+    return ret;
 
   auto now = os::now();
   size_t atime = now, mtime = now;
@@ -473,33 +478,53 @@ HANDLE(fchown, fd, uid, gid) {
   if (gid != -1)
     node->gid = gid;
   
-  return node->onchown();
+  auto ret = node->onchown();
+  if (ret < 0)
+    return ret;
+
+  // We also need to clear setuid bits.
+  node->mode &= ~04000;
+  // setgid bit is cleared only when it is executable for a group.
+  if ((node->mode & 02000) && (node->mode & 0010))
+    node->mode &= ~02000;
+  return 0;
 }
 
 HANDLE(fchownat, dirfd, _path, uid, gid, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
   int openflags = 0;
+  
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
-  bool relative = (*path)[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
-    : pcb->open_file(path->get(), O_PATH | openflags);
+
+  int fd = pcb->open_file_from(path->get(), dirfd, O_PATH | openflags);
   if (fd < 0)
     return fd;
+
   auto node = pcb->ftbl->at(fd)->node();
   if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
-  if (uid != -1)
+  if (int(uid) != -1)
     node->uid = uid;
-  if (gid != -1)
+  if (int(gid) != -1)
     node->gid = gid;
+
+  pcb->close_file(fd);
   
   auto ret = node->onchown();
-  pcb->close_file(fd);
-  return ret;
+  if (ret < 0)
+    return ret;
+
+  // We also need to clear setuid bits.
+  node->mode &= ~04000;
+  // setgid bit is cleared only when it is executable for a group.
+  if ((node->mode & 02000) && (node->mode & 0010))
+    node->mode &= ~02000;
+  return node->onchmod();
 }
 
 HANDLE(fchmod, fd, mode) {
@@ -512,6 +537,8 @@ HANDLE(fchmod, fd, mode) {
   auto node = file->node();
   if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
+  if (auto ret = writable(pcb->euid, pcb->egid, file->entry->parent->node); ret < 0)
+    return ret;
 
   node->mode = mode;
   return node->onchmod();
@@ -520,22 +547,27 @@ HANDLE(fchmod, fd, mode) {
 HANDLE(fchmodat, dirfd, _path, mode, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
+
   int openflags = 0;
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
-  bool relative = (*path)[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_PATH | openflags)
-    : pcb->open_file(path->get(), O_PATH | openflags);
+  
+  int fd = pcb->open_file_from(path->get(), dirfd, O_PATH | openflags);
   if (fd < 0)
     return fd;
-  auto node = pcb->ftbl->at(fd)->node();
+
+  auto file = pcb->ftbl->at(fd);
+  auto node = file->node();
   if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
+  if (auto ret = writable(pcb->euid, pcb->egid, file->entry->parent->node); ret < 0)
+    return ret;
 
   node->mode = mode;
-  auto ret = node->onchown();
+  auto ret = node->onchmod();
   pcb->close_file(fd);
   return ret;
 }
@@ -545,7 +577,8 @@ HANDLE(fchmodat, dirfd, _path, mode, flags) {
 HANDLE(fstatat, dirfd, _path, buf, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
-    return -EFAULT;
+    return path;
+
   int openflags = 0;
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
@@ -568,7 +601,7 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_nlink = node->nlink(),
     .st_uid = (unsigned) node->uid,
     .st_gid = (unsigned) node->gid,
-    .st_rdev = 0,
+    .st_rdev = node->rdev(),
     .st_size = (long) node->size(),
     .st_blksize = 4096,
     .st_blocks = (long) (511 + node->size()) / 512,
@@ -671,8 +704,8 @@ HANDLE(symlinkat, target, dirfd, linkpath) {
 
   auto file = pcb->ftbl->at(fd);
   auto node = file->node();
-  if (!writable(pcb->euid, pcb->egid, node))
-    return -EACCES;
+  if (auto ret = writable(pcb->euid, pcb->egid, node); ret < 0)
+    return ret;
 
   // Do we really need to look up twice?
   if (file->node()->lookup(basename))
@@ -704,8 +737,8 @@ HANDLE(unlinkat, dirfd, _path, flags) {
 
   // We cannot unlink a directory.
   auto dir = file->entry->parent->node;
-  if (!writable(pcb->euid, pcb->egid, dir))
-    return -EACCES;
+  if (auto ret = writable(pcb->euid, pcb->egid, dir); ret < 0)
+    return ret;
 
   bool rmdir = flags & AT_REMOVEDIR;
   if (rmdir) {
@@ -1274,7 +1307,9 @@ HANDLE(chroot, _path) {
     return -EACCES;
 
   auto path = copy_from_user((char *) _path);
-  if (!path || !*path)
+  if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
 
   auto dentry = pcb->vfs->lookup_from(path->get(), pcb->pwd);
@@ -1300,6 +1335,7 @@ HANDLE(clock_gettime, id, tp) {
 
   switch (id) {
   case CLOCK_MONOTONIC:
+  case CLOCK_MONOTONIC_RAW: // We don't have NTP now.
     break; // Do nothing
   case CLOCK_REALTIME:
   case CLOCK_REALTIME_COARSE:
@@ -1314,6 +1350,32 @@ HANDLE(clock_gettime, id, tp) {
   if (!copy_to_user((void *) tp, &spec, sizeof(timespec)))
     return -EFAULT;
   return 0;
+}
+
+HANDLE(clock_settime, id, tp) {
+  timespec ts;
+  if (!copy_from_user(&ts, (void *) tp, sizeof(timespec)))
+    return -EFAULT;
+
+  switch (id) {
+  case CLOCK_REALTIME: {
+    unsigned long time = ts.tv_nsec + ts.tv_sec * 1_s;
+    unsigned long tick = rdtime() * (unsigned long) clock_period;
+    if (time < tick)
+      return -EINVAL;
+
+    auto nreal = time - tick;
+    // Advance timeout for all threads that wait on a real time clock.
+    for (auto entry : napping.q) {
+      if (entry->tcb->sclock == CLOCK_REALTIME)
+        entry->tcb->timeout += (realtime - nreal + tick_length - 1) / tick_length;
+    }
+    realtime = nreal;
+    return 0;
+  }
+  default:
+    return -EINVAL;
+  }
 }
 
 HANDLE(gettimeofday, tv, tz) {

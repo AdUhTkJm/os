@@ -318,12 +318,7 @@ pa_t pframe() {
     pa = index * PAGE_SIZE + physbegin;
   }
 
-  auto pos = (pa - physbegin) / PAGE_SIZE;
-  if (pos >= META_SIZE) {
-    printk("pa = %p, physbegin = %p, pos = %ld (max: %ld)\n", pa, physbegin, pos, META_SIZE);
-    assert(false);
-  }
-  meta[pos].refcnt++;
+  meta[off(pa)].refcnt++;
 #if defined(DEBUG_MEMORY)
   memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
 #endif
@@ -384,8 +379,7 @@ void pfree(pa_t pa) {
 }
 
 pa_t pmalloc(int pagecnt) {
-  if (!pminit)
-    panic("pmalloc: bitmap allocator uninitialized");
+  assert(pminit);
   if (pagecnt == 1)
     return pframe();
 

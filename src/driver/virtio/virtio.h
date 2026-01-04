@@ -203,6 +203,7 @@ public:
   // For operation specifications, see 5.2.6.
   int read(uint64_t lba, void *buffer, int len) override;
   int write(uint64_t lba, const void *buffer, int len) override;
+  int sector_size() override { return 512; }
 };
 
 class net_device : public os::net_device {

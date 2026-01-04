@@ -118,14 +118,17 @@ bool readable(int uid, int gid, const inode *node) {
   return true;
 }
 
-bool writable(int uid, int gid, const inode *node) {
+int writable(int uid, int gid, const inode *node) {
+  if (node->fs->readonly)
+    return -EROFS;
+
   int bit = uid == node->uid ? 6 : gid == node->gid ? 3 : 0;
   int flags = node->mode;
   if (uid != 0) {
     if (!(flags & (1 << (bit + 1))))
-      return false;
+      return -EACCES;
   }
-  return true;
+  return 0;
 }
 
 bool executable(int uid, int gid, const inode *node) {
@@ -263,11 +266,8 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
 }
 
 // When we're instrumenting functions, the lookup_impl function will take up more stack than normal.
-#if defined(FUNC_INSTRUMENT) || !defined(NDEBUG)
+// TODO: change from recursion to loop to avoid stack issues.
 constexpr static int maxdepth = 8;
-#else
-constexpr static int maxdepth = 12;
-#endif
 
 expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
   // Put a maximum on recursion depth to avoid infinite loops.
@@ -369,9 +369,9 @@ void vfs::mount(dentry *host, dentry *root, int flags) {
 
 expected<fs*> vfs::get(const string &fsname, const char *src) {
   if (!creators->count(fsname))
-    return -EINVAL;
+    return -ENODEV;
   auto fs = (*creators)[fsname](src);
-  if ((*fs)->has_backup())
+  if (fs && (*fs)->has_backup())
     tosync->push_back(*fs);
   return fs;
 }
@@ -438,18 +438,6 @@ file::~file() {
 file::file(dentry *entry, int flags): entry(entry), offset(0), flags(flags) {
   node()->ref();
 }
-
-#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
-void file::ondrop() {
-  int cnt = refcnt.load();
-  printk("dropped %s, refcnt: %d -> %d\n", entry->path().c_str(), cnt, cnt - 1);
-}
-
-void file::onref() {
-  int cnt = refcnt.load();
-  printk("referred %s, refcnt: %d -> %d\n", entry->path().c_str(), cnt, cnt + 1);
-}
-#endif
 
 string dentry::path() const {
   string result = name;

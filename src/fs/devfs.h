@@ -7,11 +7,16 @@
 #include "../utils/stl/rbtree.h"
 #include "../driver/tty/tty.h"
 
+#define MAKE_DEV(major, minor) (((major) << 20) | (minor))
+#define DEV_MAJOR(dev) ((dev) >> 20)
+#define DEV_MINOR(dev) ((dev) & 0xfffff)
+
 namespace os {
 
 struct /*interface*/ block_device {
   virtual int read(size_t lba, void *buf, int len) = 0;
   virtual int write(size_t lba, const void *buf, int len) = 0;
+  virtual int sector_size() = 0;
 };
 
 class devfs : public fs {
@@ -36,6 +41,7 @@ public:
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
+  unsigned long rdev() override { return MAKE_DEV(5, 1); }
 
   void wake_read() override;
   void prepare_read_wait(wait_entry &) override;
@@ -65,6 +71,7 @@ public:
 class block_inode : public inode_impl<block_inode> {
   block_device *dev;
   inode::meta meta;
+  unsigned long my_rdev;
 
   struct cached_sector : rb_node<unsigned, cached_sector> {
     // We allocate a physical page for it.
@@ -83,12 +90,14 @@ public:
   FILE_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
 
-  block_inode(block_device *dev): inode_impl(devfs.get(), 0, 0, 0666, BlockDevice), dev(dev) {}
+  block_inode(block_device *dev, unsigned long rdev): inode_impl(devfs.get(), 0, 0, 0666, BlockDevice), dev(dev), my_rdev(rdev) {}
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t, const void*, size_t, int flags) override;
+  unsigned long rdev() override { return my_rdev; }
   // poll() is default, as a regular file.
 
   // Special functionality.
+  block_device *device() const { return dev; };
   void flush();
   void *get_page(unsigned i);
   void mark_dirty(unsigned i);
@@ -150,6 +159,7 @@ public:
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t, const void*, size_t, int flags) override;
   short poll(unsigned short) override;
+  unsigned long rdev() override { return MAKE_DEV(4, 0); }
   
   void wake_read() override;
   void prepare_read_wait(wait_entry &) override;
@@ -166,6 +176,7 @@ public:
   ssize_t read(size_t, void *, size_t, int) override { return 0; }
   ssize_t write(size_t, const void*, size_t len, int) override { return len; }
   int truncate(size_t) override { return 0; }
+  unsigned long rdev() override { return MAKE_DEV(1, 3); }
 };
 
 class zero_inode : public inode_impl<zero_inode> {
@@ -178,6 +189,7 @@ public:
   ssize_t read(size_t, void *buf, size_t len, int) override { memset(buf, 0, len); return len; }
   ssize_t write(size_t, const void*, size_t len, int) override { return len; }
   int truncate(size_t) override { return 0; }
+  unsigned long rdev() override { return MAKE_DEV(1, 5); }
 };
 
 extern static_storage<console_inode> console;

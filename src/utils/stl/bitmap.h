@@ -51,10 +51,12 @@ public:
   };
 
   reference operator[](size_t i) {
+    assert(i < size);
     return reference(map[i / unit_bits], i % unit_bits);
   }
 
   const_reference operator[](size_t i) const {
+    assert(i < size);
     return const_reference(map[i / unit_bits], i % unit_bits);
   }
 
@@ -125,7 +127,7 @@ public:
   void clear() { memset(map, 0, sizeof(map)); }
   unit *data() { return map; }
   const unit *data() const { return map; }
-  unit word(size_t i) const { return map[i]; }
+  unit word(size_t i) const { assert(i < roundup<unit_bits>(size) / unit_bits); return map[i]; }
 private:
   unit map[os::roundup<unit_bits>(Size) / unit_bits];
 };

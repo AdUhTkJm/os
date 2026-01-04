@@ -203,7 +203,7 @@ va_t addrspace::find_mmap(unsigned long len, va_t hint) const {
 
   // We might need to start searching from other places.
   printk("mmap: hint = %p, begin = %p, len = %p", hint, mmap_begin, len);
-  assert(false && "TODO: find mmap: mmap_begin change not implemented");
+  panic("TODO: find mmap: mmap_begin change not implemented");
 }
 
 va_t addrspace::brk(va_t addr) {
@@ -246,6 +246,18 @@ void addrspace::split(va_t addr) {
   copy.maxread = oldread > firstlen ? oldread - firstlen : 0;
   vmas.insert(copy);
 }
+
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
+void addrspace::ondrop() {
+  int cnt = refcnt.load();
+  printk("dropped addrspace %p, refcnt: %d -> %d\n", this, cnt, cnt - 1);
+}
+
+void addrspace::onref() {
+  int cnt = refcnt.load();
+  printk("referred addrspace %p, refcnt: %d -> %d\n", this, cnt, cnt + 1);
+}
+#endif
 
 vma_t::~vma_t() {
   if (backup)

@@ -80,11 +80,11 @@ ssize_t pid::mounts::read(size_t offset, void *buf, size_t len, int) {
     return 0;
 
   size_t l = min(value.size() - offset, len);
-  memcpy(buf, value.c_str() + offset, len);
+  memcpy(buf, value.c_str() + offset, l);
   return l;
 }
 
-process::process(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb),
+process::process(class fs *fs, inode *parent, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb), parent(parent),
   exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)) {
   exe->ref();
   oom->ref();
@@ -111,6 +111,8 @@ inode *process::lookup(const string &name) {
 
 vector<inode::item> process::list() {
   vector<inode::item> result;
+  result.push_back({ inum(), ".", Dir });
+  result.push_back({ parent->inum(), "..", Dir });
   if (pcb->execpath.size())
     result.push_back({ exe->inum(), "exe", File });
   result.push_back({ oom->inum(), "oom_score_adj", File });
@@ -196,7 +198,7 @@ inode *procroot::lookup(const string &name) {
     if (pnodes.count(pid))
       return pnodes[pid];
 
-    return pnodes[pid] = new proc::process(fs, (*pidmap)[pid]);
+    return pnodes[pid] = new proc::process(fs, this, (*pidmap)[pid]);
   }
   if (name == "meminfo")
     return meminfo;
@@ -218,7 +220,7 @@ inode *procroot::lookup(const string &name) {
     if (pnodes.count(pid))
       return pnodes[pid];
 
-    return pnodes[pid] = new proc::process(fs, (*pidmap)[pid]);
+    return pnodes[pid] = new proc::process(fs, this, (*pidmap)[pid]);
   }
 
   printk("procroot: unknown name: %s\n", name.c_str());
@@ -228,6 +230,7 @@ inode *procroot::lookup(const string &name) {
 vector<inode::item> procroot::list() {
   meta.atime = now();
   vector<item> result;
+  result.push_back({ inum(), ".", File });
   result.push_back({ filesystems->inum(), "filesystems", File });
   result.push_back({ meminfo->inum(), "meminfo", File });
   result.push_back({ stat->inum(), "stat", File });

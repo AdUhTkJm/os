@@ -86,6 +86,9 @@ int pcb_t::open_file(const string &path, int flags, int mode, inode::filetype ty
 }
 
 int pcb_t::open_file_from(const string &path, int dirfd, int flags, int mode, inode::filetype type) {
+  if (path[0] == '\0')
+    return -ENOENT;
+
   if (dirfd == AT_FDCWD || path[0] == '/')
     return open_file_from(path, pwd, flags, mode, type);
 
@@ -140,8 +143,10 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
 
   if (read && !readable(euid, egid, node))
     return -EACCES;
-  if (write && !writable(euid, egid, node))
-    return -EACCES;
+  if (write) {
+    if (auto ret = writable(euid, egid, node); ret < 0)
+      return ret;
+  }
 
   file *f = new file(dentry, flags);
   int fd = ftbl->allocate(f);
@@ -678,6 +683,7 @@ proceed:
   trap->sscratch = (va_t) usp;
   assert(trap->sscratch % 16 == 0);
   // Now we can drop the old vma.
+  pcb->vma->ref();
   oldvma->drop();
   return 0;
 }
@@ -724,18 +730,21 @@ expected<unique_ptr<char>> copy_from_user(char *usr) {
   if ((va_t) p % PAGE_SIZE != 0 && !*p)
     goto finish;
 
-  for (int i = 0; i < 4096; i++) {
-    if (!vma::map_current(p))
-      return -EFAULT;
-    for (char *finish = p + PAGE_SIZE; p < finish && *p; p++)
-      vec.push_back(*p);
-    
-    if ((va_t) p % PAGE_SIZE != 0 && !*p)
-      goto finish;
-  }
-  return -E2BIG;
+  // As Linux does, we only support length <= 4096.
+  if (!vma::map_current(p))
+    return -EFAULT;
+  for (char *finish = p + PAGE_SIZE; p < finish && *p; p++)
+    vec.push_back(*p);
+  
+  if ((va_t) p % PAGE_SIZE != 0 && !*p)
+    goto finish;
+  
+  return -ENAMETOOLONG;
 finish:
-  int sz = vec.size();
+  auto sz = vec.size();
+  if (sz > 4096)
+    return -ENAMETOOLONG;
+  
   char *buf = new char[1 + sz];
   memcpy(buf, vec.data(), sz);
   buf[sz] = 0;

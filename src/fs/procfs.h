@@ -91,6 +91,7 @@ public:
 class process : public inode_impl<process> {
   inode::meta meta;
   pcb_t *pcb;
+  inode *parent;
   link *exe;
   pid::oom_score_adj *oom;
   pid::mounts *mounts;
@@ -99,7 +100,7 @@ public:
   META_DEFAULT_IMPL;
   READONLY_DIRECTORY;
 
-  process(class fs *fs, pcb_t *pcb);
+  process(class fs *fs, inode *parent, pcb_t *pcb);
   ~process();
   inode *lookup(const string &name) override;
   vector<item> list() override;

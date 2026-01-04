@@ -244,7 +244,7 @@ struct stat {
   unsigned long st_dev;      /* ID of device containing file */
   unsigned long st_ino;      /* Inode number */
   unsigned      st_mode;     /* File type and mode */
-  unsigned long st_nlink;    /* Number of hard links */
+  unsigned      st_nlink;    /* Number of hard links */
   unsigned      st_uid;      /* User ID of owner */
   unsigned      st_gid;      /* Group ID of owner */
   unsigned long st_rdev;     /* Device ID (if special file) */
@@ -618,5 +618,62 @@ typedef struct {
 #define MS_ASYNC      1		/* Sync memory asynchronously.  */
 #define MS_SYNC       4		/* Synchronous memory sync.  */
 #define MS_INVALIDATE	2		/* Invalidate the caches.  */
+
+// From <linux/loop.h>.
+#define LO_CRYPT_NONE		0
+#define LO_CRYPT_XOR		1
+#define LO_CRYPT_DES		2
+#define LO_CRYPT_FISH2		3    /* Twofish encryption */
+#define LO_CRYPT_BLOW		4
+#define LO_CRYPT_CAST128	5
+#define LO_CRYPT_IDEA		6
+#define LO_CRYPT_DUMMY		9
+#define LO_CRYPT_SKIPJACK	10
+#define LO_CRYPT_CRYPTOAPI	18
+#define MAX_LO_CRYPT		20
+
+/*
+ * IOCTL commands --- we will commandeer 0x4C ('L')
+ */
+
+#define LOOP_SET_FD		0x4C00
+#define LOOP_CLR_FD		0x4C01
+#define LOOP_SET_STATUS		0x4C02
+#define LOOP_GET_STATUS		0x4C03
+#define LOOP_SET_STATUS64	0x4C04
+#define LOOP_GET_STATUS64	0x4C05
+#define LOOP_CHANGE_FD		0x4C06
+#define LOOP_SET_CAPACITY	0x4C07
+#define LOOP_SET_DIRECT_IO	0x4C08
+#define LOOP_SET_BLOCK_SIZE	0x4C09
+#define LOOP_CONFIGURE		0x4C0A
+
+/* /dev/loop-control interface */
+#define LOOP_CTL_ADD		0x4C80
+#define LOOP_CTL_REMOVE		0x4C81
+#define LOOP_CTL_GET_FREE	0x4C82
+
+#define LO_NAME_SIZE 64
+#define LO_KEY_SIZE  32
+
+#define LO_FLAGS_READ_ONLY 1
+#define LO_FLAGS_AUTOCLEAR 4
+#define LO_FLAGS_PARTSCAN  8
+#define LO_FLAGS_DIRECT_IO 16
+
+struct loop_info {
+  int           lo_number;      /* ioctl r/o */
+  unsigned long lo_device;      /* ioctl r/o */
+  unsigned long lo_inode;       /* ioctl r/o */
+  unsigned long lo_rdevice;     /* ioctl r/o */
+  int           lo_offset;
+  int           lo_encrypt_type;
+  int           lo_encrypt_key_size;  /* ioctl w/o */
+  int           lo_flags;       /* ioctl r/w */
+  char          lo_name[LO_NAME_SIZE];
+  unsigned char lo_encrypt_key[LO_KEY_SIZE]; /* ioctl w/o */
+  unsigned long lo_init[2];
+  char          reserved[4];
+};
 
 #endif

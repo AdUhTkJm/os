@@ -688,8 +688,9 @@ void probe() {
 
       // Create a node in devfs.
       char buf[4] = "vda";
-      buf[2] += block_device_cnt++; // vda, vdb, vdc ...
-      devnode->record(buf, new (os::permanent) block_inode(dev));
+      buf[2] += block_device_cnt; // vda, vdb, vdc ...
+      devnode->record(buf, new (os::permanent) block_inode(dev, MAKE_DEV(254, block_device_cnt)));
+      block_device_cnt++;
 
       (*blk_intr)[device.interrupt] = dev;
       continue;

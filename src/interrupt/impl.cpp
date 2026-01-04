@@ -8,6 +8,7 @@
 #include "../fs/pipe.h"
 #include "../fs/tcp.h"
 #include "../proc/schedule.h"
+#include "../driver/lo/loblock.h"
 #include "../driver/tty/tty.h"
 #include "../driver/virtio/virtio.h"
 #include "../utils/log.h"
@@ -139,6 +140,9 @@ long mount(const char *src, const char *tgt, const char *fsty, unsigned long fla
   expected<class fs*> fs = vfs->get(fsty, src);
   if (!fs)
     return fs;
+
+  if (flags & MS_RDONLY)
+    (*fs)->readonly = true;
 
   vfs::mount(mntpoint, (*fs)->root);
   vfs::mounted->push_back({
@@ -300,18 +304,8 @@ long munmap(unsigned long start, unsigned long len) {
   return 0;
 }
 
-long ioctl(int fd, int op, void *argp) {
-  auto tcb = active();
-  auto pcb = tcb->pcb;
-
-  auto file = pcb->ftbl->at(fd);
-  if (!file)
-    return -EBADF;
-
-  auto tty = dyn_cast<tty_inode>(file->node());
+long ioctl_tty(tty_inode *tty, int op, void *argp) {
   auto &dev = tty->tty;
-  if (!tty)
-    return -ENOTTY;
 
   switch (op) {
   case TCGETS: {
@@ -346,6 +340,128 @@ long ioctl(int fd, int op, void *argp) {
     return 0;
   }
   default:
+    printk("ioctl: tty: unknown op: %d\n", op);
+    return -EINVAL;
+  }
+}
+
+long ioctl_loop(block_inode *node, int op, void *argp) {
+  auto lo = (loblock::lo*) node->device();
+  switch (op) {
+  case LOOP_GET_STATUS: {
+    if (!lo->backup)
+      return -ENXIO;
+
+    int flags = 0;
+    if (lo->readonly)
+      flags |= LO_FLAGS_READ_ONLY;
+    if (lo->autoclear)
+      flags |= LO_FLAGS_AUTOCLEAR;
+
+    loop_info info {
+      .lo_number = int(lo - loblock::los),
+      .lo_device = 7,
+      .lo_inode = (unsigned long) node->inum(),
+      .lo_rdevice = node->rdev(),
+      .lo_offset = (int) lo->offset,
+      .lo_encrypt_type = 0,
+      .lo_encrypt_key_size = 0,
+      .lo_flags = flags,
+      .lo_name = {},
+      .lo_encrypt_key = {},
+      .lo_init = {},
+      .reserved = {},
+    };
+    if (!copy_to_user(argp, &info, sizeof(loop_info)))
+      return -EFAULT;
+    return 0;
+  }
+  case LOOP_SET_STATUS: {
+    loop_info info;
+    if (!copy_from_user(&info, argp, sizeof(loop_info)))
+      return -EFAULT;
+    lo->offset = info.lo_offset;
+    lo->readonly = info.lo_flags & LO_FLAGS_READ_ONLY;
+    lo->autoclear = info.lo_flags & LO_FLAGS_AUTOCLEAR;
+    return 0;
+  }
+  case LOOP_SET_FD: {
+    int fd = int((unsigned long) argp);
+
+    auto pcb = active()->pcb;
+    if (!pcb->ftbl->count(fd))
+      return -EBADF;
+
+    auto file = pcb->ftbl->at(fd);
+    if (((file->flags & 0x3) == O_WRONLY) || !readable(pcb->euid, pcb->egid, file->node()))
+      return -EACCES;
+
+    lo->backup = file;
+    file->ref();
+    return 0;
+  }
+  case LOOP_CLR_FD: {
+    if (!lo->backup)
+      return -ENXIO;
+    
+    node->flush();
+    lo->backup->drop();
+    lo->backup = nullptr;
+    return 0;
+  }
+  default:
+    printk("ioctl: loop: unknown op: %d\n", op);
+    return -EINVAL;
+  }
+}
+
+long ioctl_fs(block_inode *node, int op, void *argp) {
+  switch (op & 0xff) {
+  case 114: {
+    size_t size = node->device()->sector_size();
+    if (!copy_to_user(argp, &size, sizeof(size_t)))
+      return -EFAULT;
+    return 0;
+  }
+  default:
+    printk("ioctl: fs: unknown op: %d\n", op);
+    return -EINVAL;
+  }
+}
+
+long ioctl(int fd, int op, void *argp) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  switch ((op >> 8) & 0xff) {
+  case 0x54: {
+    auto tty = dyn_cast<tty_inode>(file->node());
+    if (!tty)
+      return -ENOTTY;
+    return ioctl_tty(tty, op, argp);
+  }
+  
+  case 0x4c: {
+    auto loop = dyn_cast<block_inode>(file->node());
+    // We need a loop device (major == 7).
+    if (!loop || DEV_MAJOR(loop->rdev()) != 7)
+      return -ENOTTY;
+    return ioctl_loop(loop, op, argp);
+  }
+
+  case 0x12: {
+    auto block = dyn_cast<block_inode>(file->node());
+    if (!block)
+      return -ENOTTY;
+    return ioctl_fs(block, op, argp);
+  }
+
+  default:
+    printk("ioctl: toplevel: unknown op: %d\n", op);
     return -EINVAL;
   }
 }
@@ -421,18 +537,11 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
 long faccessat(int dirfd, const char *path, int mode) {
   if (mode > (R_OK | W_OK | X_OK) || mode < 0)
     return -EINVAL;
-  // We don't support empty paths, since we do not have `flags` in this call.
-  if (path[0] == '\0')
-    return -ENOENT;
 
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  bool relative = path[0] == '/';
-  int flags = 0;
-  int fd = relative
-    ? pcb->open_file_from(path, dirfd, O_PATH)
-    : pcb->open_file(path, O_PATH);
+  int fd = pcb->open_file_from(path, dirfd, O_PATH);
 
   if (fd < 0)
     return fd;
@@ -849,7 +958,7 @@ long nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
   if (!copy_from_user(&rq, rqtp, sizeof(timespec)))
     return -EFAULT;
 
-  if (rq.tv_nsec >= (long) 1_s || rq.tv_sec < 0)
+  if (rq.tv_nsec >= (long) 1_s || rq.tv_nsec < 0)
     return -EINVAL;
 
   size_t nano = rq.tv_sec * 1'000'000'000 + rq.tv_nsec;

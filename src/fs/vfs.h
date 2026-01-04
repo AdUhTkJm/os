@@ -99,6 +99,7 @@ public:
   fs &operator=(const fs &) = delete;
 
   dentry *root;
+  bool readonly = false;
 
   // Get a free inode in the FS.
   // This will allocate new memory.
@@ -135,11 +136,6 @@ public:
   ssize_t seek(long pos, whence whence); // Returns the old offset.
   void close();
   void sync();
-
-#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
-  void ondrop() override;
-  void onref() override;
-#endif
 };
 
 class page_cache {
@@ -232,6 +228,8 @@ public:
   virtual int onchmod() { return 0; }
   virtual int onchown() { return 0; }
   virtual void onclose(int openflags) { (void) openflags; }
+
+  virtual unsigned long rdev() { return 0; }
 
   struct item {
     long inum;
@@ -381,7 +379,7 @@ string normalize(const string &path);
 
 // These check inode permissions.
 bool readable(int uid, int gid, const inode *node);
-bool writable(int uid, int gid, const inode *node);
+int writable(int uid, int gid, const inode *node);
 bool executable(int uid, int gid, const inode *node);
 
 // These check file permissions.
