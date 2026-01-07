@@ -477,6 +477,7 @@ void tcp_socket_inode::onclose(int) {
   switch (state) {
   case tcp::SYN_SENT:
   case tcp::BOUND:
+  case tcp::CLOSED:
     state = tcp::CLOSED;
     break;
   case tcp::CLOSE_WAIT: {

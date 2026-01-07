@@ -76,7 +76,7 @@ int tmpfs_inode::create(const string &name, filetype ty, int mode) {
   if (ty == Dir) {
     node->children[".."] = this;
     node->children["."] = node;
-    this->linked();
+    linked();
     node->linked();
   }
   node->meta.ctime = node->meta.atime = node->meta.mtime = meta.atime = meta.mtime = now();
@@ -84,6 +84,8 @@ int tmpfs_inode::create(const string &name, filetype ty, int mode) {
 }
 
 int tmpfs_inode::unlink(const string &name) {
+  if (type != Dir)
+    return -ENOTDIR;
   if (!children.count(name))
     return -ENOENT;
 
@@ -98,6 +100,9 @@ int tmpfs_inode::unlink(const string &name) {
 }
 
 int tmpfs_inode::rmdir(const string &name) {
+  if (type != Dir)
+    return -ENOTDIR;
+
   if (!children.count(name))
     return -ENOENT;
   if (name == "." || name == "..")
@@ -144,6 +149,8 @@ tmpfs::tmpfs(int uid, int gid): uid(uid), gid(gid) {
   auto node = get();
   node->type = inode::Dir;
   node->mode = 0777;
+  node->linked();
+  node->linked();
   root = new dentry("tmp", node, nullptr);
 }
 

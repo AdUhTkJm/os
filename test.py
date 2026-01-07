@@ -86,6 +86,9 @@ if args.debug_memory_expensive:
 
 if args.log_refcnt:
   flags += ["-DLOG_REFCNT"]
+  # flags += ["-DLOG_REFCNT_VMA"]
+  flags += ["-DLOG_REFCNT_INODE"]
+  flags += ["-DLOG_REFCNT_FILE"]
 
 if not args.log_syscall:
   flags += ["-DNO_SYSCALL_LOG"]

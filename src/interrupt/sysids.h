@@ -286,6 +286,8 @@ enum syscall {
   spawn = 400,
   mailwrite = 402,
   clone3 = 435,
+  close_range = 436,
+  faccessat2 = 439,
   mkdir = 1030,
 #endif
 

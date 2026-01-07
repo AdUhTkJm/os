@@ -120,7 +120,7 @@ long mount(const char *src, const char *tgt, const char *fsty, unsigned long fla
   auto maybe_mntpoint = vfs->lookup_from(tgt, pcb->pwd);
 
   if (!maybe_mntpoint)
-    return -maybe_mntpoint;
+    return maybe_mntpoint;
 
   dentry *mntpoint = *maybe_mntpoint;
   if (mntpoint->node->type != inode::Dir)
@@ -130,7 +130,7 @@ long mount(const char *src, const char *tgt, const char *fsty, unsigned long fla
     return -EBUSY;
 
   if (flags & MS_MOVE) {
-    auto source = vfs->lookup_from(src, pcb->pwd, /*lastsym=*/false);
+    auto source = vfs->lookup_from(src, pcb->pwd, true, false);
     if (!source)
       return -ENOENT;
     vfs::move_mount(*source, mntpoint);
@@ -386,6 +386,9 @@ long ioctl_loop(block_inode *node, int op, void *argp) {
     return 0;
   }
   case LOOP_SET_FD: {
+    if (lo->backup)
+      return -EBUSY;
+
     int fd = int((unsigned long) argp);
 
     auto pcb = active()->pcb;
@@ -480,6 +483,7 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
   if (!pcb->children.size())
     return -ECHILD;
 
+  auto pgid = pcb->pgid;
   wait_entry entry;
   auto &lock = pcb->waitlock;
   lock.acquire();
@@ -490,7 +494,7 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
       if (child->zombie) {
         int p = child->pid;
         // This is not the one we're looking for.
-        if (p != pid && pid != -1 && !(pid < -1 && abs(pid) == child->pgid))
+        if (p != pid && pid != -1 && !(pid < -1 && abs(pid) == child->pgid) && !(pid == 0 && child->pgid == pgid))
           continue;
 
         lock.release();
@@ -512,6 +516,7 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
         pcb->cruse += use;
         pcb->children.erase(child);
         delete child;
+        printk("pavail = %d\n", pavail());
         return p;
       }
     }
@@ -541,20 +546,19 @@ long faccessat(int dirfd, const char *path, int mode) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  int fd = pcb->open_file_from(path, dirfd, O_PATH);
-
-  if (fd < 0)
+  auto fd = pcb->obtain_file(path, dirfd, O_PATH);
+  if (!fd)
     return fd;
 
   if (mode == F_OK)
     return 0;
 
-  auto node = pcb->ftbl->at(fd)->node();
+  auto node = (*fd)->node;
   // According to man pages, faccessat(2) should use real ids rather than effective ids.
   if (mode & R_OK && !(readable(pcb->uid, pcb->gid, node)))
     return -EACCES;
 
-  if (mode & W_OK && !(writable(pcb->uid, pcb->gid, node)))
+  if (mode & W_OK && writable(pcb->uid, pcb->gid, node) != 0)
     return -EACCES;
 
   if (mode & X_OK && !(executable(pcb->uid, pcb->gid, node)))
@@ -928,10 +932,12 @@ long prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
   }
 
   if (newrlim) switch (resource) {
-  case RLIMIT_STACK: {
+  case RLIMIT_STACK:
     // TODO: actually reduce stack size
     break;
-  }
+  case RLIMIT_CORE:
+    // TODO: actually generate a core dump file
+    break;
   case RLIMIT_OFILE:
     // No special action needed.
     break;
@@ -940,9 +946,10 @@ long prlimit64(int pid, int resource, void *newrlim, void *oldrlim) {
     return -EINVAL;
   }
 
-  if (oldrlim)
+  if (oldrlim) {
     if (!copy_to_user(oldrlim, &before, sizeof(rlimit)))
       return -EFAULT;
+  }
   return 0;
 }
 
@@ -980,7 +987,10 @@ long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *chi
   auto tcb = active();
 
   // The signal on termination is for processes, rather than threads.
-  if ((flags & 0xff) != 0 && (flags & CLONE_THREAD))
+  // So `flags & CLONE_THREAD` and `signal == 0` must both be true or both be false.
+  if (((flags & 0xff) == 0) ^ (flags & CLONE_THREAD))
+    return -EINVAL;
+  if ((flags & 0xff) >= 32)
     return -EINVAL;
 
   // Disallowed: the same handler's user-space address might be different in different address spaces.
@@ -989,6 +999,13 @@ long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *chi
     return -EINVAL;
   // Two threads must not share the same stack.
   if ((flags & CLONE_VM) & !stack)
+    return -EINVAL;
+  // We don't have namespaces yet.
+  if (flags & CLONE_NEWNS)
+    return -EINVAL;
+
+  // The stack has to be aligned.
+  if (stack & 0xf)
     return -EINVAL;
 
   if (parenttid && (flags & CLONE_PARENT_SETTID)) {
@@ -1294,18 +1311,16 @@ long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long new
     return -EFAULT;
 
   auto dir = dirname(path->get());
-  int fd = pcb->open_file_from(dir, olddirfd, O_PATH);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(dir, olddirfd, O_PATH);
+  if (!fd)
     return fd;
     
   auto newdir = dirname(npath->get());
-  int nfd = pcb->open_file_from(newdir, newdirfd, O_PATH);
-  if (nfd < 0)
+  auto nfd = pcb->obtain_file(newdir, newdirfd, O_PATH);
+  if (!nfd)
     return nfd;
 
-  auto file = pcb->ftbl->at(fd);
-  auto newfile = pcb->ftbl->at(nfd);
-  auto node = file->node(), nnode = newfile->node();
+  auto node = (*fd)->node, nnode = (*nfd)->node;
   if (node->type != inode::Dir || nnode->type != inode::Dir)
     return -ENOTDIR;
 

@@ -47,13 +47,13 @@ ssize_t pid::oom_score_adj::write(size_t offset, const void *buf, size_t len, in
     sign = -1;
     i++;
   }
-  for (; i <= len && str[i] && str[i] <= '9' && str[i] >= '0'; i++)
+  for (; i < len && str[i] && str[i] <= '9' && str[i] >= '0'; i++)
     res = res * 10 + str[i] - '0';
   res *= sign;
 
   if (i == 0)
     return -EINVAL;
-  if (str[i] == '\n')
+  if (i < len && str[i] == '\n')
     i++;
 
   value = res;
@@ -86,15 +86,15 @@ ssize_t pid::mounts::read(size_t offset, void *buf, size_t len, int) {
 
 process::process(class fs *fs, inode *parent, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb), parent(parent),
   exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)) {
-  exe->ref();
-  oom->ref();
-  mounts->ref();
+  exe->linked();
+  oom->linked();
+  mounts->linked();
 }
 
 process::~process() {
-  exe->drop();
-  oom->drop();
-  mounts->drop();
+  exe->unlinked();
+  oom->unlinked();
+  mounts->unlinked();
 }
 
 inode *process::lookup(const string &name) {
@@ -172,21 +172,92 @@ procs_blocked 0
   return vlen;
 }
 
+sys_inode::sys_inode(class fs *fs, inode *parent): inode_impl(fs, 0, 0, 0666, Dir), kernel(new sys::kernel(fs, this)), parent(parent) {
+  kernel->linked();
+  parent->linked();
+}
+
+sys_inode::~sys_inode() {
+  kernel->unlinked();
+  parent->unlinked();
+}
+
+vector<inode::item> sys_inode::list() {
+  vector<item> result;
+  result.push_back({ inum(), ".", Dir });
+  result.push_back({ parent->inum(), "..", Dir });
+  result.push_back({ kernel->inum(), "kernel", Dir });
+  return result;
+}
+
+inode *sys_inode::lookup(const string &name) {
+  if (name == "kernel")
+    return kernel;
+  return nullptr;
+}
+
+sys::kernel::kernel(class fs *fs, inode *parent):
+  inode_impl(fs, 0, 0, 0666, Dir), tainted(new class tainted(fs)), parent(parent) {
+  parent->linked();
+  tainted->linked();
+}
+
+sys::kernel::~kernel() {
+  parent->unlinked();
+  tainted->unlinked();
+}
+
+vector<inode::item> sys::kernel::list() {
+  vector<item> result;
+  result.push_back({ inum(), ".", Dir });
+  result.push_back({ parent->inum(), "..", Dir });
+  result.push_back({ tainted->inum(), "tainted", File });
+  return result;
+}
+
+inode *sys::kernel::lookup(const string &name) {
+  if (name == "tainted")
+    return tainted;
+
+  return nullptr;
+}
+
+ssize_t sys::tainted::read(size_t offset, void *buf, size_t len, int) {
+  char buffer[20];
+  itoa(taint, buffer, 10);
+  auto size = strlen(buffer);
+  // Append an '\n'.
+  buffer[size++] = '\n';
+  buffer[size] = 0;
+
+  if (offset >= size)
+    return 0;
+
+  auto l = min(size - offset, len);
+  memcpy(buf, buffer + offset, l);
+  return l;
+}
+
 }
 
 namespace os {
 
 procroot::procroot(class fs *fs):
-  inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)), meminfo(new proc::meminfo(fs)), stat(new proc::stat(fs)) {
-  filesystems->ref();
-  meminfo->ref();
-  stat->ref();
+  inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)), meminfo(new proc::meminfo(fs)),
+  stat(new proc::stat(fs)), sys(new proc::sys_inode(fs, this)), mounts(new proc::link(fs, "self/mounts")) {
+  filesystems->linked();
+  meminfo->linked();
+  stat->linked();
+  sys->linked();
+  mounts->linked();
 }
 
 procroot::~procroot() {
-  filesystems->drop();
-  meminfo->drop();
-  stat->drop();
+  filesystems->unlinked();
+  meminfo->unlinked();
+  stat->unlinked();
+  sys->unlinked();
+  mounts->unlinked();
 }
 
 inode *procroot::lookup(const string &name) {
@@ -204,6 +275,10 @@ inode *procroot::lookup(const string &name) {
     return meminfo;
   if (name == "stat")
     return stat;
+  if (name == "sys")
+    return sys;
+  if (name == "mounts")
+    return mounts;
   
   // Try convert the string into number.
   unsigned long res = 0; unsigned i = 0;
@@ -230,10 +305,12 @@ inode *procroot::lookup(const string &name) {
 vector<inode::item> procroot::list() {
   meta.atime = now();
   vector<item> result;
-  result.push_back({ inum(), ".", File });
+  result.push_back({ inum(), ".", Dir });
   result.push_back({ filesystems->inum(), "filesystems", File });
   result.push_back({ meminfo->inum(), "meminfo", File });
   result.push_back({ stat->inum(), "stat", File });
+  result.push_back({ mounts->inum(), "mounts", File });
+  result.push_back({ sys->inum(), "sys", Dir });
   result.push_back({ active()->pcb->pid, "self", Dir });
   char buf[13];
   for (auto [pid, _] : *pidmap) {

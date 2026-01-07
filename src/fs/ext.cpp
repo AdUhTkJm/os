@@ -26,11 +26,13 @@ static_storage<ext> ext2fs;
 
 // Create a node from existing data.
 ext_inode::ext_inode(class fs *fs, const struct meta &meta, long inum):
-  inode_impl(fs, meta.uid, meta.gid, meta.type & 0xfff, totype(ftypeflags(meta.type & 0xf000))), meta(meta), _inum(inum) {}
+  inode_impl(fs, meta.uid, meta.gid, meta.type & 0xfff, totype(ftypeflags(meta.type & 0xf000))), meta(meta), _inum(inum) {
+  lnkcnt = meta.lnkcnt;
+}
 
 // Create an empty node.
 ext_inode::ext_inode(class fs *fs, long inum):
-  inode_impl(fs, -1, -1, 0000, filetype::Bad), meta(), _inum(inum) { }
+  inode_impl(fs, -1, -1, 0000, filetype::Bad), meta(), _inum(inum) {}
 
 size_t ext_inode::locate_ext2(size_t byte) {
   auto fs = static_cast<ext*>(this->fs);
@@ -785,6 +787,7 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
   node->meta.gid = pcb->egid;
   node->meta.lnkcnt = (ty == Dir) ? 2 : 1;
   node->meta.ctime = node->meta.mtime = node->meta.atime = now() / 1_s;
+  node->lnkcnt = node->meta.lnkcnt;
   fs->update_meta(node);
 
   // Metadata always get updated in add_dirent().
@@ -795,6 +798,7 @@ int ext_inode::create(const string &name, filetype ty, int mode) {
     node->add_dirent(".", node->_inum, to_dirent_type(Dir));
     node->add_dirent("..", _inum, to_dirent_type(Dir));
     meta.lnkcnt++;
+    linked();
   }
   return 0;
 }

@@ -76,6 +76,7 @@ public:
 #if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
     ondrop();
 #endif
+    assert(refcnt > 0);
     if (!--refcnt)
       delete this;
   }
@@ -90,17 +91,15 @@ public:
 #if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
   virtual void ondrop() {}
   virtual void onref() {}
-  virtual ~shared() {}
 #endif
 
-#ifndef NDEBUG
   int inspect_refcnt() { return refcnt; }
-#endif
 
   // We allow cloning, but the newly cloned element should have refcount zero.
   shared() = default;
   shared(const shared &): refcnt(0) {}
   shared &operator=(const shared &) { refcnt = 0; return *this; }
+  virtual ~shared() {}
 };
 
 }

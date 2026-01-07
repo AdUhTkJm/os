@@ -247,7 +247,7 @@ void addrspace::split(va_t addr) {
   vmas.insert(copy);
 }
 
-#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT)
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_VMA)
 void addrspace::ondrop() {
   int cnt = refcnt.load();
   printk("dropped addrspace %p, refcnt: %d -> %d\n", this, cnt, cnt - 1);

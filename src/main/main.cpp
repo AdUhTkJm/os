@@ -316,6 +316,8 @@ void main_high() {
   // Create a DHCP daemon that updates IP address.
   // We must create it after `init`, so that `init` will have PID 1.
   ip::routes.construct();
+  // TODO: looks like there's some problem with DHCP. Looks like race condition;
+  // perhaps only do it after `init`?
   auto dhcp = make_kprocess(dhcp::daemon);
   scheduler.add(dhcp);
 

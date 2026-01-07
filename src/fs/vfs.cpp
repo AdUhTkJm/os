@@ -156,7 +156,7 @@ bool dentry::same(const dentry *other) const {
   return path() == other->path();
 }
 
-expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsym, int depth) {
+expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsym, bool lastmnt, int depth) {
   if (depth < 0)
     return -ELOOP;
 
@@ -244,7 +244,7 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
       for (size_t j = i + 1; j < comps.size(); ++j)
         resolved += "/" + comps[j];
 
-      return lookup_impl(resolved, from, lastsym, depth - 1);
+      return lookup_impl(resolved, from, lastsym, lastmnt, depth - 1);
     }
   }
 
@@ -255,11 +255,11 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
       return -ENOENT;
 
     string resolved = resolve_link(cur->parent->path(), *link);
-    return lookup_impl(resolved, from, lastsym, depth - 1);
+    return lookup_impl(resolved, from, lastsym, lastmnt, depth - 1);
   }
 
   // Final mount traversal.
-  if (lastsym && cur->mnt)
+  if (lastmnt && cur->mnt)
     cur = cur->mnt->root;
 
   return cur;
@@ -271,12 +271,12 @@ constexpr static int maxdepth = 8;
 
 expected<dentry*> vfs::lookup(const string &path, bool lastsym) {
   // Put a maximum on recursion depth to avoid infinite loops.
-  return lookup_impl(path, base, lastsym, maxdepth);
+  return lookup_impl(path, base, lastsym, true, maxdepth);
 }
 
-expected<dentry*> vfs::lookup_from(const string &path, dentry *dentry, bool lastsym) {
+expected<dentry*> vfs::lookup_from(const string &path, dentry *dentry, bool lastsym, bool lastmnt) {
   bool relative = path[0] != '/';
-  return lookup_impl(path, relative ? dentry : base, lastsym, maxdepth);
+  return lookup_impl(path, relative ? dentry : base, lastsym, lastmnt, maxdepth);
 }
 
 // Moves the mount from `source` to `target`.
@@ -358,13 +358,24 @@ void vfs::mount(dentry *host, dentry *root, int flags) {
 
   auto mount = new mount_t {
     .host = host, .root = root, .parent = host->belong,
-    .children = intrusive_list<mount_t>(), .flags = flags
+    .children = intrusive_list<mount_t>(), .flags = flags, .refcnt = 1,
   };
   root->belong = mount;
   root->parent = host->parent;
   root->name = host->name;
   host->belong->children.push_back(mount);
   host->mnt = mount;
+}
+
+int vfs::unmount(mount_t *mnt, int flags) {
+  if (!(flags & MNT_FORCE) && mnt->refcnt > 1)
+    return -EBUSY;
+
+  mnt->parent->children.erase(mnt);
+  mnt->drop();
+  // TODO: maybe call cleanup functions on file systems?
+  vfs::invalidate();
+  return 0;
 }
 
 expected<fs*> vfs::get(const string &fsname, const char *src) {
@@ -389,17 +400,24 @@ vector<string> vfs::recorded_fs() {
 }
 
 void inode::drop() {
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_INODE)
+  ondrop();
+#endif
+  assert(refcnt > 0);
   if (--refcnt)
     return;
   
-  bool backed = fs->has_backup();
-  if (lnkcnt == 0)
+  if (lnkcnt == 0) {
     fs->erase(this);
-  if (backed || lnkcnt == 0)
     delete this;
+  }
 }
 
 void inode::unlinked() {
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_INODE)
+  onunlink();
+#endif
+  assert(lnkcnt > 0);
   if (--lnkcnt)
     return;
 
@@ -433,9 +451,11 @@ unsigned char inode::as_dt(filetype ty) {
 
 file::~file() {
   node()->drop();
+  entry->belong->drop();
 }
 
 file::file(dentry *entry, int flags): entry(entry), offset(0), flags(flags) {
+  entry->belong->ref();
   node()->ref();
 }
 
@@ -554,5 +574,39 @@ void page_cache::flush() {
 page_cache::~page_cache() {
   flush();
 }
+
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_INODE)
+void inode::ondrop() {
+  int cnt = refcnt.load();
+  printk("dropped inode %p (size %d), refcnt: %d -> %d\n", inum(), size(), cnt, cnt - 1);
+}
+
+void inode::onref() {
+  int cnt = refcnt.load();
+  printk("referred inode %p (size %d), refcnt: %d -> %d\n", inum(), size(), cnt, cnt + 1);
+}
+
+void inode::onlink() {
+  int cnt = lnkcnt.load();
+  printk("linked inode %p (size %d), lnkcnt: %d -> %d\n", inum(), size(), cnt, cnt + 1);
+}
+
+void inode::onunlink() {
+  int cnt = lnkcnt.load();
+  printk("unlinked inode %p (size %d), lnkcnt: %d -> %d\n", inum(), size(), cnt, cnt - 1);
+}
+#endif
+
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_FILE)
+void file::ondrop() {
+  int cnt = refcnt.load();
+  printk("dropped file %s, refcnt: %d -> %d\n", entry->path().c_str(), cnt, cnt - 1);
+}
+
+void file::onref() {
+  int cnt = refcnt.load();
+  printk("referred file %s, refcnt: %d -> %d\n", entry->path().c_str(), cnt, cnt + 1);
+}
+#endif
 
 }

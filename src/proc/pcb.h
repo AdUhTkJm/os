@@ -202,8 +202,10 @@ struct pcb_t {
   // Note this is not the destructor. PCB will need to release its resources
   // before destruction, and then put itself to a zombie state.
   void clear();
+  pcb_t();
   ~pcb_t();
 
+  expected<dentry*> obtain_file(const string &name, int dirfd, int flags);
   int open_file_from(const string &name, dentry *relbase, int flags, int mode, inode::filetype type);
   int open_file_from(const string &name, int dirfd, int flags, int mode = 0, inode::filetype type = inode::File);
   int open_file(const string &name, int flags, int mode = 0, inode::filetype type = inode::File);

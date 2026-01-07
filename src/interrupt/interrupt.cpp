@@ -126,6 +126,8 @@ HANDLE(read, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+  if ((file->flags & 3) == O_WRONLY)
+    return -EPERM;
 
   return detail::read_to_user(file, (void *) buf, len);
 }
@@ -134,6 +136,8 @@ HANDLE(readv, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+  if ((file->flags & 3) == O_WRONLY)
+    return -EPERM;
 
   if (cnt <= 0)
     return -EINVAL;
@@ -165,6 +169,8 @@ HANDLE(write, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+  if ((file->flags & 3) == O_RDONLY)
+    return -EPERM;
 
   return detail::write_from_user(file, (void *) buf, len);
 }
@@ -173,6 +179,8 @@ HANDLE(writev, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+  if ((file->flags & 3) == O_RDONLY)
+    return -EPERM;
 
   if (cnt <= 0)
     return -EINVAL;
@@ -205,13 +213,14 @@ HANDLE(truncate, _path, len) {
   auto path = copy_from_user((char *) _path);
   if (!path)
     return path;
+  if (!*path)
+    return -EFAULT;
 
-  int fd = pcb->open_file(path->get(), O_WRONLY);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(path->get(), AT_FDCWD, O_WRONLY);
+  if (!fd)
     return fd;
 
-  auto file = pcb->ftbl->at(fd);
-  return file->node()->truncate(len);
+  return (*fd)->node->truncate(len);
 }
 
 HANDLE(ftruncate, fd, len) {
@@ -244,33 +253,33 @@ HANDLE(fallocate, fd, mode, offset, len) {
 HANDLE(mkdirat, dirfd, _path, mode) {
   auto pathp = copy_from_user((char *) _path);
   if (!pathp)
+    return pathp;
+  if (!*pathp)
     return -EFAULT;
 
   const char *path = pathp->get();
-  bool relative = path[0] != '/';
   int flags = O_PATH | O_CREAT | O_EXCL;
-  int fd = relative
-    ? pcb->open_file_from(path, dirfd, flags, mode & ~pcb->umask, inode::Dir)
-    : pcb->open_file(path, flags, mode & ~pcb->umask, inode::Dir);
+  int fd = pcb->open_file_from(path, dirfd, flags, mode & ~pcb->umask, inode::Dir);
   return fd < 0 ? fd : 0;
 }
 
 HANDLE(mknodat, dirfd, _path, mode, dev) {
   auto pathp = copy_from_user((char *) _path);
   if (!pathp)
-    return -EFAULT;
+    return -pathp;
+  if (!*pathp)
+    return -EINVAL;
 
   const char *path = pathp->get();
-  bool relative = path[0] != '/';
   if (pcb->vfs->lookup(path))
     return -EEXIST;
 
   auto dir = dirname(path);
-  int fd = relative
-    ? pcb->open_file_from(dir, dirfd, O_RDONLY)
-    : pcb->open_file(dir, O_RDONLY);
+  auto fd = pcb->obtain_file(dir, dirfd, O_RDONLY);
+  if (!fd)
+    return fd;
   
-  auto file = pcb->ftbl->at(fd);
+  auto node = (*fd)->node;
   auto inodety = ext_inode::totype((ext_inode::ftypeflags) (mode & ~0777));
   if (inodety == inode::Bad)
     return -EINVAL;
@@ -278,7 +287,7 @@ HANDLE(mknodat, dirfd, _path, mode, dev) {
     printk("mknodat: unsupported: dev: %d\n", dev);
     return -EINVAL;
   }
-  return file->node()->create(basename(path), inodety, mode & ~pcb->umask);
+  return node->create(basename(path), inodety, mode & ~pcb->umask);
 }
 
 HANDLE(sendfile, out, in, offptr, len) {
@@ -336,6 +345,32 @@ HANDLE(close, fd) {
   return pcb->close_file(fd);
 }
 
+HANDLE(close_range, begin, end, flags) {
+  if (begin > end)
+    return -EINVAL;
+
+  // Unshare the table first.
+  if (flags & 2) {
+    auto old = pcb->ftbl;
+    pcb->ftbl = new process_file_table(*old);
+    pcb->ftbl->ref();
+    old->drop();
+  }
+
+  // Mark the files as CLOEXEC, rather than closing them immediately.
+  if (flags & 4) {
+    for (int i = begin; i <= end; i++) {
+      if (pcb->ftbl->count(i))
+        pcb->ftbl->set_desc(i, FD_CLOEXEC);
+    }
+    return 0;
+  }
+
+  for (int i = begin; i <= end; i++)
+    pcb->close_file(i);
+  return 0;
+}
+
 HANDLE(faccessat, dirfd, _path, mode) {
   auto path = copy_from_user((char *) _path);
   if (!path)
@@ -354,22 +389,15 @@ HANDLE(utimensat, dirfd, _path, times, flags) {
   if (!path || ((!*path) && !emptypath))
     return -EFAULT;
   
-  bool relative = (*path)[0] != '/';
-  file *file = nullptr;
   inode *node;
   if (!emptypath) {
-    int fd = relative
-      ? pcb->open_file_from(path->get(), dirfd, O_PATH)
-      : pcb->open_file(path->get(), O_PATH);
-    if (fd < 0)
+    auto fd = pcb->obtain_file(path->get(), dirfd, O_PATH);
+    if (!fd)
       return fd;
 
-    file = pcb->ftbl->at(fd);
-    if (!file)
-      return -EBADF;
-    node = file->node();
+    node = (*fd)->node;
   } else if (dirfd != AT_FDCWD) {
-    file = pcb->ftbl->at(dirfd);
+    auto file = pcb->ftbl->at(dirfd);
     if (!file)
       return -EBADF;
     node = file->node();
@@ -423,16 +451,14 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
     return -EINVAL;
   auto path = copy_from_user((char *) _path);
   if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
-  bool relative = (*path)[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_RDONLY | O_NOFOLLOW)
-    : pcb->open_file(path->get(), O_RDONLY | O_NOFOLLOW);
-  if (fd < 0)
+
+  auto fd = pcb->obtain_file(path->get(), dirfd, O_RDONLY | O_NOFOLLOW);
+  if (!fd)
     return fd;
-  auto f = pcb->ftbl->at(fd);
-  auto link = f->node()->readlink();
-  pcb->close_file(fd);
+  auto link = (*fd)->node->readlink();
   if (!link)
     return -EINVAL;
   if (!copy_to_user((void *) buf, link->c_str(), size))
@@ -442,17 +468,19 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
 
 HANDLE(chdir, _path) {
   auto path = copy_from_user((char *) _path);
-  if (!path || !*path)
+  if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
-  auto fd = pcb->open_file(path->get(), O_RDONLY);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(path->get(), AT_FDCWD, O_RDONLY);
+  if (!fd)
     return fd;
 
-  auto file = pcb->ftbl->at(fd);
-  if (file->node()->type != inode::Dir)
+  auto node = (*fd)->node;
+  if (node->type != inode::Dir)
     return -ENOTDIR;
 
-  pcb->pwd = file->entry;
+  pcb->pwd = *fd;
   return 0;
 }
 
@@ -501,11 +529,11 @@ HANDLE(fchownat, dirfd, _path, uid, gid, flags) {
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
 
-  int fd = pcb->open_file_from(path->get(), dirfd, O_PATH | openflags);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(path->get(), dirfd, O_PATH | openflags);
+  if (!fd)
     return fd;
 
-  auto node = pcb->ftbl->at(fd)->node();
+  auto node = (*fd)->node;
   if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
   if (int(uid) != -1)
@@ -555,15 +583,14 @@ HANDLE(fchmodat, dirfd, _path, mode, flags) {
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
   
-  int fd = pcb->open_file_from(path->get(), dirfd, O_PATH | openflags);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(path->get(), dirfd, O_PATH | openflags);
+  if (!fd)
     return fd;
 
-  auto file = pcb->ftbl->at(fd);
-  auto node = file->node();
+  auto node = (*fd)->node;
   if (node->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
-  if (auto ret = writable(pcb->euid, pcb->egid, file->entry->parent->node); ret < 0)
+  if (auto ret = writable(pcb->euid, pcb->egid, (*fd)->parent->node); ret < 0)
     return ret;
 
   node->mode = mode;
@@ -602,6 +629,7 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_uid = (unsigned) node->uid,
     .st_gid = (unsigned) node->gid,
     .st_rdev = node->rdev(),
+    .__pad = 0,
     .st_size = (long) node->size(),
     .st_blksize = 4096,
     .st_blocks = (long) (511 + node->size()) / 512,
@@ -630,6 +658,7 @@ HANDLE(fstat, fd, buf) {
     .st_uid = (unsigned) node->uid,
     .st_gid = (unsigned) node->gid,
     .st_rdev = 0,
+    .__pad = 0,
     .st_size = (long) node->size(),
     .st_blksize = 4096,
     .st_blocks = 0,
@@ -686,35 +715,35 @@ HANDLE(msync, addr, len, flags) {
 HANDLE(symlinkat, target, dirfd, linkpath) {
   auto path = copy_from_user((char *) linkpath);
   if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
 
   auto tgt = copy_from_user((char *) target);
   if (!tgt)
+    return tgt;
+  if (!*tgt)
     return -EFAULT;
 
   auto dirname = os::dirname(path->get());
   auto basename = os::basename(path->get());
 
-  bool relative = dirname[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(dirname, dirfd, O_PATH)
-    : pcb->open_file(dirname, O_PATH);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(dirname, dirfd, O_PATH);
+  if (!fd)
     return fd;
 
-  auto file = pcb->ftbl->at(fd);
-  auto node = file->node();
+  auto node = (*fd)->node;
   if (auto ret = writable(pcb->euid, pcb->egid, node); ret < 0)
     return ret;
 
   // Do we really need to look up twice?
-  if (file->node()->lookup(basename))
+  if (node->lookup(basename))
     return -EEXIST;
 
-  if (auto ret = file->node()->create(basename, inode::Link, 0666 & ~pcb->umask); ret < 0)
+  if (auto ret = node->create(basename, inode::Link, 0666 & ~pcb->umask); ret < 0)
     return ret;
 
-  auto inode = file->node()->lookup(basename);
+  auto inode = node->lookup(basename);
   inode->write(0, tgt->get(), strlen(tgt->get()), 0);
   return 0;
 }
@@ -722,47 +751,43 @@ HANDLE(symlinkat, target, dirfd, linkpath) {
 HANDLE(unlinkat, dirfd, _path, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
 
-  bool relative = (*path)[0] != '/';
-  int fd = relative
-    ? pcb->open_file_from(path->get(), dirfd, O_PATH)
-    : pcb->open_file(path->get(), O_PATH);
-  if (fd < 0)
+  auto fd = pcb->obtain_file(path->get(), dirfd, O_PATH);
+  if (!fd)
     return fd;
 
-  auto file = pcb->ftbl->at(fd);
-  if (!file)
-    return -EBADF;
+  auto entry = *fd;
 
-  // We cannot unlink a directory.
-  auto dir = file->entry->parent->node;
+  auto dir = entry->parent->node;
   if (auto ret = writable(pcb->euid, pcb->egid, dir); ret < 0)
     return ret;
 
   bool rmdir = flags & AT_REMOVEDIR;
   if (rmdir) {
-    if (file->node()->type != inode::Dir)
+    if (entry->node->type != inode::Dir)
       return -ENOTDIR;
 
-    if (int ret = dir->rmdir(file->entry->name); ret < 0)
+    if (int ret = dir->rmdir(entry->name); ret < 0)
       return ret;
     
     // Forget it in dcache.
-    vfs::invalidate(file->entry->parent->node, file->entry->name);
+    vfs::invalidate(entry->parent->node, entry->name);
     return 0;
   }
 
-  if (file->node()->type == inode::Dir)
+  if (entry->node->type == inode::Dir)
     return -EISDIR;
 
   // unlink() will check whether `dir` is indeed a dir.
-  int ret = dir->unlink(file->entry->name);
+  int ret = dir->unlink(entry->name);
   if (ret < 0)
     return ret;
 
   // Forget it in dcache.
-  vfs::invalidate(file->entry->parent->node, file->entry->name);
+  vfs::invalidate(entry->parent->node, entry->name);
   return 0;
 }
 
@@ -1219,13 +1244,22 @@ HANDLE(clone, flags, stack, parenttid, tls, childtid) {
 
 HANDLE(clone3, _args, size) {
   clone_args args;
+  if (size < (int) sizeof(clone_args))
+    return -EINVAL;
+
   if (!copy_from_user(&args, (void *) _args, size))
     return -EFAULT;
 
   if ((args.flags & 0xff) != 0)
     return -EINVAL;
 
-  return detail::clone(args.flags | args.exit_signal, args.stack, (void *) args.parent_tid, (void *) args.tls, (void *) args.child_tid);
+  // The stack is the lowest byte; we need to advance it.
+  // The two fields must either be both zero, or both non-zero.
+  if (!!args.stack ^ !!args.stack_size)
+    return -EINVAL;
+
+  va_t stack = args.stack + args.stack_size;
+  return detail::clone(args.flags | args.exit_signal, stack, (void *) args.parent_tid, (void *) args.tls, (void *) args.child_tid);
 }
 
 HANDLE(execve, _path, _argv, _envp) {
@@ -1295,10 +1329,28 @@ HANDLE(mount, _src, _tgt, _fsty, flags, data) {
 
   (void) data;
   auto ret = detail::mount(src->get(), tgt->get(), fsty->get(), flags);
-  // I don't know, but it looks like QEMU 9.2.0 requires this to work.
-  // On my host (v 9.2.4), it just works.
   asm volatile("fence iorw, iorw" ::: "memory");
   return ret;
+}
+
+HANDLE(umount2, target, flags) {
+  auto path = copy_from_user((char *) target);
+  if (!path)
+    return path;
+
+  if ((flags & MNT_DETACH )|| (flags & MNT_EXPIRE)) {
+    printk("umount: unknown flags %d\n", flags);
+    return -EINVAL;
+  }
+
+  auto pentry = pcb->vfs->lookup_from(path->get(), pcb->pwd, !(flags & UMOUNT_NOFOLLOW), false);
+  if (!pentry)
+    return -pentry;
+
+  auto entry = *pentry;
+  if (!entry->mnt)
+    return -EINVAL;
+  return pcb->vfs->unmount(entry->mnt, flags);
 }
 
 HANDLE(chroot, _path) {

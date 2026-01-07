@@ -106,12 +106,62 @@ public:
   vector<item> list() override;
 };
 
+namespace sys {
+
+// This shows that kernel is running in "unstable" mode.
+class tainted : public inode_impl<tainted> {
+  inode::meta meta;
+public:
+  unsigned taint = 0;
+
+  FILE_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_FILE;
+
+  tainted(class fs *fs): inode_impl(fs, 0, 0, 0444, File) {}
+  ssize_t read(size_t, void *, size_t, int) override;
+};
+
+class kernel : public inode_impl<kernel> {
+  inode::meta meta;
+  class tainted *tainted;
+  inode *parent;
+public:
+  DIR_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_DIRECTORY;
+
+  kernel(class fs *fs, inode *parent);
+  ~kernel();
+  inode *lookup(const string &name) override;
+  vector<item> list() override;
+};
+
+}
+
+class sys_inode : public inode_impl<sys_inode> {
+  inode::meta meta;
+  sys::kernel *kernel;
+  inode *parent;
+public:
+  DIR_INODE_DEFAULT_IMPL;
+  META_DEFAULT_IMPL;
+  READONLY_DIRECTORY;
+
+  sys_inode(class fs *fs, inode *parent);
+  ~sys_inode();
+  inode *lookup(const string &name) override;
+  vector<item> list() override;
+};
+
 }
 
 class procroot : public inode_impl<procroot> {
   proc::filesystems *filesystems;
   proc::meminfo *meminfo;
   proc::stat *stat;
+  proc::sys_inode *sys;
+  proc::link *mounts;
 
   os::hashmap<int, proc::process*> pnodes;
   inode::meta meta;

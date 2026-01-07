@@ -66,6 +66,7 @@ process_file_table::process_file_table(const process_file_table &other): shared(
   for (auto [_, f] : open) {
     if (auto node = dyn_cast<pipe_inode>(f->node()))
       node->incf(f);
+    f->ref();
   }
 }
 
@@ -106,13 +107,14 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   // Check maximum allowed files.
   size_t max = rlims[RLIMIT_OFILE].rlim_cur;
   if (max != 0 && ftbl->size() >= max)
-    return -EPERM;
+    return -EMFILE;
 
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
   bool write = can_write(flags);
   bool read = can_read(flags);
   bool follow = !(flags & O_NOFOLLOW);
+  
   if (flags & O_PATH)
     write = read = false;
 
@@ -140,6 +142,8 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   inode *node = dentry->node;
   if (node->type == inode::Dir && write)
     return -EISDIR;
+  if (node->type != inode::Dir && (flags & O_DIRECTORY))
+    return -ENOTDIR;
 
   if (read && !readable(euid, egid, node))
     return -EACCES;
@@ -149,13 +153,57 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
   }
 
   file *f = new file(dentry, flags);
+  if (flags & O_TRUNC)
+    f->node()->truncate(0);
+  
   int fd = ftbl->allocate(f);
   return fd;
 }
 
+expected<dentry*> pcb_t::obtain_file(const string &path, int dirfd, int flags) {
+  if (path[0] == '\0' && !(flags & AT_EMPTY_PATH))
+    return -ENOENT;
+
+  dentry *relbase = pwd;
+  // Check relative path base.
+  if (dirfd != AT_FDCWD && path[0] != '/') {
+    if (!ftbl->count(dirfd))
+      return -EBADF;
+
+    auto entry = ftbl->at(dirfd)->entry;
+    if (entry->node->type != inode::Dir)
+      return -ENOTDIR;
+    relbase = entry;
+  }
+  
+  bool write = can_write(flags) & !(flags & O_PATH);
+  bool read = can_read(flags) & !(flags & O_PATH);
+  bool follow = !(flags & O_NOFOLLOW);
+
+  auto maybe_dentry = vfs->lookup_from(path, relbase, follow);
+  if (!maybe_dentry)
+    return maybe_dentry;
+
+  auto dentry = *maybe_dentry;
+  inode *node = dentry->node;
+  if (node->type == inode::Dir && write)
+    return -EISDIR;
+  if (node->type != inode::Dir && (flags & O_DIRECTORY))
+    return -ENOTDIR;
+
+  if (read && !readable(euid, egid, node))
+    return -EACCES;
+  if (write) {
+    if (auto ret = writable(euid, egid, node); ret < 0)
+      return ret;
+  }
+
+  return dentry;
+}
+
 int pcb_t::close_file(int fd) {
   if (!ftbl->count(fd))
-    return -EINVAL;
+    return -EBADF;
   
   ftbl->deallocate(fd);
   return 0;
@@ -179,8 +227,9 @@ void pcb_t::send_signal(int sig) {
     bool waiting = x->sigresume == -2 && x->sigwait[sig];
     
     // Masked signals will also wake up threads.
-    if (x->status == Sleeping && x->intr) {
-      if (waiting || !masked) {
+    // Also wake up threads immediately if they received SIGKILL.
+    if ((x->status == Sleeping && x->intr) || sig == SIGKILL) {
+      if (waiting || !masked || sig == SIGKILL) {
         x->sigresume = sig;
         scheduler.wakeup(x, /*can_preempt=*/ false);
       }
@@ -196,6 +245,17 @@ void pcb_t::send_signal(int sig) {
   }
   pending.add(sig);
 }
+// We mainly fill in rlim[] defaults.
+pcb_t::pcb_t() {
+  rlims[RLIMIT_OFILE] = { .rlim_cur = 1024, .rlim_max = 4096 };
+  rlims[RLIMIT_STACK] = { .rlim_cur = 8_mb, .rlim_max = 8_mb };
+  rlims[RLIMIT_CORE]  = { .rlim_cur = 0,    .rlim_max = -1ul };
+  rlims[RLIMIT_CPU]   = { .rlim_cur = -1ul, .rlim_max = -1ul };
+  rlims[RLIMIT_RSS]   = { .rlim_cur = -1ul, .rlim_max = -1ul };
+  rlims[RLIMIT_NPROC] = { .rlim_cur = 4096, .rlim_max = 8192 };
+  rlims[RLIMIT_FSIZE] = { .rlim_cur = -1ul, .rlim_max = -1ul };
+}
+  
 
 pcb_t::~pcb_t() {
   // Free all threads.
@@ -415,16 +475,9 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   trap->sscratch = usp ? usp : ((trapframe *) pt->ksp)->sscratch;
   trap->regs[8] = 0;
 
-  // Copy the table, but not the files.
-  if (flags & CLONE_FILES) {
-    cp->ftbl = pp->ftbl;
-    cp->ftbl->ref();
-  } else {
-    cp->ftbl = new process_file_table(*pp->ftbl);
-    cp->ftbl->ref();
-    for (auto [_, f] : *cp->ftbl)
-      f->ref();
-  }
+  // Copy the file table.
+  cp->ftbl = flags & CLONE_FILES ? pp->ftbl : new process_file_table(*pp->ftbl);
+  cp->ftbl->ref();
 
   // Copy VFS context.
   cp->vfs = flags & CLONE_FS ? pp->vfs : new vfs(*pp->vfs);

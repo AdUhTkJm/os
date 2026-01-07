@@ -92,8 +92,10 @@ void *vm_alloc_pages(size_t total, int flags) {
 #endif
 
   size_t index = find_consecutive(vmmap, actual, vm_from);
-  if (index == -1ul)
+  if (index == -1ul) {
+    panic("no virtual memory available\n");
     return nullptr;
+  }
 
   uintptr_t base = VM_BASE + index * PAGE_SIZE;
 #ifdef DEBUG_MEMORY

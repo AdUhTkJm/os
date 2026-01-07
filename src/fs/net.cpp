@@ -508,10 +508,12 @@ discover:
   // Write it.
   sock->options.broadcast = true;
   sock->write(0, payload, opt - payload, 0);
+  printk("dhcp sent\n");
 
   // Read.
-  unsigned char recv[400];
+  alignas(4) unsigned char recv[400];
   int len = sock->read(0, recv, sizeof(recv), 0);
+  printk("dhcp received\n");
   if (len < 0) {
     printk("dhcp: sock error: %d\n");
     goto discover;
@@ -563,7 +565,7 @@ discover:
       break;
     
     default:
-      klog("dhcp: warning: unknown option %d\n", type);
+      printk("dhcp: warning: unknown option %d\n", type);
       break;
     }
     opt += len;
@@ -626,7 +628,7 @@ request:
     opt += len;
   }
 
-  klog("dhcp: lease time: %u\n", lease_time);
+  printk("dhcp: lease time: %u\n", lease_time);
 
   // Fill in route table.
   {

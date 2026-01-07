@@ -248,6 +248,7 @@ struct stat {
   unsigned      st_uid;      /* User ID of owner */
   unsigned      st_gid;      /* Group ID of owner */
   unsigned long st_rdev;     /* Device ID (if special file) */
+  unsigned long __pad;
            long st_size;     /* Total size, in bytes */
            long st_blksize;  /* Block size for filesystem I/O */
            long st_blocks;   /* Number of 512 B blocks allocated */
@@ -386,10 +387,12 @@ struct sockaddr_in {
 #define FUTEX_CLOCK_REALTIME	256
 
 // From <sys/resource.h>.
+#define RLIMIT_CPU   0
 #define RLIMIT_FSIZE 1
 #define	RLIMIT_DATA  2
 #define RLIMIT_STACK 3
 #define RLIMIT_CORE  4
+#define RLIMIT_RSS   5
 #define RLIMIT_NPROC 6
 #define RLIMIT_OFILE 7
 #define RLIMIT_MEMLOCK 8
@@ -675,5 +678,11 @@ struct loop_info {
   unsigned long lo_init[2];
   char          reserved[4];
 };
+
+// From <sys/mount.h>.
+#define MNT_FORCE       1
+#define MNT_DETACH      2
+#define MNT_EXPIRE      4
+#define UMOUNT_NOFOLLOW 8
 
 #endif

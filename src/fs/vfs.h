@@ -30,6 +30,9 @@
 #define O_CLOEXEC   0x00080000 /* Close file descriptor upon execve() */
 #define O_PATH      0x00200000 /* Create as a path */
 
+// For internal uses.
+#define O_EMPTYPATH 0x00400000
+
 #define FD_CLOEXEC  0x1
 
 #define F_DUPFD 0
@@ -136,6 +139,11 @@ public:
   ssize_t seek(long pos, whence whence); // Returns the old offset.
   void close();
   void sync();
+
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_FILE)
+  void ondrop() override;
+  void onref() override;
+#endif
 };
 
 class page_cache {
@@ -245,12 +253,27 @@ public:
   // Mark this inode as unused.
   // Possibly deletes itself when refcount drops to zero.
   void drop();
-  void ref() { refcnt++; }
+  void ref() {
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_INODE)
+    onref();
+#endif
+    refcnt++;
+  }
   void unlinked();
-  void linked() { lnkcnt++; }
+  void linked() {
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_INODE)
+    onlink();
+#endif
+    lnkcnt++;
+  }
   unsigned nlink() { return lnkcnt; }
-#ifndef NDEBUG
   unsigned inspect_refcnt() { return refcnt; }
+
+#if defined(DEBUG_MEMORY) && defined(LOG_REFCNT_INODE)
+  void onref();
+  void ondrop();
+  void onlink();
+  void onunlink();
 #endif
 
   bool same(const inode *other) const { return inum() == other->inum(); }
@@ -262,7 +285,7 @@ public:
   page_cache *cache = nullptr;
 
   inode(class fs *fs, int uid, int gid, int mode, filetype type, uint64_t rtti):
-    rtti(rtti), type(type), fs(fs), mode(mode), uid(uid), gid(gid) { refcnt = 1; /* lnkcnt implicitly zeroed. */ }
+    rtti(rtti), type(type), fs(fs), mode(mode), uid(uid), gid(gid) { }
 };
 
 template<class T>
@@ -290,7 +313,7 @@ private:
   // All mounted filesystems that must respond to sync().
   static static_storage<os::vector<fs*>> tosync;
 
-  expected<dentry *> lookup_impl(const string &path, dentry *dentry, bool lastsym, int depth);
+  expected<dentry *> lookup_impl(const string &path, dentry *dentry, bool lastsym, bool lastmnt, int depth);
 public:
   struct mount_data {
     string fstype;
@@ -311,13 +334,19 @@ public:
     // The submounts.
     intrusive_list<mount_t> children;
     int flags;
+
+    // The open file reference counts.
+    atomic<int> refcnt;
+
+    void ref() { refcnt++; }
+    void drop() { if (!--refcnt) delete this; }
   };
   dentry *base;
 
   // Returns the (optional) entry and an error code.
   // If `lastsym` is set to false, the last component will not be resolved when it is a symlink.
   expected<dentry *> lookup(const string &path, bool lastsym = true);
-  expected<dentry *> lookup_from(const string &path, dentry *dentry, bool lastsym = true);
+  expected<dentry *> lookup_from(const string &path, dentry *dentry, bool lastsym = true, bool lastmnt = true);
   // When there is a process, use `pcb->open_file` instead. This is for boot.
   file *open(const string &path, int flags);
   void close(file *f);
@@ -325,9 +354,11 @@ public:
   // These change global filesystem topology.
   static void mount(dentry *host, dentry *root, int flags = 0);
   static int move_mount(dentry *source, dentry *target);
+  static int unmount(mount_t *mnt, int flags);
   int chroot(dentry *entry);
 
   static void invalidate(inode *node, const string &name);
+  static void invalidate() { dcache->clear(); }
 
   // Constructs a new in-memory `fs` structure according to the given fs.
   expected<fs*> get(const string &fsname, const char *src);
@@ -337,11 +368,7 @@ public:
 
   // Initialize the global structure.
   static void init();
-
-#ifndef NDEBUG
   static auto &inspect_dcache() { return dcache; }
-#endif
-
   static const vector<fs*> &to_sync() { return *tosync; }
 };
 

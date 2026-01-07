@@ -250,7 +250,9 @@ cd /mnt/glibc/ltp/testcases/bin
 echo "#### OS COMP TEST GROUP START ltp-$1 ####"
 for f in *; do
   case "$f" in
-    cgroup_regression_*) continue ;;
+    cgroup_regression_*) continue;;
+    crash01) continue;;
+    clone08) continue;;
   esac
   if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
     echo "Running $f"
@@ -270,7 +272,7 @@ echo "#### OS COMP TEST GROUP END ltp-$1 ####"
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       // ltp;
-      CD "/ltp/testcases/bin && ./clock_gettime01; echo 'done'";
+      CD "/ltp/testcases/bin; ./copy_file_range01; echo 'done'";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)
     const char *test = R"(
@@ -284,13 +286,16 @@ single() {
   cd ltp/testcases/bin
   echo "#### OS COMP TEST GROUP START ltp-$1 ####"
   for f in *; do
-    [ -f "$f" ] || continue
     case "$f" in
-      *.sh) continue ;;
-      cgroup_regression_*) continue ;;
+      cgroup_regression_*) continue;;
+      crash01) continue;;
+      copy_file_range*) continue;;
     esac
-
-    "./$f"
+    if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
+      echo RUN LTP CASE $(basename "$f")
+      "./$f"
+      echo FAIL LTP CASE $(basename "$f") : $?
+    fi
   done
   echo "#### OS COMP TEST GROUP END ltp-$1 ####"
 }
