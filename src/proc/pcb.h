@@ -191,7 +191,9 @@ struct pcb_t {
   sigaction sigact[32];   // Signal actions.
   os::tty::tty *tty;      // Terminal typewriter.
   wait_queue wait;        // Threads suspended in wait() system call.
+  wait_queue vfork;       // Threads suspended in vfork() system call (or clone, clone3 with CLONE_VFORK).
   spinlock waitlock;      // Lock associated with `wait`.
+  spinlock vforklock;     // Lock associated with `vfork`.
   rlimit rlims[9];        // Resource limits.
   pusage cruse;           // The rusage of all terminated children by wait().
   struct itimer {
@@ -206,6 +208,7 @@ struct pcb_t {
   ~pcb_t();
 
   expected<dentry*> obtain_file(const string &name, int dirfd, int flags);
+  expected<dentry*> obtain_file_emptyable(const string &name, int dirfd, int flags);
   int open_file_from(const string &name, dentry *relbase, int flags, int mode, inode::filetype type);
   int open_file_from(const string &name, int dirfd, int flags, int mode = 0, inode::filetype type = inode::File);
   int open_file(const string &name, int flags, int mode = 0, inode::filetype type = inode::File);

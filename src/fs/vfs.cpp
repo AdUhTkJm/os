@@ -215,7 +215,8 @@ expected<dentry*> vfs::lookup_impl(const string &path, dentry *from, bool lastsy
         return -ENOENT;
 
       dentry *child = new dentry(name, inode, cur->belong, cur);
-      dcache->insert(key, child);
+      [[likely]] if (inode->fs->cacheable())
+        dcache->insert(key, child);
       cur = child;
 
       {
@@ -368,8 +369,9 @@ void vfs::mount(dentry *host, dentry *root, int flags) {
 }
 
 int vfs::unmount(mount_t *mnt, int flags) {
-  if (!(flags & MNT_FORCE) && mnt->refcnt > 1)
-    return -EBUSY;
+  // if (!(flags & MNT_FORCE) && mnt->refcnt > 1)
+  //   return -EBUSY;
+  (void) flags;
 
   mnt->parent->children.erase(mnt);
   mnt->drop();
@@ -450,12 +452,14 @@ unsigned char inode::as_dt(filetype ty) {
 }
 
 file::~file() {
+  if (entry->belong)
+    entry->belong->drop();
   node()->drop();
-  entry->belong->drop();
 }
 
 file::file(dentry *entry, int flags): entry(entry), offset(0), flags(flags) {
-  entry->belong->ref();
+  if (entry->belong)
+    entry->belong->ref();
   node()->ref();
 }
 

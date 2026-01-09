@@ -5,7 +5,7 @@ namespace os {
 // Change to printk for debugging.
 #define CONCURRENCY_LOG(x) (void) 0
 
-class pipefs pipefs;
+static_storage<class pipefs> pipefs;
 
 pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0666, FIFO), maxbuf(pipefs::maxbuf) {}
 

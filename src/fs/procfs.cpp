@@ -269,7 +269,9 @@ inode *procroot::lookup(const string &name) {
     if (pnodes.count(pid))
       return pnodes[pid];
 
-    return pnodes[pid] = new proc::process(fs, this, (*pidmap)[pid]);
+    auto node = pnodes[pid] = new proc::process(fs, this, (*pidmap)[pid]);
+    node->linked();
+    return node;
   }
   if (name == "meminfo")
     return meminfo;
@@ -290,12 +292,20 @@ inode *procroot::lookup(const string &name) {
   // Now the entire string is a number.
   if (name.size() <= 10 && i == name.size() && res <= 2147483647) {
     int pid = (int) res;
-    if (!pidmap->count(pid))
+    bool has = pnodes.count(pid);
+    if (!pidmap->count(pid)) {
+      if (has) {
+        pnodes[pid]->unlinked();
+        pnodes.erase(pid);
+      }
       return nullptr;
-    if (pnodes.count(pid))
+    }
+    if (has)
       return pnodes[pid];
 
-    return pnodes[pid] = new proc::process(fs, this, (*pidmap)[pid]);
+    auto node = pnodes[pid] = new proc::process(fs, this, (*pidmap)[pid]);
+    node->linked();
+    return node;
   }
 
   printk("procroot: unknown name: %s\n", name.c_str());
@@ -322,6 +332,8 @@ vector<inode::item> procroot::list() {
 
 procfs::procfs() {
   auto node = new procroot(this);
+  node->linked();
+  node->linked();
   root = new dentry("", node, nullptr);
 }
 

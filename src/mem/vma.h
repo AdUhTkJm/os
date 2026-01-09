@@ -47,13 +47,15 @@ struct vma_t {
 // See https://www.cl.cam.ac.uk/teaching/2324/Algorithm1/content/slides22.pdf
 // Cambridge Algorithm 2 course, Part IA.
 // We specialized it for the need of VMA.
-template<int Order> requires(Order % 2 == 0)
+template<class V, int Order, class Allocator = allocator> requires(Order % 2 == 0)
 class btree {
   using K = va_t;
-  using V = vma_t;
 
   int sz = 0;
-
+  static Allocator &allocator() {
+    static Allocator a;
+    return a;
+  }
 public:
   struct node {
     // Remember that #children = #keys + 1. Here `count` is the number of keys.
@@ -69,6 +71,12 @@ public:
     bool leaf;
 
     node(bool leaf): leaf(leaf) {}
+    static void *operator new(size_t len) {
+      return allocator().allocate(len);
+    }
+    static void operator delete(void *p) {
+      allocator().free(p);
+    }
   } *root = nullptr;
   
   // The minimum number of keys is t - 1, and the minimum number of children is t.
@@ -361,7 +369,7 @@ private:
     return 0;
   }
 
-  void find_overlap_impl(node *n, va_t start, va_t end, vector<vma_t*> &result) const {
+  void find_overlap_impl(node *n, va_t start, va_t end, vector<V*> &result) const {
     if (!n || n->maxend <= start)
       return;
 
@@ -725,8 +733,8 @@ public:
     update_path_impl(root, key);
   }
 
-  vector<vma_t*> find_overlap(va_t start, va_t end) const {
-    vector<vma_t*> result;
+  vector<V*> find_overlap(va_t start, va_t end) const {
+    vector<V*> result;
     find_overlap_impl(root, start, end, result);
     return result;
   }
@@ -789,7 +797,7 @@ public:
 void init();
 
 struct addrspace : shared {
-  using map = btree<4>;
+  using map = btree<vma_t, 4>;
   using node = map::node;
 
   map vmas;

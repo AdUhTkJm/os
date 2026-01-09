@@ -516,7 +516,6 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
         pcb->cruse += use;
         pcb->children.erase(child);
         delete child;
-        printk("pavail = %d\n", pavail());
         return p;
       }
     }
@@ -985,10 +984,11 @@ long nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
 
 long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid) {
   auto tcb = active();
+  auto pcb = tcb->pcb;
 
   // The signal on termination is for processes, rather than threads.
   // So `flags & CLONE_THREAD` and `signal == 0` must both be true or both be false.
-  if (((flags & 0xff) == 0) ^ (flags & CLONE_THREAD))
+  if (((flags & 0xff) == 0) ^ !!(flags & CLONE_THREAD))
     return -EINVAL;
   if ((flags & 0xff) >= 32)
     return -EINVAL;
@@ -1008,14 +1008,22 @@ long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *chi
   if (stack & 0xf)
     return -EINVAL;
 
-  if (parenttid && (flags & CLONE_PARENT_SETTID)) {
-    if (!copy_to_user((void *) parenttid, &tcb->tid, sizeof(int)))
-      return -EFAULT;
-  }
-
   tcb_t *ct = os::clone(flags, stack, (void *) tls, (void *) childtid);
   if (!(flags & CLONE_THREAD))
     ct->pcb->sigonterm = flags & 0xff;
+
+  if (parenttid && (flags & CLONE_PARENT_SETTID)) {
+    if (!copy_to_user((void *) parenttid, &ct->tid, sizeof(int)))
+      return -EFAULT;
+  }
+
+  scheduler.add(ct);
+
+  // Parent must suspend until `ct` exits when VFORK is done.
+  if (flags & CLONE_VFORK) {
+    wait_entry entry;
+    hangon(ct->pcb->vfork, ct->pcb->vforklock, entry);
+  }
   return ct->pcb->pid;
 }
 

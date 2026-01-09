@@ -1,5 +1,5 @@
-#include "ptable.h"
 #include "kalloc.h"
+#include "vma.h"
 #include "../fdt/fdt.h"
 #include "../utils/libc.h"
 #include "../instr/leak.h"
@@ -14,73 +14,304 @@ struct frame_t {
 };
 
 pa_t free_head;
-size_t physavail;
+size_t physavail, pmtotal;
 
 // No extra paddings.
 static_assert(sizeof(frame_t) == PAGE_SIZE);
 
-// 1 for occupied, 0 for free.
-// Note that vmmap start from a base of `VM_BASE`;
-// pmmap and meta start from a base of `physbegin`.
-os::bitmap<VM_SIZE / PAGE_SIZE> vmmap;
-os::bitmap<MAX_PA_SIZE / PAGE_SIZE> pmmap;
-
-uintptr_t physbegin, physend;
-
 #ifndef IN_VSCODE
-pframe_meta meta[MAX_PA_SIZE / PAGE_SIZE];
+pframe_meta pmmeta[MAX_PA_SIZE / PAGE_SIZE];
 #else
 // This is mainly for VSCode performance reasons.
 // An array of length 4194304 will have dramatic performance drop.
-pframe_meta meta[1];
+pframe_meta pmmeta[1];
 #endif
-constexpr auto META_SIZE = sizeof(meta) / sizeof(pframe_meta);
-bool pminit;
+constexpr auto PM_META_SIZE = sizeof(pmmeta) / sizeof(pframe_meta);
 
-// Finds `total` consecutive virtual pages.
-template<size_t N, typename T>
-size_t find_consecutive(const os::bitmap<N, T> &bitmap, size_t total, size_t from, size_t to) {
-  size_t len = 0, start = from;
+int clz(unsigned x) {
+  if (x == 0)
+    return 32;
 
-  for (size_t w = from; w < to; w += bitmap.unit_bits) {
-    auto word = bitmap.word(w / bitmap.unit_bits);
-    // A whole chunk of zeroes. Add them directly.
-    if (word == 0) {
-      if (len == 0)
-        start = w;
-      len += bitmap.unit_bits;
-      if (len >= total)
-        return start;
-      continue;
-    }
-
-    // Check each bit separately.
-    for (unsigned i = 0; i < bitmap.unit_bits; ++i) {
-      if (bitmap[w + i]) {
-        len = 0;
-        continue;
-      }
-      if (len == 0)
-        start = w + i;
-      if (++len == total)
-        return start;
-    }
+  // Do a binary search.
+  int n = 0;
+  if ((x & 0xffff0000) == 0) {
+    n += 16;
+    x <<= 16;
   }
-  return -1ul;
+  if ((x & 0xff000000) == 0) {
+    n += 8;
+    x <<= 8;
+  }
+  if ((x & 0xf0000000) == 0) {
+    n += 4;
+    x <<= 4;
+  }
+  if ((x & 0xc0000000) == 0) {
+    n += 2;
+    x <<= 2;
+  }
+  if ((x & 0x80000000) == 0)
+    n += 1;
+  return n;
 }
 
-template<size_t T>
-size_t find_consecutive(const os::bitmap<T> &bitmap, size_t total, size_t from) {
-  size_t pos = find_consecutive(bitmap, total, from, bitmap.size);
-  if (pos != -1ul)
-    return pos;
+// The buddy allocator for physical addresses.
+class buddy {
+public:
+  constexpr static int order = 18;
 
-  return find_consecutive(bitmap, total, 0, from);
+  using address = uintptr_t;
+#define nextof(x) (*(address*) (x))
+#define prevof(x) (*((address*) (x) + 1))
+
+  address allocate(unsigned total);
+  void free(address addr);
+  void reserve(address begin, size_t size);
+
+  // These global variables cannot have a constructor. We have to manually initialize them.
+  void init(address base, size_t space);
+
+  // Available pages.
+  // We currently track **submitted size** rather than the actual size.
+  int available() const { return avail; }
+  unsigned offset(address addr) const { return (addr - base) / PAGE_SIZE; }
+private:
+  // These are free lists, recording virtual addresses.
+  // For physical allocator, we only need to include KERNEL_OFFSET inside `base`.
+  address heads[order];
+  address base;
+  int avail = 0;
+
+  void push(int i, address element);
+  void erase(int i, address element);
+} buddy;
+
+void buddy::push(int i, address element) {
+  nextof(element) = heads[i];
+  prevof(element) = 0;
+  if (heads[i])
+    prevof(heads[i]) = element;
+  
+  heads[i] = element;
+  pmmeta[offset(element)].order = i;
 }
 
-void *vm_alloc_pages(size_t total, int flags) {
-  static int vm_from = 0;
+void buddy::erase(int i, address element) {
+  auto next = nextof(element), prev = prevof(element);
+  if (prev)
+    nextof(prev) = next;
+  else
+    heads[i] = next;
+  if (next)
+    prevof(next) = prev;
+}
 
+buddy::address buddy::allocate(unsigned total) {
+  // Find the next buddy that is larger than the current request.
+  int level = 32 - clz(total - 1);
+  for (int i = level; i < order; i++) {
+    if (!heads[i])
+      continue;
+    
+    auto page = heads[i];
+    erase(i, page);
+    
+    // Split the rest of the block, if it is large enough.
+    // We're occupying the first half of the block, so the second half is still available.
+    while (i-- > level) {
+      auto buddy = page + (PAGE_SIZE << i);
+      push(i, buddy);
+    }
+
+    // Increase reference count.
+    auto pos = offset(page);
+    assert(pmmeta[pos].refcnt == 0 && "double allocate");
+    pmmeta[pos].refcnt = 1;
+    pmmeta[pos].order = level;
+    avail -= (1 << level);
+    return page;
+  }
+  // Out of memory. TODO: Maybe add swap later.
+  panic("out of memory");
+}
+
+void buddy::free(buddy::address addr) {
+  unsigned pos = offset(addr);
+  assert(pmmeta[pos].refcnt != 0 && "double free");
+  if (--pmmeta[pos].refcnt)
+    return;
+
+  int i = pmmeta[pos].order;
+  avail += (1 << i);
+  for (; i < order - 1; i++) {
+    // Try combining with the buddy.
+    auto buddy = base + ((addr - base) ^ (PAGE_SIZE << i));
+    
+    // The buddy isn't free.
+    // In that case, we insert `addr` into the free list of level `i`.
+    auto budpos = offset(buddy);
+    if (pmmeta[budpos].refcnt != 0 || pmmeta[budpos].order != i)
+      break;
+
+    // When the buddy is indeed free, we take it out of the free list.
+    // It will be combined with the current block and later inserted to a larger block,
+    // by the code above.
+    erase(i, buddy);
+    // The address must be the start of the pair.
+    addr = min(addr, buddy);
+    pmmeta[budpos].order = -1;
+  }
+  
+  push(i, addr);
+  pmmeta[offset(addr)].order = i;
+}
+
+void buddy::reserve(address begin, size_t size) {
+  auto end = begin + size;
+  while (begin < end) {
+    // Find the largest order to reserve for `begin`.
+    int level = 0;
+    size_t remaining = end - begin;
+
+    for (; level + 1 < order; level++) {
+      size_t block_size = PAGE_SIZE << (level + 1);
+      if ((begin & (block_size - 1)) != 0)
+        break;
+      if (block_size > remaining)
+        break;
+    }
+
+    // We now want to erase a block at `level`.
+    // But to do this, we must first ensure we have a block at that level.
+    int cur = level;
+    auto pos = offset(begin);
+    // Find the first level that has a block.
+    while (cur < order && heads[cur])
+      cur++;
+    // Split that block till `level`.
+    while (cur > level) {
+      erase(cur, begin);
+      cur--;
+
+      address buddy = begin + (PAGE_SIZE << cur);
+      push(cur, buddy);
+
+      pmmeta[pos].order = cur;
+      pmmeta[offset(buddy)].order = cur;
+    }
+
+    // Remove the block from free list and mark as allocated.
+    erase(level, begin);
+    pmmeta[pos].refcnt = 1;
+    pmmeta[pos].order = level;
+    begin += PAGE_SIZE << level;
+  }
+}
+
+void buddy::init(address base, size_t space) {
+  this->base = base;
+  avail = space / PAGE_SIZE;
+
+  auto addr = base;
+  memset(heads, 0, sizeof(heads));
+  for (int i = 0; i < order; i++) {
+    if (!(space & (PAGE_SIZE << i)))
+      continue;
+
+    heads[i] = addr;
+    nextof(addr) = 0;
+    prevof(addr) = 0;
+    pmmeta[offset(addr)].order = i;
+    addr += (PAGE_SIZE << i);
+  }
+}
+
+// The B-tree allocator for virtual addresses.
+class vm_allocator {
+  using page_number = size_t;
+  struct interval {
+    page_number begin, end;
+  };
+
+  // This is the B-tree order.
+  constexpr static int order = 8;
+
+  // The B-tree node allocator, to avoid circular dependency on memory allocation.
+  // B-tree node size doesn't depend on allocator.
+  class node_allocator {
+    using V = os::vma::btree<interval, order>::node;
+    constexpr static size_t space = 2_mb;
+    constexpr static size_t node_size = sizeof(V);
+    constexpr static size_t capacity = space / node_size;
+    
+    char arena[space];
+    void *head;
+  public:
+    node_allocator();
+    // This is only called within B-tree, so we can safely assume every allocation is of the size of a node.
+    void *allocate(size_t len);
+    void free(void*);
+  };
+  
+  os::vma::btree<interval, order, node_allocator> map;
+  va_t base;
+public:
+  using address = va_t;
+
+  address allocate(page_number total);
+  unsigned free(address addr);
+  vm_allocator(address base, page_number size);
+};
+
+static_storage<vm_allocator> valloc;
+
+vm_allocator::node_allocator::node_allocator(): head(arena) {
+  // Create a free list.
+  char *p = arena;
+  for (; p < arena + space - node_size; p += node_size)
+    nextof(p) = (address) (p + node_size);
+  
+  nextof(p) = 0;
+}
+
+void *vm_allocator::node_allocator::allocate(size_t len) {
+  assert(head);
+  assert(len == node_size); (void) len;
+  auto va = head;
+  head = (void *) nextof(va);
+  return va;
+}
+
+void vm_allocator::node_allocator::free(void *p) {
+  nextof(p) = (address) head;
+  head = p;
+}
+
+vm_allocator::address vm_allocator::allocate(page_number total) {
+  page_number begin = map.find_gap(total);
+  if (begin == 0)
+    panic("vm: out of memory");
+  map.insert({ begin, begin + total });
+  return base + begin * PAGE_SIZE;
+}
+
+unsigned vm_allocator::free(address addr) {
+  page_number off = (addr - base) / PAGE_SIZE;
+  interval *it = map.find(off);
+  assert(it != nullptr);
+  auto cnt = it->end - it->begin;
+  map.erase(off);
+  return cnt;
+}
+
+vm_allocator::vm_allocator(address base, page_number size): base(base) {
+  // Insert placeholders for minimum and maximum.
+  // We don't want `0` to be allocatable, as we use 0 to represent OOM.
+  map.insert({ 0, 1 });
+  map.insert({ size, size + 1 });
+}
+
+void *page_malloc(size_t total, int flags) {
   if (!total)
     return nullptr;
 
@@ -91,60 +322,61 @@ void *vm_alloc_pages(size_t total, int flags) {
   size_t actual = total;
 #endif
 
-  size_t index = find_consecutive(vmmap, actual, vm_from);
-  if (index == -1ul) {
-    panic("no virtual memory available\n");
-    return nullptr;
-  }
-
-  uintptr_t base = VM_BASE + index * PAGE_SIZE;
+  auto base = valloc->allocate(actual);
 #ifdef DEBUG_MEMORY
   base += PAGE_SIZE;
 #endif
-
-  vmmap.set(index, index + actual);
-
   for (size_t i = 0; i < total; ++i) {
     pa_t frame = pframe();
     // Out of physical memory. Free all obtained memory.
     if (!frame) {
+      panic("vmalloc: out of memory");
       for (size_t j = 0; j < i; ++j) {
         auto pa = punmap(base + j * PAGE_SIZE, MAP_4KB);
         pfree(*pa);
-        vmmap[index + j] = 0;
       }
-      vmmap.clear(index, index + actual);
-      panic("vmalloc: out of memory");
+      valloc->free(base);
       return nullptr;
     }
     pmap(frame, base + i * PAGE_SIZE, MAP_4KB, flags);
   }
   
-  // Round-robin allocate.
-  vm_from += actual;
   return (void *) base;
 }
 
-void vm_free_pages(void *va, size_t total) {
-  auto base = (uintptr_t) va;
-  size_t index = (base - VM_BASE) / PAGE_SIZE;
-  for (size_t i = 0; i < total; ++i) {
-    uintptr_t v = base + i * PAGE_SIZE;
+#ifdef DEBUG_MEMORY
+// Ignore the two unmapped guard pages.
+void page_free(void *va) {
+  auto base = (va_t) va;
+  auto freed = valloc->free(base - PAGE_SIZE);
+  for (size_t i = 0; i < freed - 2; ++i) {
+    va_t v = base + i * PAGE_SIZE;
     auto p = punmap(v, MAP_4KB);
     pfree(*p);
-    vmmap[index + i] = 0;
   }
 }
+#else
+void page_free(void *va) {
+  auto base = (va_t) va;
+  auto freed = valloc->free(base);
+  for (size_t i = 0; i < freed; ++i) {
+    va_t v = base + i * PAGE_SIZE;
+    auto p = punmap(v, MAP_4KB);
+    pfree(*p);
+  }
+}
+#endif
 
 void mark_reserved() {
-  // Moreover, look at the /memory node.
+  // Look at the /memory node.
+  pa_t physbegin, physend;
   char *p = (char *) fdt::pfdt + to_big_endian(fdt::pfdt->off_dt_struct);
   fdt::walk(p, [&](const char *cdev, const char *cprop, void *property, int len) {
     if (strncmp(cdev, "/memory@", 8) != 0)
       return WalkResult::Continue;
 
     if (strcmp(cprop, "reg") == 0) {
-      assert(len == 16);
+      assert(len == 16); (void) len;
       auto prop = (uint32_t*) property;
       physbegin = (to_big_endian(prop[0]) * 1ull << 32) | to_big_endian(prop[1]);
       physend = physbegin + ((to_big_endian(prop[2]) * 1ull << 32) | to_big_endian(prop[3]));
@@ -152,28 +384,24 @@ void mark_reserved() {
     }
     return WalkResult::Continue;
   });
-  physavail += min(physend - physbegin, MAX_PA_SIZE) / PAGE_SIZE;
-
+  
+  // We don't start from `physbegin`, because typically there are already things here.
+  // On RISC-V it's for OpenSBI, and on Loongarch that is probably 0x0.
+  auto end = (va_t) __kernel_end;
+  auto size = min((physend + KERNEL_OFFSET) - end, MAX_PA_SIZE);
+  buddy.init(end, size);
+  physavail += size / PAGE_SIZE;
   
   for (auto *rsvmap = (fdt::memrsv*) ((char *) fdt::pfdt + to_big_endian(fdt::pfdt->off_mem_rsvmap));; rsvmap++) {
     if (rsvmap->address == 0 && rsvmap->size == 0)
       break;
 
-    auto begin = rsvmap->address, size = rsvmap->size;
-    
-    auto start = (begin - physbegin) / PAGE_SIZE;
-    auto end = start + roundup<PAGE_SIZE>(size) / PAGE_SIZE;
-    pmmap.set(start, end);
-    physavail -= (end - start);
+    auto begin = rsvmap->address + KERNEL_OFFSET;
+    auto size = roundup<PAGE_SIZE>(rsvmap->size);
+    buddy.reserve(begin, size);
+    physavail -= size;
   }
-  // Don't touch the space of the free-list allocator.
-  // Also don't touch the kernel itself.
-  auto endpa = (pa_t) (__kernel_end - KERNEL_OFFSET);
-  
-  auto start = (0x8000'0000 - physbegin) / PAGE_SIZE;
-  auto end = (endpa + FREE_LIST_SIZE * PAGE_SIZE - physbegin) / PAGE_SIZE;
-  pmmap.set(start, end);
-  physavail -= (end - start);
+  pmtotal = physavail;
 }
 
 struct slab : intrusive_list_node<slab> {
@@ -194,19 +422,20 @@ constexpr size_t sizes[] = {
   vslab(4), vslab(3), vslab(2)
 };
 constexpr size_t size_count = sizeof(sizes) / sizeof(size_t);
+static_assert(size_count <= 15);
 
 intrusive_list<slab> slabs[size_count];
 
 bool push_slab(int i) {
   size_t size = sizes[i];
-  void *page = vm_alloc_pages(1, PTE_RW | PTE_V);
+  void *page = page_malloc(1, PTE_RW | PTE_V);
   if (!page)
     return false;
 
   // Mark the belonging of the page.
-  auto pos = (to_pa(page) - physbegin) / PAGE_SIZE;
-  assert(pos <= META_SIZE);
-  meta[pos].type = i;
+  auto pos = off(to_pa(page));
+  assert(pos <= PM_META_SIZE);
+  pmmeta[pos].type = i;
 
   slab *slb = (slab *) page;
   slb->head = (void *) ((va_t) page + sizeof(slab));
@@ -287,45 +516,33 @@ void slab_free(void *p, int i) {
 
 namespace os {
 
-size_t off(pa_t pa) {
-  auto pos = (pa - physbegin) / PAGE_SIZE;
-  assert(pos < META_SIZE);
-  return pos;
-}
-
 void pincref(pa_t p) {
-  size_t pos = off(p);
-  meta[pos].refcnt++;
+  pmmeta[off(p)].refcnt++;
 }
 
 pa_t pframe() {
-  if (!free_head && !pminit)
-    panic("out of memory");
-
-  size_t pa;
-  if (free_head) {
-    // Free-list part.
-    pa = free_head;
-    frame_t *head = (frame_t *) as_va(free_head);
-    free_head = (pa_t) head->next;
-  } else {
-    // Bitmap part.
-    static int pm_from = 0;
-    size_t index = find_consecutive(pmmap, 1, pm_from);
-    if (index == -1ul)
-      panic("out of memory");
-
-    pmmap[index] = 1;
-    pm_from = index + 1;
-    pa = index * PAGE_SIZE + physbegin;
-  }
-
-  meta[off(pa)].refcnt++;
+  // Note buddies manage virtual addresses.
+  pa_t pa = buddy.allocate(1) - KERNEL_OFFSET;
 #if defined(DEBUG_MEMORY)
   memset((void *) as_va(pa), 0xAA, PAGE_SIZE);
 #endif
-  physavail--;
   return pa;
+}
+
+void pfree(pa_t pa) {
+  if (!pa)
+    return;
+  assert(pa % PAGE_SIZE == 0);
+  
+  auto pos = off(pa);
+  
+#if defined(DEBUG_MEMORY)
+  // When this page is about to get freed, poison it.
+  if (pmmeta[pos].refcnt == 1)
+    memset((void *) as_va(pa), 0xCC, PAGE_SIZE);
+#endif
+
+  buddy.free(pa + KERNEL_OFFSET);
 }
 
 pa_t pframe_zeroed() {
@@ -345,55 +562,8 @@ void make_zeroes() {
   zero::len++;
 }
 
-void pfree(pa_t pa) {
-  if (!pa)
-    return;
-  assert(pa % PAGE_SIZE == 0);
-  
-  auto pos = off(pa);
-  
-#if defined(DEBUG_MEMORY)
-  if (meta[pos].refcnt == 0) {
-    printk("%p double-freed\n", pa);
-    panic("memory: pfree");
-  }
-#endif
-  
-  if (--meta[pos].refcnt > 0)
-    return;
-
-#if defined(DEBUG_MEMORY)
-  memset((void *) as_va(pa), 0xCC, PAGE_SIZE);
-#endif
-
-  // This region is managed by free list allocator.
-  physavail++;
-  const auto end = (pa_t) __kernel_end - KERNEL_OFFSET;
-  if (pa >= end && pa < end + FREE_LIST_SIZE * PAGE_SIZE) {
-    auto *frame = (frame_t *) as_va(pa);
-    frame->next = free_head;
-    free_head = pa;
-    return;
-  }
-
-  // This is managed by the bitmap allocator.
-  pmmap[off(pa)] = 0;
-}
-
 pa_t pmalloc(int pagecnt) {
-  assert(pminit);
-  if (pagecnt == 1)
-    return pframe();
-
-  // We always search from the beginning. (The round-robin won't be in sync with pframe().)
-  auto index = find_consecutive(pmmap, pagecnt, 0);
-  if (index == -1ul)
-    panic("pmalloc: out of memory");
-  pmmap.set(index, index + pagecnt);
-  assert(index + pagecnt < META_SIZE);
-  for (size_t i = index; i < index + pagecnt; i++)
-    meta[i].refcnt++;
-  return index * PAGE_SIZE + physbegin;
+  return buddy.allocate(pagecnt) - KERNEL_OFFSET;
 }
 
 void *vmalloc_impl(size_t len) {
@@ -410,10 +580,8 @@ void *vmalloc_impl(size_t len) {
     return slab_malloc(len);
 #endif
 
-  size_t pagecount = os::roundup<PAGE_SIZE>(len + sizeof(size_t)) / PAGE_SIZE;
-  size_t *p = (size_t *) vm_alloc_pages(pagecount, PTE_RW | PTE_V);
-  *p = pagecount;
-  return p + 1;
+  size_t pagecount = os::roundup<PAGE_SIZE>(len) / PAGE_SIZE;
+  return page_malloc(pagecount, PTE_RW | PTE_V);
 }
 
 void vfree(void *p) {
@@ -422,8 +590,10 @@ void vfree(void *p) {
 #endif
   if (!p)
     return;
+
   auto pos = off(to_pa(p));
-  if (auto type = meta[pos].type) {
+  // This is managed by slab allocator.
+  if (auto type = pmmeta[pos].type) {
 #ifdef DEBUG_MEMORY
     if (*(unsigned long *) ((va_t) p - 8) != CANARY_BEGIN)
       panic("vfree: corrupted begin");
@@ -437,46 +607,33 @@ void vfree(void *p) {
     return;
   }
 
-  auto q = (size_t *) p;
-  [[unlikely]] while (!q[-1])
-    q--;
-  size_t *meta = q - 1;
-  size_t pagecount = *meta;
-  vm_free_pages(meta, pagecount);
+  // This is managed by the B-tree page allocator.
+  page_free(p);
 }
 
-void init_bitmap_kalloc() {
-  pminit = true;
+void init_kalloc() {
   mark_reserved();
-}
-
-void init_freelist_kalloc() {
-  // Grab 16MB of memory. The linker script guarantees alignment.
-  pa_t begin = (pa_t) __kernel_end - KERNEL_OFFSET;
-  pa_t end = begin + FREE_LIST_SIZE * PAGE_SIZE;
-
-  for (pa_t p = begin; p != end; p += PAGE_SIZE)
-    ((frame_t *) as_va(p))->next = p + PAGE_SIZE;
-  
-  ((frame_t *) as_va(end) - 1)->next = 0;
-  free_head = begin;
-  physavail += FREE_LIST_SIZE;
+  valloc.construct(VM_BASE, VM_SIZE / PAGE_SIZE);
 }
 
 size_t pavail() {
-  return physavail;
+  return buddy.available();
 }
 
 size_t ptotal() {
-  return (physend - physbegin) / PAGE_SIZE;
+  return pmtotal;
+}
+
+size_t off(pa_t pa) {
+  return buddy.offset(pa + KERNEL_OFFSET);
 }
 
 pframe_meta *inspect_meta() {
-  return meta;
+  return pmmeta;
 }
 
 int refcnt(pa_t pa) {
-  return meta[off(pa)].refcnt;
+  return pmmeta[off(pa)].refcnt;
 }
 
 }

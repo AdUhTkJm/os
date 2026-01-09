@@ -111,6 +111,7 @@ public:
   // This does not deallocate the inode.
   virtual void erase(inode *) = 0;
   virtual bool has_backup() = 0;
+  virtual bool cacheable() { return true; }
 
   // Write all cache to disk.
   virtual void sync() {}

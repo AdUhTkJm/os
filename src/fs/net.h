@@ -278,7 +278,9 @@ class socketfs : public fs {
   inode *get() override { return nullptr; }
   void erase(inode *) override {}
   bool has_backup() override { return false; }
-} extern sockfs;
+};
+
+extern static_storage<socketfs> sockfs;
 
 const char *hostname();
 

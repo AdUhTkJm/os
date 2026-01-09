@@ -183,6 +183,7 @@ public:
   inode *get() override { return nullptr; }
   void erase(inode *) override {}
   bool has_backup() override { return false; }
+  bool cacheable() override { return false; }
 };
 
 expected<fs*> procfs_creator(const char *);

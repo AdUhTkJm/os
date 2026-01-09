@@ -4,6 +4,7 @@
 #include "../fs/devfs.h"
 #include "../fs/ext.h"
 #include "../fs/tmpfs.h"
+#include "../fs/pipe.h"
 #include "../fs/procfs.h"
 #include "../fdt/fdt.h"
 #include "../proc/elf.h"
@@ -192,9 +193,6 @@ void main_high() {
   // Clear the half of user-space to make sure there won't be bad entries when copying.
   memset(pt_root, 0, PAGE_SIZE / 2);
 
-  // Set up free list allocator.
-  os::init_freelist_kalloc();
-
   // Verify FDT.
 #ifdef RV
   pa_t pfdt = *(pa_t *) as_va(0x80202010);
@@ -214,7 +212,7 @@ void main_high() {
   fdt::read(hart_id, pfdt);
   fdt::check();
   
-  os::init_bitmap_kalloc();
+  os::init_kalloc();
 
   // Initialize various global variables.
   os::vma::init();
@@ -244,6 +242,8 @@ void main_high() {
   os::plic::init();
   os::mount_dev();
   os::mount_tmp();
+  pipefs.construct();
+  sockfs.construct();
 
   // At this time we're already prepared enough to execute unit test.
 #ifdef UNIT_TEST

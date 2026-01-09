@@ -16,9 +16,16 @@ inline spinlock lock;
 }
 
 struct pframe_meta {
-  // 0 for normal memory; non-zero value `i` for slabs[i].
-  unsigned char type;
   unsigned char refcnt;
+  // Type in slabs.
+  unsigned char type;
+  // Type in buddy allocator.
+  unsigned char order;
+};
+
+struct vframe_meta {
+  unsigned char refcnt;
+  unsigned char order;
 };
 
 // Reserved kernel virtual memory size.
@@ -26,7 +33,7 @@ struct pframe_meta {
 constexpr size_t VM_SIZE = 4_gb - PAGE_SIZE;
 constexpr va_t VM_BASE = 0xffff'ffff'0000'0000ul;
 
-// The entire physical memory space we're able to manage. QEMU only has 128MB anyway.
+// The entire physical memory space we're able to manage.
 constexpr va_t MAX_PA_SIZE = 1_gb;
 
 // This amount of 4KB frames from __kernel_base will be managed by
@@ -60,9 +67,8 @@ inline size_t pshared;
 // Free a chunk of memory allocated by `vmalloc`.
 void vfree(void *p);
 
-// Initialize the bitmap allocator.
-void init_bitmap_kalloc();
-void init_freelist_kalloc();
+// Initialize the buddy/slab allocators.
+void init_kalloc();
 
 // The zeroed free list.
 void make_zeroes();
@@ -73,8 +79,6 @@ void *vmalloc(size_t len, bool permanent = false) {
   void *vmalloc_impl(size_t);
   size_t *v = (size_t *) vmalloc_impl(len + Align);
   size_t *ptr = roundup<Align>(v);
-  for (auto p = v; p != ptr; p++)
-    *p = 0;
 #ifdef FUNC_INSTRUMENT
   if (!permanent)
     leak::record_alloc(ptr, len);
@@ -89,11 +93,8 @@ void *vmalloc(size_t len) {
   return vmalloc<sizeof(size_t)>(len);
 }
 
-#ifndef NDEBUG
 pframe_meta *inspect_meta();
 size_t off(pa_t pa);
-#endif
-
 int refcnt(pa_t pa);
 
 }

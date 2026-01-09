@@ -132,6 +132,17 @@ HANDLE(read, fd, buf, len) {
   return detail::read_to_user(file, (void *) buf, len);
 }
 
+HANDLE(pread64, fd, buf, len, offset) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  if ((file->flags & 3) == O_WRONLY)
+    return -EPERM;
+
+  SeekGuard _(file, offset);
+  return detail::read_to_user(file, (void *) buf, len);
+}
+
 HANDLE(readv, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
@@ -172,6 +183,17 @@ HANDLE(write, fd, buf, len) {
   if ((file->flags & 3) == O_RDONLY)
     return -EPERM;
 
+  return detail::write_from_user(file, (void *) buf, len);
+}
+
+HANDLE(pwrite64, fd, buf, len, offset) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+  if ((file->flags & 3) == O_RDONLY)
+    return -EPERM;
+
+  SeekGuard _(file, offset);
   return detail::write_from_user(file, (void *) buf, len);
 }
 
@@ -461,9 +483,10 @@ HANDLE(readlinkat, dirfd, _path, buf, size) {
   auto link = (*fd)->node->readlink();
   if (!link)
     return -EINVAL;
+  size = min(size, (long) link->size());
   if (!copy_to_user((void *) buf, link->c_str(), size))
     return -EFAULT;
-  return min(link->size(), (unsigned long) size);
+  return size;
 }
 
 HANDLE(chdir, _path) {
@@ -610,16 +633,11 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
 
-  int fd;
-  if (!(flags & AT_EMPTY_PATH))
-    fd = pcb->open_file_from(path->get(), dirfd, O_PATH | openflags);
-  else
-    fd = dirfd;
-
-  if (fd < 0)
+  auto fd = pcb->obtain_file_emptyable(path->get(), dirfd, O_PATH | openflags);
+  if (!fd)
     return fd;
 
-  auto node = pcb->ftbl->at(fd)->node();
+  auto node = (*fd)->node;
   auto meta = node->get_meta();
   stat stat {
     .st_dev = 0,
@@ -637,8 +655,6 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
     .st_mtim = { .tv_sec = long(meta.mtime / 1_s), .tv_nsec = long(meta.mtime % 1_s) },
     .st_ctim = { .tv_sec = long(meta.ctime / 1_s), .tv_nsec = long(meta.ctime % 1_s) },
   };
-  if (!(flags & AT_EMPTY_PATH))
-    pcb->close_file(fd);
   if (!copy_to_user((void *) buf, &stat, sizeof(stat)))
     return -EFAULT;
   return 0;
@@ -1155,7 +1171,7 @@ HANDLE(getcwd, buf, size) {
     return -ERANGE;
   if (!copy_to_user((void*) buf, path.c_str(), path.size() + 1))
     return -EFAULT;
-  return buf;
+  return 0;
 }
 
 HANDLE(uname, buf) {
@@ -1428,6 +1444,22 @@ HANDLE(clock_settime, id, tp) {
   default:
     return -EINVAL;
   }
+}
+
+HANDLE(clock_getres, id, tp) {
+  // We only have one time source for now.
+  if (id < 0)
+    return -EINVAL;
+  if (!tp)
+    return 0;
+
+  timespec res {
+    .tv_sec = 0,
+    .tv_nsec = clock_period
+  };
+  if (!copy_to_user((void *) tp, &res, sizeof(timespec)))
+    return -EFAULT;
+  return 0;
 }
 
 HANDLE(gettimeofday, tv, tz) {
@@ -1779,7 +1811,7 @@ HANDLE(pipe2, fds, flags) {
   if (flags & O_DIRECT)
     return -EINVAL;
 
-  auto pipe = pipefs.get(); // On creation it has a writer and a reader, so don't increment.
+  auto pipe = pipefs->get(); // On creation it has a writer and a reader, so don't increment.
 
   file *read = new file(new dentry("<pipe r>", pipe, nullptr), O_RDONLY | extra);
   file *write = new file(new dentry("<pipe w>", pipe, nullptr), O_WRONLY | extra);

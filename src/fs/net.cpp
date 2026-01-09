@@ -15,7 +15,7 @@ static_storage<os::vector<ip::address>> ip::routers, ip::dns;
 static_storage<os::vector<ip::route>> ip::routes;
 
 static_storage<class demux> demux;
-socketfs sockfs;
+static_storage<socketfs> sockfs;
 
 const char *hostname() {
   static char buf[16] = "pristine-";
@@ -317,7 +317,7 @@ void udp::fill_header(char *p, ip::address src, ip::address dst, port srcport, p
 }
 
 udp_socket_inode::udp_socket_inode():
-  inode_impl(&sockfs, 0, 0, 0666, Socket), src(ip::src), srcport(0) {
+  inode_impl(&*sockfs, 0, 0, 0666, Socket), src(ip::src), srcport(0) {
 }
 
 udp_socket_inode::~udp_socket_inode() {

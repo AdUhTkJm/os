@@ -28,7 +28,7 @@ public:
       return *this;
     }
     operator bool() const {
-      return (elem & (1U << bitpos)) != 0;
+      return (elem & (1u << bitpos)) != 0;
     }
     bool operator!() const {
       return !(bool) *this;
@@ -43,7 +43,7 @@ public:
   public:
     const_reference(unit u, size_t index): elem(u), bitpos(index) {}
     operator bool() const {
-      return (elem & (1U << bitpos)) != 0;
+      return (elem & (1u << bitpos)) != 0;
     }
     bool operator!() const {
       return !(bool) *this;

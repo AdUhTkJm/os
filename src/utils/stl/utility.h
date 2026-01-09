@@ -115,6 +115,11 @@ enum class result : bool {
   success, failure
 };
 
+struct allocator {
+  void *allocate(size_t v) { return operator new(v); }
+  void free(void *p) { operator delete(p); }
+};
+
 }
 
 #endif

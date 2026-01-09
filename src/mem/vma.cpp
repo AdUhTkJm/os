@@ -141,6 +141,9 @@ bool map_current(void *from, void *to, bool write) {
       if (!map_single(p, pt_root()))
         return false;
     }
+    // Must make sure the page is writable, if required.
+    if (write && !(pte_flags(p) & PTE_W))
+      return false;
   }
   return true;
 }
@@ -294,8 +297,7 @@ vma_t &vma_t::operator=(const vma_t &other) {
   return *this;
 }
 
-void init() {
-}
+void init() { }
 
 }
 

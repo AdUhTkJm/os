@@ -410,7 +410,7 @@ if __name__ == "__main__":
     exit(0)
 
   if args.mount:
-    proc.run(f"sudo mount -o loop build/rootfs/rootfs.ext2 mnt", shell=True)
+    proc.run(f"sudo mount -o loop disk.img mnt", shell=True)
     exit(0)
 
   data = Path("autotest/data").absolute()

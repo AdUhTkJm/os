@@ -111,7 +111,7 @@ tcp::port tcp_socket_inode::allocate() {
 }
 
 tcp_socket_inode::tcp_socket_inode():
-  inode_impl(&sockfs, 0, 0, 0666, Socket), state(tcp::state::CLOSED) {
+  inode_impl(&*sockfs, 0, 0, 0666, Socket), state(tcp::state::CLOSED) {
   rxbuf.data = new char[rxbuf.cap = 65535];
   txbuf.data = new char[txbuf.cap = 65535];
   scratch = new char[mss + total];

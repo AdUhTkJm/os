@@ -24,7 +24,7 @@ int process_file_table::allocate(file *f, int fd) {
   }
 
   // Find a usable descriptor.
-  for (int i = 3; ; i++) {
+  for (int i = 0; ; i++) {
     if (!open.count(i)) {
       open[i] = f;
       desc[fd] = 0;
@@ -161,7 +161,7 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
 }
 
 expected<dentry*> pcb_t::obtain_file(const string &path, int dirfd, int flags) {
-  if (path[0] == '\0' && !(flags & AT_EMPTY_PATH))
+  if (path[0] == '\0')
     return -ENOENT;
 
   dentry *relbase = pwd;
@@ -199,6 +199,19 @@ expected<dentry*> pcb_t::obtain_file(const string &path, int dirfd, int flags) {
   }
 
   return dentry;
+}
+
+expected<dentry*> pcb_t::obtain_file_emptyable(const string &name, int dirfd, int flags) {
+  if (!(flags & AT_EMPTY_PATH))
+    return obtain_file(name, dirfd, flags);
+  
+  if (dirfd == AT_FDCWD)
+    return pwd;
+
+  if (!ftbl->count(dirfd))
+    return -ENOENT;
+
+  return ftbl->at(dirfd)->entry;
 }
 
 int pcb_t::close_file(int fd) {
@@ -350,7 +363,10 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
   // Wake up parent for wait() system call.
   pcb->zombie = true;
   if (pcb->parent)
-    pcb->parent->wait.wake_all();
+    pcb->parent->wait.wake_all(false);
+
+  // Wake up process in CLONE_VFORK.
+  pcb->vfork.wake_all(false);
 
   // Send a signal to parent.
   pcb->parent->send_signal(pcb->sigonterm);
@@ -505,7 +521,6 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
   if (flags & CLONE_CHILD_CLEARTID)
     ct->ctidaddr = childtid;
   
-  scheduler.add(ct);
   return ct;
 }
 

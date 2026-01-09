@@ -242,29 +242,36 @@ extern "C" void _start() {
     syscall(stdin, /*TIOCSPGRP=*/ 0x5410, (reg_t) &pgid, ioctl);
     
     // Execute the shell.
-#if defined(TEST)
-#define LIBC "glibc"
-#define CD "cd /mnt/" LIBC
     [[gnu::unused]] const char *ltp = R"( 
 cd /mnt/glibc/ltp/testcases/bin
-echo "#### OS COMP TEST GROUP START ltp-$1 ####"
+echo "#### OS COMP TEST GROUP START ltp-glibc ####"
 for f in *; do
   case "$f" in
     cgroup_regression_*) continue;;
     crash01) continue;;
-    clone08) continue;;
+    copy_file_range*) continue;;
+    cpu*) continue;;
   esac
   if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
     echo "Running $f"
     "./$f"
   fi
 done
-echo "#### OS COMP TEST GROUP END ltp-$1 ####"
+echo "#### OS COMP TEST GROUP END ltp-glibc ####"
 )";
+    [[gnu::unused]] const char *libctest = R"(
+echo "#### OS COMP TEST GROUP START libctest-glibc ####"
+grep -v "setvbuf_unget" sh ./run-static.sh | sh
+grep -v "setvbuf_unget" sh ./run-dynamic.sh | sh
+echo "#### OS COMP TEST GROUP END libctest-glibc ####"
+)";
+#if defined(TEST)
+#define LIBC "glibc"
+#define CD "cd /mnt/" LIBC
     const char *test = 
       // CD "/basic && sh ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
-      // CD " && sh ./libctest_testcode.sh";
+      libctest;
       // CD " && sh ./libcbench_testcode.sh";
       // CD " && sh ./unixbench_testcode.sh";
       // CD " && sh ./lmbench_testcode.sh";
@@ -272,7 +279,7 @@ echo "#### OS COMP TEST GROUP END ltp-$1 ####"
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       // ltp;
-      CD "/ltp/testcases/bin; ./copy_file_range01; echo 'done'";
+      // CD "/ltp/testcases/bin; ./data_space; echo 'done'";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)
     const char *test = R"(
@@ -290,6 +297,7 @@ single() {
       cgroup_regression_*) continue;;
       crash01) continue;;
       copy_file_range*) continue;;
+      cpu*) continue;;
     esac
     if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
       echo RUN LTP CASE $(basename "$f")

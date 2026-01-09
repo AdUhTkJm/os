@@ -50,7 +50,9 @@ public:
 
   // Maximum buffer length.
   static const unsigned long maxbuf = 1_mb;
-} extern pipefs;
+};
+
+extern static_storage<class pipefs> pipefs;
 
 }
 
