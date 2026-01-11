@@ -229,9 +229,6 @@ void buddy::init(address base, size_t space) {
 // The B-tree allocator for virtual addresses.
 class vm_allocator {
   using page_number = size_t;
-  struct interval {
-    page_number begin, end;
-  };
 
   // This is the B-tree order.
   constexpr static int order = 8;
@@ -239,7 +236,7 @@ class vm_allocator {
   // The B-tree node allocator, to avoid circular dependency on memory allocation.
   // B-tree node size doesn't depend on allocator.
   class node_allocator {
-    using V = os::vma::btree<interval, order>::node;
+    using V = os::interval_btree<interval<page_number>, order>::node;
     constexpr static size_t space = 2_mb;
     constexpr static size_t node_size = sizeof(V);
     constexpr static size_t capacity = space / node_size;
@@ -253,7 +250,7 @@ class vm_allocator {
     void free(void*);
   };
   
-  os::vma::btree<interval, order, node_allocator> map;
+  os::interval_btree<interval<page_number>, order, node_allocator> map;
   va_t base;
 public:
   using address = va_t;
@@ -297,7 +294,7 @@ vm_allocator::address vm_allocator::allocate(page_number total) {
 
 unsigned vm_allocator::free(address addr) {
   page_number off = (addr - base) / PAGE_SIZE;
-  interval *it = map.find(off);
+  interval<page_number> *it = map.find(off);
   assert(it != nullptr);
   auto cnt = it->end - it->begin;
   map.erase(off);

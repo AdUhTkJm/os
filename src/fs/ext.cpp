@@ -1149,7 +1149,7 @@ int ext_inode::truncate_ext2(size_t len) {
 }
 
 int ext_inode::truncate_ext4(size_t) {
-  assert(false && "ext4: no truncate yet"); // TODO
+  panic("ext4: no truncate yet"); // TODO
 }
 
 int ext_inode::truncate(size_t len) {
@@ -1472,8 +1472,9 @@ ext_inode *ext::read_from_inum(size_t inum) {
   return nodecache[inum] = inode;
 }
 
-void ext::sync() {
+int ext::sync() {
   device->flush();
+  return 0; // TODO: This might also fail.
 }
 
 size_t ext::read_64(uint32_t lo, uint32_t hi) {

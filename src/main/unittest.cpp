@@ -1,11 +1,11 @@
-#include "../mem/vma.h"
-#include "../utils/stl/btree.h"
-
 #ifndef NDEBUG
+#include "../mem/vma.h"
+#include "../utils/stl/intervaltree.h"
+
 using os::vma::vma_t;
 
 void test_btree() {
-  os::vma::btree<vma_t, 8> map;
+  os::interval_btree<vma_t, 8> map;
 
   // Insert.
   for (int i = 1; i < 30; i++) {

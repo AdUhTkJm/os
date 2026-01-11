@@ -135,6 +135,9 @@ bool map_current(void *va, pte_t *root) {
 
 bool map_current(void *from, void *to, bool write) {
   char *p = (char *) from, *q = (char *) to;
+  [[unlikely]] if ((unsigned long) from > (unsigned long) to)
+    return false;
+
   for (p = rounddown<PAGE_SIZE>(p); p < q; p += PAGE_SIZE) {
     int flags = pte_flags(p);
     if (flags == -1 || (flags & PTE_COW && !(flags & PTE_W) && write)) {

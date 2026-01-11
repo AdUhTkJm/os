@@ -27,7 +27,7 @@ int process_file_table::allocate(file *f, int fd) {
   for (int i = 0; ; i++) {
     if (!open.count(i)) {
       open[i] = f;
-      desc[fd] = 0;
+      desc[i] = 0;
       return i;
     }
   }
@@ -40,7 +40,7 @@ int process_file_table::allocate_from(file *f, int fd) {
   for (int i = fd; ; i++) {
     if (!open.count(i)) {
       open[i] = f;
-      desc[fd] = 0;
+      desc[i] = 0;
       return i;
     }
   }
@@ -202,7 +202,7 @@ expected<dentry*> pcb_t::obtain_file(const string &path, int dirfd, int flags) {
 }
 
 expected<dentry*> pcb_t::obtain_file_emptyable(const string &name, int dirfd, int flags) {
-  if (!(flags & AT_EMPTY_PATH))
+  if (!(flags & O_EMPTYPATH))
     return obtain_file(name, dirfd, flags);
   
   if (dirfd == AT_FDCWD)
@@ -759,7 +759,7 @@ proceed:
 
 bool copy_to_user(void *usr, const void *ker, size_t len) {
   EnableAccessToUserMemory enable;
-  if (!vma::map_current(usr, (char*) usr + len, /*write=*/true))
+  if (!vma::map_current(usr, (char*) usr + len, true))
     return false;
   memcpy(usr, ker, len);
   return true;
@@ -767,7 +767,7 @@ bool copy_to_user(void *usr, const void *ker, size_t len) {
 
 expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
   EnableAccessToUserMemory enable;
-  if (!vma::map_current(usr, (char *) usr + len))
+  if (!vma::map_current(usr, (char *) usr + len, false))
     return false;
   char *buf = new char[len];
   memcpy(buf, usr, len);
@@ -776,7 +776,7 @@ expected<unique_ptr<char>> copy_from_user(void *usr, size_t len) {
 
 bool copy_from_user(void *ker, void *usr, size_t len) {
   EnableAccessToUserMemory enable;
-  if (!vma::map_current(usr, (char *) usr + len))
+  if (!vma::map_current(usr, (char *) usr + len, false))
     return false;
 
   memcpy(ker, usr, len);

@@ -46,7 +46,7 @@ template<typename T>
 struct add_rvalue_reference : decltype(detail::try_add_rvalue_reference<T>(0)) {};
 
 template<typename T>
-add_rvalue_reference<T> declval() noexcept {
+T declval() noexcept {
   static_assert(false, "declval not allowed in an evaluated context");
 }
 

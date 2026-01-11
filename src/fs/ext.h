@@ -279,7 +279,7 @@ public:
   ext_inode *get() override;
   void erase(inode*) override;
   bool has_backup() override { return true; }
-  void sync() override;
+  int sync() override;
 
   void on_corrupt() { panic("ext: corrupted filesystem"); }
   bool valid() { return superblock.magic == 0xef53; }

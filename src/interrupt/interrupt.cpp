@@ -255,19 +255,25 @@ HANDLE(ftruncate, fd, len) {
 
 HANDLE(fallocate, fd, mode, offset, len) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 0x3) == O_RDONLY)
     return -EBADF;
+
+  if (offset < 0 || len <= 0)
+    return -EINVAL;
+
+  // TODO: do real allocation. We don't really have holes yet, so let's just truncate.
+  auto node = file->node();
+  auto newsize = (unsigned long) offset + len;
+  if (newsize >= 4_gb)
+    return -EFBIG;
+
+  if (newsize <= node->size())
+    return 0;
 
   if (mode != 0) {
     printk("fallocate: unknown mode: %d\n", mode);
     return -EINVAL;
   }
-
-  // TODO: do real allocation. We don't really have holes yet, so let's just truncate.
-  auto node = file->node();
-  auto newsize = (unsigned long) offset + len;
-  if (newsize <= node->size())
-    return 0;
 
   return node->truncate(newsize);
 }
@@ -400,7 +406,19 @@ HANDLE(faccessat, dirfd, _path, mode) {
   if (!*path)
     return -EFAULT;
 
-  return detail::faccessat(dirfd, path->get(), mode);
+  return detail::faccessat(dirfd, path->get(), mode, 0);
+}
+
+HANDLE(faccessat2, dirfd, _path, mode, flags) {
+  auto path = copy_from_user((char *) _path);
+  if (!path)
+    return path;
+  if (!*path)
+    return -EFAULT;
+  if (flags & ~(AT_EACCESS | AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW))
+    return -EINVAL;
+
+  return detail::faccessat(dirfd, path->get(), mode, flags);
 }
 
 HANDLE(utimensat, dirfd, _path, times, flags) {
@@ -563,8 +581,6 @@ HANDLE(fchownat, dirfd, _path, uid, gid, flags) {
     node->uid = uid;
   if (int(gid) != -1)
     node->gid = gid;
-
-  pcb->close_file(fd);
   
   auto ret = node->onchown();
   if (ret < 0)
@@ -582,7 +598,7 @@ HANDLE(fchmod, fd, mode) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
-  if (mode >= 07777)
+  if (mode > 0107777)
     return -EINVAL;
 
   auto node = file->node();
@@ -618,8 +634,40 @@ HANDLE(fchmodat, dirfd, _path, mode, flags) {
 
   node->mode = mode;
   auto ret = node->onchmod();
-  pcb->close_file(fd);
   return ret;
+}
+
+HANDLE(flock, fd, cmd) {
+  auto f = pcb->ftbl->at(fd);
+  if (!f)
+    return -EBADF;
+
+  bool noblock = cmd & LOCK_NB;
+  cmd &= ~LOCK_NB;
+  // The lock is unlocked. Wake up all processes hanging on it.
+  if (cmd == LOCK_UN) {
+    f->flockmode = 0;
+    f->fwait.wake_all();
+    return 0;
+  }
+
+  if (cmd != LOCK_SH && cmd != LOCK_EX)
+    return -EINVAL;
+  
+  // The lock is acquired.
+  if (f->flockmode == 0 || (cmd == LOCK_SH && f->flockmode == LOCK_SH)) {
+    f->flockmode = cmd;
+    return 0;
+  }
+
+  // The attempt to acquire the lock will cause a block.
+  if (noblock)
+    return -EAGAIN;
+
+  // Do the real blocking.
+  wait_entry entry;
+  hangon(f->fwait, f->lock, entry);
+  return 0;
 }
 
 // These two system calls only exist in RISC-V.
@@ -632,6 +680,8 @@ HANDLE(fstatat, dirfd, _path, buf, flags) {
   int openflags = 0;
   if (flags & AT_SYMLINK_NOFOLLOW)
     openflags |= O_NOFOLLOW;
+  if (flags & AT_EMPTY_PATH)
+    openflags |= O_EMPTYPATH;
 
   auto fd = pcb->obtain_file_emptyable(path->get(), dirfd, O_PATH | openflags);
   if (!fd)
@@ -699,8 +749,7 @@ HANDLE(fsync, fd) {
   if (!file)
     return -EBADF;
 
-  file->node()->fs->sync();
-  return 0;
+  return file->node()->fs->sync();
 }
 
 HANDLE(fdatasync, fd) {
@@ -709,8 +758,7 @@ HANDLE(fdatasync, fd) {
   if (!file)
     return -EBADF;
 
-  file->node()->fs->sync();
-  return 0;
+  return file->node()->fs->sync();
 }
 
 HANDLE(msync, addr, len, flags) {
@@ -820,6 +868,9 @@ HANDLE(dup, fd) {
   if (auto node = dyn_cast<pipe_inode>(file->node()))
     node->incf(file);
   
+  if (pcb->ftbl->size() >= pcb->rlims[RLIMIT_OFILE].rlim_cur)
+    return -EMFILE;
+
   return pcb->ftbl->allocate(file);
 }
 
@@ -828,7 +879,7 @@ HANDLE(dup3, oldfd, newfd, flags) {
     return -EINVAL;
 
   auto file = pcb->ftbl->at(oldfd);
-  if (!file)
+  if (!file || newfd < 0 || (unsigned long) newfd >= pcb->rlims[RLIMIT_OFILE].rlim_cur)
     return -EBADF;
 
   // Currently `flags` can only be these two values.
@@ -839,7 +890,8 @@ HANDLE(dup3, oldfd, newfd, flags) {
     node->incf(file);
 
   pcb->ftbl->allocate(file, newfd);
-  pcb->ftbl->set_desc(newfd, flags);
+  int desc = flags & O_CLOEXEC ? FD_CLOEXEC : 0;
+  pcb->ftbl->set_desc(newfd, desc);
   return newfd;
 }
 
@@ -1627,6 +1679,8 @@ HANDLE(rt_sigreturn, _) {
 }
 
 HANDLE(kill, pid, sig) {
+  if (sig >= 64)
+    return -EINVAL;
   if (pid == 0)
     pid = pcb->pid;
   
@@ -1643,6 +1697,8 @@ HANDLE(kill, pid, sig) {
 }
 
 HANDLE(tgkill, pid, tid, sig) {
+  if (sig >= 64)
+    return -EINVAL;
   if (pid == 0)
     pid = pcb->pid;
 
@@ -1758,7 +1814,7 @@ HANDLE(clock_nanosleep, clock, flags, rqtp, rmtp) {
 }
 
 HANDLE(rt_sigaction, sig, act, oldact) {
-  if (sig <= 0 || sig >= 32)
+  if (sig <= 0 || sig >= 64)
     return -EINVAL;
 
   if (oldact) {
@@ -2041,8 +2097,8 @@ namespace os {
     }
     case 12: // Instruction page fault
     case 13: // Load page fault
-    case 15: // Store page fault. This also work on COW pages; no special care needed.
-      if (!vma::map_current((void*) stval))
+    case 15: // Store page fault.
+      if (!vma::map_current((void *) stval))
         tcb->send_signal(SIGSEGV);
       break;
     default:

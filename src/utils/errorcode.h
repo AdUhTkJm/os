@@ -29,6 +29,7 @@ enum error_code {
   ENFILE = 23,
   EMFILE = 24,
   ENOTTY = 25,
+  EFBIG = 27,
   ENOSPC = 28,
   EROFS = 30,
   EPIPE = 32,

@@ -156,12 +156,13 @@ expected<auxv> load_elf(file *content, tcb_t *tcb) {
   });
   // Allocate a stack. Note it grows downwards.
   auto trap = (trapframe *) tcb->ksp;
+  auto stackend = roundup<PAGE_SIZE>(trap->sscratch);
   pcb->vma->insert(vma::vma_t {
-    trap->sscratch - user_stack_size, (va_t) trap->sscratch,
+    stackend - user_stack_size, (va_t) stackend,
     PROT_READ | PROT_WRITE, MAP_PRIVATE
   });
-  // Let's set mmap_begin at 2/3 of the gap between heap and stack.
-  pcb->vma->mmap_begin = rounddown<PAGE_SIZE>((trap->sscratch - user_stack_size - loadmax) * 2 / 3);
+  // Let's set mmap_begin at half of the gap between heap and stack.
+  pcb->vma->mmap_begin = rounddown<PAGE_SIZE>((stackend - user_stack_size - loadmax) / 2);
 
   trap->sepc = pc;
   pcb->rlims[RLIMIT_STACK].rlim_cur = pcb->rlims[RLIMIT_STACK].rlim_max = user_stack_size;

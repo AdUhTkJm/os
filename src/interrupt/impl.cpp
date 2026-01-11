@@ -73,6 +73,7 @@ long futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
       q->lock.release();
       return -EFAULT;
     }
+    printk("woken, u = %d, expected = %d\n", u, expected);
 
     if (u != expected) {
       q->lock.release();
@@ -154,8 +155,20 @@ long mount(const char *src, const char *tgt, const char *fsty, unsigned long fla
   return 0;
 }
 
+using lockinfo = inode::filelock::lockinfo;
+static lockinfo *overlap_with(const vector<lockinfo*> &locks, int reqtype) {
+  for (auto info : locks) {
+    // Two readlocks can co-exist.
+    if (reqtype == F_RDLCK && info->type == F_RDLCK)
+      continue;
+
+    return info;
+  }
+  return nullptr;
+}
+
 // For details, see https://linux.die.net/man/2/fcntl
-long fcntl(int fd, int ty, int arg) {
+long fcntl(int fd, int ty, unsigned long arg) {
   auto tcb = active();
   auto pcb = tcb->pcb;
 
@@ -163,11 +176,11 @@ long fcntl(int fd, int ty, int arg) {
   if (!file)
     return -EBADF;
   switch (ty) {
+  case F_GETFD:
+    return *pcb->ftbl->get_desc(fd);
   case F_SETFD:
     pcb->ftbl->set_desc(fd, arg);
     return 0;
-  case F_GETFD:
-    return *pcb->ftbl->get_desc(fd);
   case F_GETFL: {
     auto f = pcb->ftbl->at(fd);
     if (!f)
@@ -181,9 +194,93 @@ long fcntl(int fd, int ty, int arg) {
     f->flags = arg;
     return 0;
   }
+  case F_GETLK: {
+    // Look at whether lock would conflict.
+    auto f = pcb->ftbl->at(fd);
+    if (!f)
+      return -EBADF;
+    auto node = f->node();
+    
+    flock lock;
+    if (!copy_from_user(&lock, (void *) arg, sizeof(flock)))
+      return -EFAULT;
+
+    if (!node->flock)
+      lock.l_type = F_UNLCK;
+    else {
+      auto it = node->flock->map.find_overlap(lock.l_start, lock.l_start + lock.l_len);
+      auto info = overlap_with(it, lock.l_type);
+      if (info) {
+        lock.l_type = info->type;
+        lock.l_start = info->begin;
+        lock.l_len = info->end - info->begin;
+        lock.l_pid = info->pid;
+      } else
+        lock.l_type = F_UNLCK;
+    }
+    if (!copy_to_user((void *) arg, &lock, sizeof(flock)))
+      return -EFAULT;
+    return 0;
+  }
+  case F_SETLK: {
+    auto f = pcb->ftbl->at(fd);
+    if (!f)
+      return -EBADF;
+    auto node = f->node();
+
+    // Normalize the lock offset.
+    flock lock;
+    if (!copy_from_user(&lock, (void *) arg, sizeof(flock)))
+      return -EFAULT;
+
+    // Check file open mode.
+    if ((file->flags & 0x3) == O_RDONLY && lock.l_type == F_WRLCK)
+      return -EBADF;
+    if ((file->flags & 0x3) == O_WRONLY && lock.l_type == F_RDLCK)
+      return -EBADF;
+
+    size_t begin;
+    switch (lock.l_type) {
+    case 0: // From beginning.
+      begin = lock.l_start;
+      break;
+    case 1: // From current.
+      begin = lock.l_start + f->offset;
+      break;
+    case 2: // From end.
+      begin = lock.l_start + node->size();
+      break;
+    default:
+      return -EINVAL;
+    }
+
+    if (!node->flock)
+      node->flock = new inode::filelock;
+
+    // Check overlaps.
+    auto it = node->flock->map.find_overlap(lock.l_start, lock.l_start + lock.l_len);
+    auto overlap = overlap_with(it, lock.l_type);
+    // The lock is already held.
+    if (overlap)
+      return -EAGAIN;
+
+    inode::filelock::lockinfo info {
+      .begin = begin, .end = begin + lock.l_len,
+      .type = lock.l_type, .pid = pcb->pid,
+    };
+    // Length being 0 means the file is locked till EOF. We give it -1ul here for infinity.
+    if (info.end == info.begin)
+      info.end = 18446744073709551615ul;
+    node->flock->map.insert(info);
+    return 0;
+  }
   case F_DUPFD:
+    if (pcb->ftbl->size() >= pcb->rlims[RLIMIT_OFILE].rlim_cur)
+      return -EMFILE;
     return pcb->ftbl->allocate_from(file, arg);
   case F_DUPFD_CLOEXEC: {
+    if (pcb->ftbl->size() >= pcb->rlims[RLIMIT_OFILE].rlim_cur)
+      return -EMFILE;
     int newfd = pcb->ftbl->allocate_from(file, arg);
     pcb->ftbl->set_desc(newfd, FD_CLOEXEC);
     return newfd;
@@ -538,14 +635,20 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
   }
 }
 
-long faccessat(int dirfd, const char *path, int mode) {
+long faccessat(int dirfd, const char *path, int mode, int flags) {
   if (mode > (R_OK | W_OK | X_OK) || mode < 0)
     return -EINVAL;
 
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  auto fd = pcb->obtain_file(path, dirfd, O_PATH);
+  int openflags = 0;
+  if (flags & AT_EMPTY_PATH)
+    openflags |= O_EMPTYPATH;
+  if (flags & AT_SYMLINK_NOFOLLOW)
+    openflags |= O_NOFOLLOW;
+
+  auto fd = pcb->obtain_file(path, dirfd, O_PATH | openflags);
   if (!fd)
     return fd;
 
@@ -553,14 +656,20 @@ long faccessat(int dirfd, const char *path, int mode) {
     return 0;
 
   auto node = (*fd)->node;
+  int uid, gid;
+  if (flags & AT_EACCESS)
+    uid = pcb->euid, gid = pcb->egid;
+  else
+    uid = pcb->uid, gid = pcb->gid;
+
   // According to man pages, faccessat(2) should use real ids rather than effective ids.
-  if (mode & R_OK && !(readable(pcb->uid, pcb->gid, node)))
+  if (mode & R_OK && !(readable(uid, gid, node)))
     return -EACCES;
 
-  if (mode & W_OK && writable(pcb->uid, pcb->gid, node) != 0)
+  if (mode & W_OK && writable(uid, gid, node) != 0)
     return -EACCES;
 
-  if (mode & X_OK && !(executable(pcb->uid, pcb->gid, node)))
+  if (mode & X_OK && !(executable(uid, gid, node)))
     return -EACCES;
 
   return 0;

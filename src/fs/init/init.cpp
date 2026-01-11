@@ -244,13 +244,26 @@ extern "C" void _start() {
     // Execute the shell.
     [[gnu::unused]] const char *ltp = R"( 
 cd /mnt/glibc/ltp/testcases/bin
+export PATH="$(pwd):$PATH"
+
+beginning="abort01"
+startfrom="fcntl01"
+started=0
+
 echo "#### OS COMP TEST GROUP START ltp-glibc ####"
-for f in *; do
+ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
+  if [ "$started" -eq 0 ]; then
+    [ "$f" = "$startfrom" ] && started=1 || continue
+  fi
+
   case "$f" in
-    cgroup_regression_*) continue;;
-    crash01) continue;;
-    copy_file_range*) continue;;
-    cpu*) continue;;
+    crash01) continue;;               # Doesn't end.
+    copy_file_range*) continue;;      # Doesn't end.
+    epoll*) continue;;                # NOSYS
+    fallocate05) continue;;           # No tmpfs size limit now. This will exhaust all memory.
+    fallocate06) continue;;           # Exhausts all memory.
+    fanotify*) continue;;             # NOSYS
+    fork14) continue;;                # Allocates 16TB mmap; not supported yet.
   esac
   if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
     echo "Running $f"
@@ -260,9 +273,10 @@ done
 echo "#### OS COMP TEST GROUP END ltp-glibc ####"
 )";
     [[gnu::unused]] const char *libctest = R"(
+cd /mnt/glibc
 echo "#### OS COMP TEST GROUP START libctest-glibc ####"
-grep -v "setvbuf_unget" sh ./run-static.sh | sh
-grep -v "setvbuf_unget" sh ./run-dynamic.sh | sh
+grep -v "setvbuf_unget" ./run-static.sh | sh
+grep -v "setvbuf_unget" ./run-dynamic.sh | sh
 echo "#### OS COMP TEST GROUP END libctest-glibc ####"
 )";
 #if defined(TEST)
@@ -271,7 +285,7 @@ echo "#### OS COMP TEST GROUP END libctest-glibc ####"
     const char *test = 
       // CD "/basic && sh ./run-all.sh";
       // CD " && sh ./busybox_testcode.sh";
-      libctest;
+      // libctest;
       // CD " && sh ./libcbench_testcode.sh";
       // CD " && sh ./unixbench_testcode.sh";
       // CD " && sh ./lmbench_testcode.sh";
@@ -279,7 +293,8 @@ echo "#### OS COMP TEST GROUP END libctest-glibc ####"
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       // ltp;
-      // CD "/ltp/testcases/bin; ./data_space; echo 'done'";
+      CD "/ltp/testcases/bin; ./flock03; echo 'done'";
+      // CD " && ./lmbench_all lat_pipe -P 1";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)
     const char *test = R"(
@@ -288,6 +303,11 @@ single() {
   sh ./basic_testcode.sh
   sh ./busybox_testcode.sh
   sh ./libcbench_testcode.sh
+
+  echo "#### OS COMP TEST GROUP START libctest-$1 ####"
+  grep -v "setvbuf_unget" ./run-static.sh | sh
+  grep -v "setvbuf_unget" ./run-dynamic.sh | sh
+  echo "#### OS COMP TEST GROUP END libctest-$1 ####"
 
   # sh ./lmbench_testcode.sh
   cd ltp/testcases/bin

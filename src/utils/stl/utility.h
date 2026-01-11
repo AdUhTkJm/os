@@ -120,6 +120,11 @@ struct allocator {
   void free(void *p) { operator delete(p); }
 };
 
+template<class T>
+struct interval {
+  T begin, end;
+};
+
 }
 
 #endif

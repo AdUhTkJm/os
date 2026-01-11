@@ -7,12 +7,19 @@
 namespace os {
 
 class pipe_inode : public inode_impl<pipe_inode> {
-  vector<char> buffer;
-  size_t rpos = 0, maxbuf;
+  size_t rpos = 0, wpos = 0;
   int readers = 1, writers = 1;
 
   wait_queue read_wait, write_wait;
   spinlock lock;
+
+  // Try to keep the entire pipe in a page.
+  static constexpr size_t capacity = 3922;
+  char buffer[capacity];
+
+  size_t available() const { return wpos - rpos; }
+  size_t space() const { return capacity - available(); }
+  size_t index(size_t pos) const { return pos % capacity; }
 public:
   FILE_INODE_DEFAULT_IMPL;
 
@@ -36,6 +43,8 @@ public:
   void incf(const file *f);
 };
 
+static_assert(sizeof(pipe_inode) <= PAGE_SIZE);
+
 class pipefs : public fs {
 public:
   pipe_inode *get() override {
@@ -45,6 +54,7 @@ public:
 
   void erase(inode *) override { }
   bool has_backup() override { return false; }
+  int sync() override { return -EINVAL; }
 
   // Configuration.
 

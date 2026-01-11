@@ -5,6 +5,7 @@
 #include "../utils/stl/atomic.h"
 #include "../utils/stl/optional.h"
 #include "../utils/stl/rbtree.h"
+#include "../utils/stl/intervaltree.h"
 #include "../mem/ptable.h"
 #include "../lock/mutex.h"
 
@@ -40,6 +41,8 @@
 #define F_SETFD 2
 #define F_GETFL 3
 #define F_SETFL 4
+#define F_GETLK 5
+#define F_SETLK 6
 #define F_DUPFD_CLOEXEC 1030 /* Duplicate file descriptor with close-on-exit set.  */
 
 #define DT_UNKNOWN	0
@@ -114,7 +117,7 @@ public:
   virtual bool cacheable() { return true; }
 
   // Write all cache to disk.
-  virtual void sync() {}
+  virtual int sync() { return 0; }
 };
 
 // This will increase the inode's refcnt, even though dentry doesn't.
@@ -125,7 +128,10 @@ public:
   // For directory, this is the entry offset;
   // For other things, this is meaningless.
   size_t offset;
-  int flags;
+  // For flock() system call.
+  wait_queue fwait;
+  spinlock lock;
+  int flags, flockmode = 0;
   enum whence {
     begin, current, end
   };
@@ -201,6 +207,18 @@ public:
     meta() { atime = ctime = mtime = now(); }
     meta(size_t atime, size_t ctime, size_t mtime): atime(atime), ctime(ctime), mtime(mtime) {}
   };
+
+  struct filelock {
+    // This is packed differently from `struct flock` so that it takes up less space.
+    struct lockinfo {
+      size_t begin, end;
+      int type, pid;
+    };
+
+    os::interval_btree<lockinfo, 8> map;
+    os::list<tcb_t*> wait;
+    spinlock lock;
+  } *flock = nullptr;
   
   static unsigned char as_dt(filetype ty);
 

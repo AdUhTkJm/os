@@ -11,13 +11,13 @@ struct msghdr;
 namespace os::detail {
 
 long mount(const char *src, const char *tgt, const char *fsty, unsigned long flags);
-long fcntl(int fd, int ty, int arg);
+long fcntl(int fd, int ty, unsigned long arg);
 long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset);
 long mprotect(unsigned long start, unsigned long len, int prot);
 long munmap(unsigned long addr, unsigned long len);
 long ioctl(int fd, int op, void *argp);
 long wait(int pid, void *wstatus, int options, void *rusage);
-long faccessat(int dirfd, const char *path, int mode);
+long faccessat(int dirfd, const char *path, int mode, int flags);
 long socket(int domain, int type, int protocol);
 long bind(int fd, void *sockaddr, unsigned len);
 long connect(int fd, void *sockaddr, unsigned len);

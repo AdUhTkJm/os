@@ -8,15 +8,36 @@
 //
 // These are typically directly taken from linux headers.
 
-// From <fcntl.h>
+// From <fcntl.h>.
 #define AT_FDCWD -100
 #define AT_SYMLINK_NOFOLLOW 0x100
 #define AT_REMOVEDIR		0x200
-#define AT_EMPTY_PATH		0x1000
+#define AT_EACCESS      0x200 // They're the same, but they won't be used together.
+#define AT_EMPTY_PATH	  0x1000
 #define UTIME_NOW  ((1l << 30) - 1l)
 #define UTIME_OMIT ((1l << 30) - 2l)
 
-// From <time.h>
+#define F_RDLCK 0
+#define F_WRLCK 1
+#define F_UNLCK 2
+
+struct flock {
+  short l_type;    // F_RDLCK, F_WRLCK, or F_UNLCK
+  short l_whence;  // SEEK_SET, SEEK_CUR, SEEK_END
+  unsigned long l_start;   // byte offset
+  unsigned long l_len;     // number of bytes (0 = until EOF)
+  int l_pid;     // (output only)
+};
+
+// From <sys/file.h>.
+#define	LOCK_SH	1	/* Shared lock.  */
+#define	LOCK_EX	2 	/* Exclusive lock.  */
+#define	LOCK_UN	8	/* Unlock.  */
+
+/* Can be OR'd in to one of the above.  */
+#define	LOCK_NB	4	/* Don't block when locking.  */
+
+// From <time.h>.
 
 /* Identifier for system-wide realtime clock.  */
 #define CLOCK_REALTIME			0

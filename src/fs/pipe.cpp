@@ -3,113 +3,77 @@
 namespace os {
 
 // Change to printk for debugging.
-#define CONCURRENCY_LOG(x) (void) 0
-
 static_storage<class pipefs> pipefs;
 
-pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0666, FIFO), maxbuf(pipefs::maxbuf) {}
+pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0666, FIFO) {}
 
-ssize_t pipe_inode::read(size_t offset, void *buf, size_t len, int flags) {
-  // Offset is not supported on pipes.
-  (void) offset;
+ssize_t pipe_inode::read(size_t, void *buf, size_t len, int flags) {
   lock.acquire();
-
   wait_entry entry;
-  while (rpos == buffer.size()) {
-    // No more writers. EOF.
+
+  while (available() == 0) {
+    // No more writers, so EOF.
     if (writers == 0) {
       lock.release();
       return 0;
     }
-
     if (flags & O_NONBLOCK) {
       lock.release();
       return -EAGAIN;
     }
-
-    read_wait.prepare(entry);
-    CONCURRENCY_LOG("read: suspend\n");
-    lock.release();
-    if (suspend() != 0) {
-      read_wait.finish(entry);
-      return -EINTR;
-    }
-    lock.acquire();
-    CONCURRENCY_LOG("read: resume\n");
-    read_wait.finish(entry);
+    hangon(read_wait, lock, entry);
   }
 
-  auto sz = buffer.size();
-  auto l = min(buffer.size() - rpos, len);
-  memcpy(buf, buffer.data() + rpos, l);
+  size_t l = min(len, available());
+  char *dst = (char *) buf;
+
+  size_t chunk = min(l, capacity - index(rpos));
+  memcpy(dst, buffer + index(rpos), chunk);
+  if (chunk < l)
+    memcpy(dst + chunk, buffer, l - chunk);
+
   rpos += l;
-
-  // Resize the vector if it is large enough, and more than half of it is already read.
-  bool freed = false;
-  if (sz >= 1_kb && rpos >= sz / 2) {
-    vector<char> v(sz - rpos);
-    memcpy(v.data(), buffer.data() + rpos, sz - rpos);
-    buffer = os::move(v);
-    rpos = 0;
-    freed = true;
-  }
   lock.release();
-
-  // Wake only on write_wait condition change.
-  if (freed)
-    CONCURRENCY_LOG("read: wake writers\n"), write_wait.wake();
+  write_wait.wake();
   return l;
 }
 
-ssize_t pipe_inode::write(size_t offset, const void *buf, size_t len, int flags) {
-  (void) offset;
-  
+ssize_t pipe_inode::write(size_t, const void *buf, size_t len, int flags) {
   lock.acquire();
-
   wait_entry entry;
-  bool empty = buffer.size() == rpos;
-  while (buffer.size() == maxbuf) {
-    // No more readers. Don't write.
+
+  while (space() == 0) {
     if (readers == 0) {
       lock.release();
       return -EPIPE;
     }
-
     if (flags & O_NONBLOCK) {
       lock.release();
       return -EAGAIN;
     }
-
-    write_wait.prepare(entry);
-    CONCURRENCY_LOG("write: suspend\n");
-    lock.release();
-    if (suspend() != 0) {
-      write_wait.finish(entry);
-      return -EINTR;
-    }
-    lock.acquire();
-    CONCURRENCY_LOG("write: resume\n");
-    write_wait.finish(entry);
+    hangon(write_wait, lock, entry);
   }
 
-  auto sz = buffer.size();
-  auto l = min(maxbuf - sz, len);
-  buffer.resize(sz + l);
-  memcpy(buffer.data() + sz, buf, l);
-  lock.release();
+  size_t l = min(len, space());
+  const char *src = (const char *) buf;
 
-  // Wake only on read_wait condition change.
-  if (empty)
-    CONCURRENCY_LOG("write: wake readers\n"), read_wait.wake();
+  size_t chunk = min(l, capacity - index(wpos));
+  memcpy(buffer + index(wpos), src, chunk);
+  if (chunk < l)
+    memcpy(buffer, src + chunk, l - chunk);
+
+  wpos += l;
+  lock.release();
+  read_wait.wake();
   return l;
 }
 
 short pipe_inode::poll(unsigned short event) {
   bool out = event & POLLOUT, in = event & POLLIN;
   auto result = 0;
-  if (in && (buffer.size() != rpos || writers == 0))
+  if (in && (available() != 0 || writers == 0))
     result |= POLLIN;
-  if (out && (buffer.size() < maxbuf || readers == 0))
+  if (out && (space() != 0 || readers == 0))
     result |= POLLOUT;
   return result;
 }
@@ -135,14 +99,12 @@ void pipe_inode::onclose(int flags) {
   bool write = (flags & 0x3) == O_WRONLY || (flags & 0x3) == O_RDWR;
 
   lock.acquire();
-  if (read && !--readers) {
-    CONCURRENCY_LOG("readers empty: wake writers\n");
+  if (read && !--readers)
     write_wait.wake_all();
-  }
-  if (write && !--writers) {
-    CONCURRENCY_LOG("writers empty: wake readers\n");
+  
+  if (write && !--writers)
     read_wait.wake_all();
-  }
+  
   lock.release();
   scheduler.maybe_preempt();
 }

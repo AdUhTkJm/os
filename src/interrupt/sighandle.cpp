@@ -3,6 +3,19 @@
 
 namespace os {
 
+// Some system calls can't be retried.
+constexpr syscall norestart[] = {
+  flock
+};
+
+bool restartable(int v) {
+  for (auto num : norestart) {
+    if (v == num)
+      return false;   
+  }
+  return true;
+}
+
 void kill(int sig) {
   os::terminate(active(), sig, true);
 }
@@ -79,7 +92,7 @@ void sighandle() {
 #ifdef RV
   auto trap = (trapframe *) tcb->ksp;
   memcpy(&tcb->sigf, trap, sizeof(trapframe));
-  if ((action.flags & SA_RESTART) && sysret && trap->regs[8] == -EINTR) {
+  if ((action.flags & SA_RESTART) && sysret && trap->regs[8] == -EINTR && restartable(trap->regs[15])) {
     tcb->sigf.regs[8] = tcb->a0;
     tcb->sigf.sepc -= 4;
   }
