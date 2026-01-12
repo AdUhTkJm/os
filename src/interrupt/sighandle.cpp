@@ -11,7 +11,7 @@ constexpr syscall norestart[] = {
 bool restartable(int v) {
   for (auto num : norestart) {
     if (v == num)
-      return false;   
+      return false;
   }
   return true;
 }
@@ -52,7 +52,7 @@ void sighandle() {
     return;
   }
 
-  auto action = pcb->sigact[sig];
+  auto action = pcb->actor->sigact[sig];
   if (!action.handler) {
     switch (sig) {
     case SIGABRT:

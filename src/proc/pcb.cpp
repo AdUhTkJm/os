@@ -12,6 +12,7 @@ extern int clock_period;
 namespace os {
 
 static_storage<hashmap<int, pcb_t*>> pidmap;
+static_storage<hashmap<int, tcb_t*>> tidmap;
 
 int process_file_table::allocate(file *f, int fd) {
   f->ref();
@@ -80,6 +81,7 @@ void pcb_t::clear() {
   ftbl->drop();
   vfs->drop();
   vma->drop();
+  actor->drop();
 }
 
 int pcb_t::open_file(const string &path, int flags, int mode, inode::filetype type) {
@@ -306,6 +308,8 @@ void terminate(tcb_t *tcb, int ret, bool sig) {
   auto pcb = tcb->pcb;
 
   assert(tcb->entr.size() == 0);
+  tidmap->erase(tcb->tid);
+  tcb->wake_robust_list();
 
   if (tcb->ctidaddr) {
     if (copy_to_user(tcb->ctidaddr, zeroes, sizeof(int)))
@@ -348,6 +352,7 @@ void terminate(pcb_t *pcb, int ret, bool sig) {
   auto active = os::active();
   bool has_active = false; (void) has_active;
   for (auto t : pcb->threads) {
+    t->wake_robust_list();
     if (t == active) {
       has_active = true;
       continue;
@@ -472,6 +477,10 @@ tcb_t *clone(unsigned flags, va_t usp, void *tls, void *childtid) {
     cp->pt_root = pt::copy(pt_root());
     ct->tid = cp->pid;
   }
+  (*tidmap)[ct->tid] = ct;
+
+  cp->actor = flags & CLONE_SIGHAND ? pp->actor : new sigactor(*pp->actor);
+  cp->actor->ref();
   
   cp->vma = flags & CLONE_VM ? pp->vma : new vma::addrspace(*pp->vma);
   cp->vma->ref();
@@ -689,7 +698,6 @@ proceed:
   // Since each auxv entry is 16-byte, we don't need to worry for that.
   if ((argv.size() + envp.size()) % 2 == 0)
     usp -= 8;
-  
 
   // Copy the AUXV entries.
   // TODO: consider ELF32 as well. busybox is ELF64 so doesn't matter.
@@ -750,6 +758,10 @@ proceed:
   COPY(usp -= ptrsz, &argc, ptrsz);
   trap->sscratch = (va_t) usp;
   assert(trap->sscratch % 16 == 0);
+
+  // Restore the signals.
+  memset(pcb->actor->sigact, 0, sizeof(sigactor));
+
   // Now we can drop the old vma.
   pcb->vma->ref();
   oldvma->drop();

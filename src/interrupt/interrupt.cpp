@@ -60,7 +60,7 @@ long syshandle(trapframe *ksp) { \
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #ifndef NO_SYSCALL_LOG
-const int IGNORED[] = { syscall::clock_gettime, syscall::getrusage, /*syscall::pselect6*/ };
+const int IGNORED[] = { clock_gettime, getrusage, riscv_hwprobe };
 static bool ignored(int x) {
   for (auto ignore : IGNORED) {
     if (x == ignore)
@@ -1243,12 +1243,33 @@ HANDLE(uname, buf) {
   return 0;
 }
 
-HANDLE(get_robust_list, pid, headptr, size) {
-  return -ENOSYS;
+HANDLE(get_robust_list, tid, headptr, size) {
+  if (tid == 0)
+    tid = tcb->tid;
+  
+  if (!tidmap->count(tid))
+    return -ESRCH;
+
+  auto thread = (*tidmap)[tid];
+  size_t sz = sizeof(void*);
+  if (!copy_to_user((void *) headptr, &thread->robust_list, sz))
+    return -EFAULT;
+
+  if (!copy_to_user((void *) size, &sz, sizeof(sz)))
+    return -EFAULT;
+  
+  return 0;
 }
 
 HANDLE(set_robust_list, headptr, size) {
+  // Disable robust lists for now. Debug for it later (TODO)
   return -ENOSYS;
+
+  if (size != sizeof(robust_list_head))
+    return -EINVAL;
+  
+  tcb->robust_list = (void *) headptr;
+  return 0;
 }
 
 HANDLE(rseq, _) {
@@ -1681,6 +1702,12 @@ HANDLE(rt_sigreturn, _) {
 HANDLE(kill, pid, sig) {
   if (sig >= 64)
     return -EINVAL;
+  
+  if (pid < -1) {
+    // Send to every process in the process group. (TODO)
+    pid = abs(pid);
+  }
+
   if (pid == 0)
     pid = pcb->pid;
   
@@ -1689,7 +1716,7 @@ HANDLE(kill, pid, sig) {
     return -ESRCH;
   auto [_, proc] = *fproc;
   
-  if (proc->uid != pcb->uid && proc->uid != pcb->euid && pcb->uid != 0)
+  if (proc->uid != pcb->uid && proc->uid != pcb->euid && pcb->euid != 0)
     return -EPERM;
 
   proc->send_signal(sig);
@@ -1818,7 +1845,7 @@ HANDLE(rt_sigaction, sig, act, oldact) {
     return -EINVAL;
 
   if (oldact) {
-    os::sigaction a = pcb->sigact[sig];
+    os::sigaction a = pcb->actor->sigact[sig];
     ::sigaction v {
       .sa_handler = a.handler,
       .sa_flags = a.flags,
@@ -1837,7 +1864,7 @@ HANDLE(rt_sigaction, sig, act, oldact) {
       .mask = sigact.sa_mask.val,
       .flags = sigact.sa_flags
     };
-    pcb->sigact[sig] = a;
+    pcb->actor->sigact[sig] = a;
   }
   return 0;
 }

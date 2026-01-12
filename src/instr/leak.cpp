@@ -67,7 +67,14 @@ constexpr size_t symcnt = sizeof(symbols) / sizeof(symbol);
 
 }
 
+#if defined(DEBUG_MEMORY_EXPENSIVE) || defined(UNIT_TEST)
+void check_slab_freelist();
+#endif
+
 extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
+#if defined(DEBUG_MEMORY_EXPENSIVE) || defined(UNIT_TEST)
+  check_slab_freelist();
+#endif
   if (stack.top < SHADOW_DEPTH)
     stack.frames[stack.top++] = this_fn;
   else {
@@ -76,10 +83,6 @@ extern "C" void __cyg_profile_func_enter(void *this_fn, void* /*call_site*/) {
     stack.frames[SHADOW_DEPTH - 1] = this_fn;
   }
 }
-
-#if defined(DEBUG_MEMORY_EXPENSIVE) || defined(UNIT_TEST)
-void check_slab_freelist();
-#endif
 
 extern "C" void __cyg_profile_func_exit(void *, void *) {
   if (stack.top > 0)

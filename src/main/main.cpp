@@ -260,6 +260,7 @@ void main_high() {
   
   // Create an idle kernel process.
   pidmap.construct();
+  tidmap.construct();
   scheduler.init();
   auto k_idle = make_kprocess(idle);
   scheduler.add(k_idle);
@@ -288,6 +289,8 @@ void main_high() {
   pcb->pwd = *pcb->vfs->lookup("/");
   pcb->ftbl = new process_file_table;
   pcb->ftbl->ref();
+  pcb->actor = new sigactor;
+  pcb->actor->ref();
   pcb->execpath = "/init";
 
   // Gives one physical page for the root page table and the kernel stack.

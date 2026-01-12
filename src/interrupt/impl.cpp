@@ -73,7 +73,6 @@ long futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
       q->lock.release();
       return -EFAULT;
     }
-    printk("woken, u = %d, expected = %d\n", u, expected);
 
     if (u != expected) {
       q->lock.release();
@@ -1521,6 +1520,49 @@ long write_from_user(file *f, void *buf, unsigned long len) {
       break;
   }
   return written;
+}
+
+}
+
+namespace os {
+
+// We're walking a user space list, which is confusing.
+// So I annotate __user and __kernel heavily here.
+void tcb_t::wake_robust_list() {
+  if (!robust_list)
+    return;
+  
+  robust_list_head __kernel head;
+  if (copy_from_user(&head, __user robust_list, sizeof(robust_list_head)))
+    return;
+
+  struct robust_list __user *next;
+  unsigned limit = 1024;
+
+  for (struct robust_list __user *entry = head.list.next; entry != &head.list; entry = next) {
+    if (!--limit)
+      return;
+
+    struct robust_list __kernel element;
+    if (!copy_from_user(&element, entry, sizeof(struct robust_list)))
+      return;
+
+    if (!copy_from_user(&next, __user element.next, sizeof(struct robust_list)))
+      return;
+
+    auto __user futex = (char *) entry + (__kernel head).futex_offset;
+
+    // Access futex with get_user / put_user
+    unsigned __kernel val;
+    if (!copy_from_user(&val, __user futex, sizeof(unsigned)))
+      return;
+    
+    val |= FUTEX_OWNER_DIED;
+    if (!copy_to_user(futex, &val, 4))
+      return;
+    if (detail::futex_wake(__user futex, 0x7fffffff) < 0)
+      return;
+  }
 }
 
 }

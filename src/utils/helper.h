@@ -115,8 +115,8 @@ C void hexdump(const void *ptr, size_t len);
 #define RD(reg, value) __asm__ volatile("mv %0, " #reg : "=r"(value))
 
 #define FENCE __asm__ volatile("fence" ::: "memory")
-#define RFENCE __asm__ volatile("fence r, r" ::: "memory")
-#define WFENCE __asm__ volatile("fence w, w" ::: "memory")
+#define RFENCE __asm__ volatile("fence" ::: "memory")
+#define WFENCE __asm__ volatile("fence" ::: "memory")
 #endif
 
 #ifdef LA

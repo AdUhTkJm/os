@@ -47,6 +47,7 @@ struct tty;
 namespace os {
 
 #define __user
+#define __kernel
 
 constexpr size_t user_stack_size = 8_mb;
 constexpr size_t kstack_size = 8_kb - 16;
@@ -150,11 +151,13 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   long last_sched = 0;    // Time before last schedule.
   pusage ruse {};         // Resource usage.
   sigframe sigf;          // The signal frame, for sigreturn().
+  void *robust_list = 0;  // Futex list that should wake up threads waiting on it, on process exit.
   hashmap<wait_entry*, wait_queue*> entr;
 
   pcb_t *pcb;             // Parent process.
 
   void send_signal(int sig);
+  void wake_robust_list();
 
   // This is the final deletion. This cannot be done in clear(), because it
   // is called when this ksp is in use.
@@ -164,6 +167,10 @@ struct tcb_t : os::intrusive_list_node<tcb_t> {
   }
 
   int sleep(size_t nano);
+};
+
+struct sigactor : shared {
+  sigaction sigact[64];
 };
 
 struct pcb_t {
@@ -181,14 +188,13 @@ struct pcb_t {
   os::list<tcb_t*> threads;
   os::vector<pcb_t*> children;
   class vfs *vfs;
-  void *robust_list;      // Futex list that should wake up threads waiting on it, on process exit.
   int ret;                // Process return code.
   int umask = 022;        // Mask on mode when creating file.
   int sigonterm = SIGCHLD;// The signal to send to parent on termination.
   dentry *pwd;            // Process working directory.
   string execpath;        // The path to the executable.
   sigset pending = 0;     // Pending signals.
-  sigaction sigact[32];   // Signal actions.
+  sigactor *actor;        // Signal actions.
   os::tty::tty *tty;      // Terminal typewriter.
   wait_queue wait;        // Threads suspended in wait() system call.
   wait_queue vfork;       // Threads suspended in vfork() system call (or clone, clone3 with CLONE_VFORK).
@@ -228,6 +234,7 @@ Note for ksp:
 static_assert(offsetof(tcb_t, ksp) == 24);
 
 extern static_storage<hashmap<int, pcb_t*>> pidmap;
+extern static_storage<hashmap<int, tcb_t*>> tidmap;
 
 // We can terminate a thread or a process.
 void terminate(tcb_t *tcb, int ret, bool sig);
@@ -276,6 +283,9 @@ tcb_t *make_kprocess(T fptr) {
 
   pcb->vma = new vma::addrspace;
   pcb->vma->ref();
+
+  pcb->actor = new sigactor;
+  pcb->actor->ref();
 
   tcb->status = Init;
   // We aren't lazy-allocating here.

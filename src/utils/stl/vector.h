@@ -76,9 +76,22 @@ public:
     cap = newcap;
   }
 
+  void shrink_to_fit() {
+    if (cap == sz)
+      return;
+
+    V *newdata = new (safe) V[sz]();
+    for (size_t i = 0; i < sz; i++)
+      newdata[i] = dat[i];
+    delete[] dat;
+    dat = newdata;
+    cap = sz;
+  }
+
   void resize(size_t newsz) {
     if (sz > newsz) {
       sz = newsz;
+      shrink_to_fit();
       return;
     }
     if (newsz > cap)

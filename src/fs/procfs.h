@@ -86,6 +86,18 @@ public:
   ssize_t read(size_t, void *, size_t, int) override;
 };
 
+class stat : public inode_impl<stat> {
+  inode::meta meta;
+  pcb_t *pcb;
+public:
+  FILE_INODE_DEFAULT_IMPL;
+  READONLY_FILE;
+  META_DEFAULT_IMPL;
+
+  stat(class fs *fs, pcb_t *pcb): inode_impl(fs, 0, 0, 0444, File), pcb(pcb) {}
+  ssize_t read(size_t, void *, size_t, int) override;
+};
+
 }
 
 class process : public inode_impl<process> {
@@ -95,6 +107,7 @@ class process : public inode_impl<process> {
   link *exe;
   pid::oom_score_adj *oom;
   pid::mounts *mounts;
+  pid::stat *stat;
 public:
   DIR_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;

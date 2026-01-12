@@ -1,5 +1,6 @@
 #include "procfs.h"
 #include "../proc/schedule.h"
+#include "../utils/stl/sstream.h"
 
 namespace os::proc {
 
@@ -84,17 +85,109 @@ ssize_t pid::mounts::read(size_t offset, void *buf, size_t len, int) {
   return l;
 }
 
+ssize_t pid::stat::read(size_t offset, void *buf, size_t len, int) {
+  sstream out;
+  tcb_t *leader = pcb->threads.front(); // TODO: maybe this isn't always true.
+  // 1. PID
+  out << pcb->pid << ' ';
+
+  // 2. Exec path
+  string truncated(pcb->execpath.c_str(), min(16ul, pcb->execpath.size()));
+  out << "(" << truncated << ") ";
+
+  // 3. Status
+  char status;
+  switch (leader->status) {
+  case Sleeping:
+    status = 'S';
+    break;
+  case Running:
+    status = 'R';
+    break;
+  case Ready:
+  case Init:
+    status = 'I';
+    break;
+  case Zombie:
+    status = 'Z';
+    break;
+  case Dead:
+    status = 'X';
+    break;
+  default:
+    panic("proc/[pid]/stat: bad status");
+  }
+  out << status << ' ';
+
+  // 4. PPID
+  out << pcb->parent->pid << ' ';
+
+  // 5. pgrp
+  out << pcb->pgid << ' ';
+
+  // 6. session
+  out << pcb->sid << ' ';
+
+  // 7./8. tty, tpgid (TODO)
+  out << "0 0 ";
+
+  // 9. Flags
+  out << "0 ";
+
+  // 10-13. (c){min, maj}flt
+  out << leader->ruse.ru_minflt << ' ' << pcb->cruse.ru_minflt << ' '
+      << leader->ruse.ru_majflt << ' ' << pcb->cruse.ru_majflt << ' ';
+
+  // 14-17. (c){u, s}time. Note order is different from above.
+  out << leader->ruse.ru_utime << ' ' << leader->ruse.ru_stime << ' '
+      << pcb->cruse.ru_utime << ' ' << pcb->cruse.ru_stime << ' ';
+
+  // 18-19. priority, nice (TODO)
+  out << "0 0 ";
+
+  // 20. numthreads
+  out << pcb->threads.size() << " ";
+
+  // 21. zero
+  out << "0 ";
+
+  // 22. starttime (TODO)
+  out << 0 << ' ';
+
+  // 23. virtual memory size
+  out << 0 << ' ';
+
+  // 24. Resident memory size (TODO)
+  out << 0 << ' ';
+
+  // 25. rlimit[RSS]
+  out << pcb->rlims[RLIMIT_RSS].rlim_cur << ' ';
+
+  // 26-27. {start, end}code (TODO)
+  out << "0 0 ";
+
+  if (offset >= out.size())
+    return 0;
+  
+  size_t l = min(out.size() - offset, len);
+  memcpy(buf, out.data() + offset, l);
+  return l;
+}
+
 process::process(class fs *fs, inode *parent, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb), parent(parent),
-  exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)) {
+  exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)),
+  stat(new pid::stat(fs, pcb)) {
   exe->linked();
   oom->linked();
   mounts->linked();
+  stat->linked();
 }
 
 process::~process() {
   exe->unlinked();
   oom->unlinked();
   mounts->unlinked();
+  stat->unlinked();
 }
 
 inode *process::lookup(const string &name) {
@@ -104,6 +197,8 @@ inode *process::lookup(const string &name) {
     return oom;
   if (name == "mounts")
     return mounts;
+  if (name == "stat")
+    return stat;
   
   printk("process: unknown name: %s\n", name.c_str());
   return nullptr;
@@ -117,6 +212,7 @@ vector<inode::item> process::list() {
     result.push_back({ exe->inum(), "exe", File });
   result.push_back({ oom->inum(), "oom_score_adj", File });
   result.push_back({ mounts->inum(), "mounts", File });
+  result.push_back({ stat->inum(), "stat", File });
   return result;
 }
 

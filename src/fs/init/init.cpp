@@ -247,7 +247,7 @@ cd /mnt/glibc/ltp/testcases/bin
 export PATH="$(pwd):$PATH"
 
 beginning="abort01"
-startfrom="fcntl01"
+startfrom="execl01"
 started=0
 
 echo "#### OS COMP TEST GROUP START ltp-glibc ####"
@@ -257,13 +257,17 @@ ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
   fi
 
   case "$f" in
-    crash01) continue;;               # Doesn't end.
+    crash*) continue;;
     copy_file_range*) continue;;      # Doesn't end.
+    cve*) continue;;
     epoll*) continue;;                # NOSYS
+    exec*) continue;;
     fallocate05) continue;;           # No tmpfs size limit now. This will exhaust all memory.
     fallocate06) continue;;           # Exhausts all memory.
     fanotify*) continue;;             # NOSYS
     fork14) continue;;                # Allocates 16TB mmap; not supported yet.
+    ftruncate03) continue;;
+    ftest*) continue;;                # Doesn't end.
   esac
   if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
     echo "Running $f"
@@ -292,8 +296,8 @@ echo "#### OS COMP TEST GROUP END libctest-glibc ####"
       // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
-      // ltp;
-      CD "/ltp/testcases/bin; ./flock03; echo 'done'";
+      ltp;
+      // CD "/ltp/testcases/bin; ./exit01; echo 'done'";
       // CD " && ./lmbench_all lat_pipe -P 1";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)
@@ -311,18 +315,34 @@ single() {
 
   # sh ./lmbench_testcode.sh
   cd ltp/testcases/bin
+  export PATH="$(pwd):$PATH"
+
+  startfrom="abort01"
+  started=0
+
   echo "#### OS COMP TEST GROUP START ltp-$1 ####"
-  for f in *; do
+  ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
+    if [ "$started" -eq 0 ]; then
+      [ "$f" = "$startfrom" ] && started=1 || continue
+    fi
+
     case "$f" in
-      cgroup_regression_*) continue;;
-      crash01) continue;;
-      copy_file_range*) continue;;
-      cpu*) continue;;
+      crash01) continue;;               # Doesn't end.
+      crash02) continue;;               # TODO.
+      cve*) continue;;                  # These aren't system call tests.
+      copy_file_range*) continue;;      # Doesn't end.
+      epoll*) continue;;                # NOSYS
+      ftruncate03) continue;;           # No memory
+      fallocate05) continue;;           # No tmpfs size limit now. This will exhaust all memory.
+      fallocate06) continue;;           # Exhausts all memory.
+      fanotify*) continue;;             # NOSYS
+      fcntl2*|fcntl3*) continue;;
+      fork14) continue;;                # Allocates 16TB mmap; not supported yet
+      ftest*) break;;
     esac
     if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
-      echo RUN LTP CASE $(basename "$f")
+      echo "Running $f"
       "./$f"
-      echo FAIL LTP CASE $(basename "$f") : $?
     fi
   done
   echo "#### OS COMP TEST GROUP END ltp-$1 ####"

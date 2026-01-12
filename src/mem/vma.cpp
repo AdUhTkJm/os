@@ -207,9 +207,9 @@ va_t addrspace::find_mmap(unsigned long len, va_t hint) const {
   if (va)
     return va;
 
-  // We might need to start searching from other places.
-  printk("mmap: hint = %p, begin = %p, len = %p", hint, mmap_begin, len);
-  panic("TODO: find mmap: mmap_begin change not implemented");
+  // TODO: maybe start searching from other places?
+  printk("mmap: too much: hint = %p, begin = %p, len = %p", hint, mmap_begin, len);
+  return -ENOMEM;
 }
 
 va_t addrspace::brk(va_t addr) {

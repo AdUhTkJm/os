@@ -96,7 +96,7 @@ void block_inode::flush_page(unsigned page) {
   auto c = cache.find(page);
   if (!c || !c->dirty)
     return;
-  dev->write(page, c->data, 8);
+  dev->write(page * 8, c->data, 8);
   active()->ruse.ru_oublock++;
   c->dirty = false;
 }
