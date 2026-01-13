@@ -247,7 +247,7 @@ cd /mnt/glibc/ltp/testcases/bin
 export PATH="$(pwd):$PATH"
 
 beginning="abort01"
-startfrom="execl01"
+startfrom="fallocate03"
 started=0
 
 echo "#### OS COMP TEST GROUP START ltp-glibc ####"
@@ -296,8 +296,8 @@ echo "#### OS COMP TEST GROUP END libctest-glibc ####"
       // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
-      ltp;
-      // CD "/ltp/testcases/bin; ./exit01; echo 'done'";
+      // ltp;
+      CD "/ltp/testcases/bin; ./pipe04; echo 'done'";
       // CD " && ./lmbench_all lat_pipe -P 1";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)

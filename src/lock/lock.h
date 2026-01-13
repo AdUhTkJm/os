@@ -185,11 +185,19 @@ struct wait_queue {
   wait.finish(entry); \
 
 // Not interruptible.
+// In that case, suspend() might still return -EINTR when a signal is present,
+// but this won't cause the function to return -EINTR.
+// Moreover, the thread will not be woken up because of the signal.
 #define soundsleep(wait, lock, entry) \
-  wait.prepare(entry); \
-  lock.release(); \
-  suspend(); \
-  lock.acquire(); \
-  wait.finish(entry); \
+  do { \
+    auto tcb = active(); \
+    tcb->intr = false; \
+    wait.prepare(entry); \
+    lock.release(); \
+    suspend(); \
+    lock.acquire(); \
+    wait.finish(entry); \
+    tcb->intr = true; \
+  } while (0) \
 
 #endif

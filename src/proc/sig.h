@@ -20,6 +20,7 @@ enum signals : unsigned char {
   SIGUSR1  = 10,
   SIGSEGV  = 11,
   SIGUSR2  = 12,
+  SIGPIPE  = 13,
   SIGALRM  = 14,
   SIGTERM  = 15,
   SIGCHLD  = 17,

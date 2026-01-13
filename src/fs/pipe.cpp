@@ -40,17 +40,18 @@ ssize_t pipe_inode::read(size_t, void *buf, size_t len, int flags) {
 
 ssize_t pipe_inode::write(size_t, const void *buf, size_t len, int flags) {
   lock.acquire();
-  wait_entry entry;
+  if (readers == 0) {
+    lock.release();
+    active()->send_signal(SIGPIPE);
+    return -EPIPE;
+  }
+  if (space() == 0 && (flags & O_NONBLOCK)) {
+    lock.release();
+    return -EAGAIN;
+  }
 
+  wait_entry entry;
   while (space() == 0) {
-    if (readers == 0) {
-      lock.release();
-      return -EPIPE;
-    }
-    if (flags & O_NONBLOCK) {
-      lock.release();
-      return -EAGAIN;
-    }
     hangon(write_wait, lock, entry);
   }
 

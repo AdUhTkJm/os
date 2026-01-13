@@ -65,6 +65,7 @@ void sighandle() {
 
     case SIGUSR1:
     case SIGUSR2:
+    case SIGPIPE:
       kill(sig);
 
     case SIGCHLD:

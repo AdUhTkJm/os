@@ -60,7 +60,7 @@ long syshandle(trapframe *ksp) { \
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #ifndef NO_SYSCALL_LOG
-const int IGNORED[] = { clock_gettime, getrusage, riscv_hwprobe };
+const int IGNORED[] = { clock_gettime, getrusage, riscv_hwprobe, read, write };
 static bool ignored(int x) {
   for (auto ignore : IGNORED) {
     if (x == ignore)
@@ -124,20 +124,16 @@ HANDLE(lseek, fd, offset, _whence) {
 
 HANDLE(read, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 3) == O_WRONLY)
     return -EBADF;
-  if ((file->flags & 3) == O_WRONLY)
-    return -EPERM;
 
   return detail::read_to_user(file, (void *) buf, len);
 }
 
 HANDLE(pread64, fd, buf, len, offset) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 3) == O_WRONLY)
     return -EBADF;
-  if ((file->flags & 3) == O_WRONLY)
-    return -EPERM;
 
   SeekGuard _(file, offset);
   return detail::read_to_user(file, (void *) buf, len);
@@ -145,10 +141,8 @@ HANDLE(pread64, fd, buf, len, offset) {
 
 HANDLE(readv, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 3) == O_WRONLY)
     return -EBADF;
-  if ((file->flags & 3) == O_WRONLY)
-    return -EPERM;
 
   if (cnt <= 0)
     return -EINVAL;
@@ -178,20 +172,16 @@ HANDLE(readv, fd, iov, cnt) {
 
 HANDLE(write, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 3) == O_RDONLY)
     return -EBADF;
-  if ((file->flags & 3) == O_RDONLY)
-    return -EPERM;
 
   return detail::write_from_user(file, (void *) buf, len);
 }
 
 HANDLE(pwrite64, fd, buf, len, offset) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 3) == O_RDONLY)
     return -EBADF;
-  if ((file->flags & 3) == O_RDONLY)
-    return -EPERM;
 
   SeekGuard _(file, offset);
   return detail::write_from_user(file, (void *) buf, len);
@@ -199,10 +189,8 @@ HANDLE(pwrite64, fd, buf, len, offset) {
 
 HANDLE(writev, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || (file->flags & 3) == O_RDONLY)
     return -EBADF;
-  if ((file->flags & 3) == O_RDONLY)
-    return -EPERM;
 
   if (cnt <= 0)
     return -EINVAL;

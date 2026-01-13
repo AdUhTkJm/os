@@ -60,36 +60,26 @@ long futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
   futex_wait_entry entry;
   entry.mask = mask;
   auto tcb = active();
-  for (;;) {
-    q->wait.prepare(entry);
+
+  q->wait.prepare(entry);
+  q->lock.release();
+  
+  auto ret = tcb->sleep(timeout);
+
+  q->lock.acquire();
+  q->wait.finish(entry);
     q->lock.release();
-    
-    auto ret = tcb->sleep(timeout);
+  // There is no need to check the futex word again.
+  // This should be done in user space.
 
-    q->lock.acquire();
-    q->wait.finish(entry);
-    
-    if (!copy_from_user(&u, addr, 4)) {
-      q->lock.release();
-      return -EFAULT;
-    }
+  if (ret == -EINTR)
+    return -EINTR;
 
-    if (u != expected) {
-      q->lock.release();
-      return 0;
-    }
-
-    if (ret == -EINTR) {
-      q->lock.release();
-      return -EINTR;
-    }
-
-    // Timeout expired.
-    if (ret == 0) {
-      q->lock.release();
-      return -ETIMEDOUT;
-    }
-  }
+  // Timeout expired.
+  if (ret == 0)
+    return -ETIMEDOUT;
+  
+  return 0;
 }
 
 long futex_wake(void *addr, int count, unsigned mask) {

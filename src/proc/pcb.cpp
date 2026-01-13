@@ -241,15 +241,15 @@ void pcb_t::send_signal(int sig) {
     bool masked = x->mask[sig];
     bool waiting = x->sigresume == -2 && x->sigwait[sig];
     
-    // Masked signals will also wake up threads.
-    // Also wake up threads immediately if they received SIGKILL.
-    if ((x->status == Sleeping && x->intr) || sig == SIGKILL) {
+    if (x->status == Sleeping && x->intr) {
+      // Threads can't mask SIGKILL.
+      // Moreover, masked signals won't affect sigtimedwait().
       if (waiting || !masked || sig == SIGKILL) {
         x->sigresume = sig;
         scheduler.wakeup(x, /*can_preempt=*/ false);
       }
 
-      // If we're waking up a thread from sigtimedwait, then this consumes the signal.
+      // If we're waking up a thread from sigtimedwait(), then this consumes the signal.
       if (waiting)
         return;
     }
@@ -760,7 +760,9 @@ proceed:
   assert(trap->sscratch % 16 == 0);
 
   // Restore the signals.
-  memset(pcb->actor->sigact, 0, sizeof(sigactor));
+  // Do note that `pcb->actor->sigact` is not of the same size as `struct sigactor`:
+  // the latter has members inherited from `struct shared`.
+  memset(pcb->actor->sigact, 0, sizeof(pcb->actor->sigact));
 
   // Now we can drop the old vma.
   pcb->vma->ref();
