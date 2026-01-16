@@ -22,7 +22,7 @@ long socket(int domain, int type, int protocol);
 long bind(int fd, void *sockaddr, unsigned len);
 long connect(int fd, void *sockaddr, unsigned len);
 long syslog(int type, char *buf, unsigned long size);
-long futex_wait(void *addr, int expected, void *_timeout, unsigned mask = -1);
+long futex_wait(void *addr, int expected, void *_timeout, int tmtype, unsigned mask = -1);
 long futex_wake(void *addr, int count, unsigned mask = -1);
 long futex(void *uaddr, int op, int val, void *timeout, unsigned long val2, unsigned long val3);
 long setsockopt(int fd, int level, int optname, void *optval, int optlen);

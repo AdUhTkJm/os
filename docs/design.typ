@@ -242,11 +242,9 @@ v(-height)
 
 在编写操作系统时，C++ 的标准库是不可用的。因此，我需要自行编写一些基础设施。
 
-它们大多依赖动态内存分配。在@boot[]和@memsafety[]两处简略地介绍了这个 OS 中内存分配的方式，所以就不再单独提及。
-
 == 容器 <containers>
 
-我实现了下列容器：
+我实现了下列容器。这些容器都依赖于@memalloc[]中提到的动态内存分配。
 
 *动态数组* `os::vector` 和*字符串* `os::string`。前者可以自动管理长度并自动扩容，而后者可以让我免于关注字符串结尾的 `'\0'` 的位置。由于内核中的字符串通常较短，我也实现了 SSO 优化，使得小于 24 个字节的字符串被存储在栈上而不是堆上。
 
@@ -291,7 +289,7 @@ template<class K, class V, int Order> requires(Order % 2 == 0)
 class btree;
 ```
 
-在地址空间一节中，我在处理地址空间的时候使用了特化的 B-tree，具体请见 @addrspace。
+我在处理地址空间、内存分配的时候使用了特化的 B-tree，具体请见@memalloc[]以及 @addrspace。
 
 *红黑树* `os::rbtree`。有时，我无法避免在持有迭代器的情况下修改容器。这时，不论是 B-tree 还是哈希表都无法工作，因此我必须使用红黑树。一个例子是 page cache。
 
@@ -433,6 +431,38 @@ struct wait_queue {
 这个 map 看似是不必要的：线程只有在唤醒之后才会调用 exit() 或者收到信号来终止。但是我们还有 exit_group 这个 system call，会终止一个进程中所有的线程。如果此时有其他的线程还在等待，就需要清理了。
 
 关于 TCB 的更多内容，请见@threads。
+
+== 动态内存分配 <memalloc>
+
+=== 物理内存分配
+
+我采用了 buddy allocator 来管理略少于 1GB 的内存。在测试环境中，QEMU 提供的内存总量是 1GB，但其中有一部分是用来存放 OpenSBI 和内核本身的。
+
+设备树中会存储可用内存物理地址的起始和结束，还会存储一些保留的、无法使用的物理地址。除了这些以外，还需要保留从 0x8000'0000 起，到 `__kernel_end` 为止的这一段内存。
+
+剩下的部分就是正常的分配了。我们利用空闲的物理内存维护一个双向链表，并按照不同的 buddy 大小维护 18 个 free list。在分配时，我们从对应大小的 free list 中拿出一个；在释放时，我们会尝试合并同样大小的连续内存块，并将合并后的结果放到对应的 free list 中。
+
+```cpp
+class buddy {
+public:
+  constexpr static int order = 18;
+
+  using address = uintptr_t;
+#define nextof(x) (*(address*) (x))
+#define prevof(x) (*((address*) (x) + 1))
+
+  address allocate(unsigned total);
+  void free(address addr);
+  void reserve(address begin, size_t size);
+
+  // These global variables cannot have a constructor. We have to manually initialize them.
+  void init(address base, size_t space);
+} buddy;
+```
+
+=== 虚拟内存分配
+
+这和进程地址空间的分配是非常相似的，使用同样的增强版 B-tree 就可以了，不过不需要一个完整的 `vma_t` 结构，而只需要记录开始和结束地址。具体的分配方式见@addrspace，在这里就不重复了。
 
 = 进程 <process>
 
@@ -901,18 +931,6 @@ kernel panicked: src/main/../mem/../utils/stl/list.h:66: assertion failed: !cont
 C++ 提供了绝对的自由，但为了让运行稳定，在使用内存时依旧需要一些“契约” @kinich2025price。
 
 我通过染色、guard page、重载 ```cpp operator new```等方法来在运行期检测内存安全问题。自然，这会带来性能损失，但与上面的 shadow stack 类似，可以通过在构建脚本中使用 `--no-debug-memory` 取消这部分代码的编译。
-
-=== 内存分配方式
-
-我的内存分配分为三级：分配物理内存，分配虚拟内存页，以及可以分配任意大小虚拟内存的 `vmalloc()`。
-
-正如@boot[]所说，在启动时，我首先初始化了一个 16MB 的 free-list allocator，然后读取 FDT 并初始化了 128 MB（以 QEMU 的默认设置为例）的 bitmap allocator。
-
-对于虚拟内存页的分配，我也采用 bitmap allocator。
-
-对于任意长度的虚拟内存分配，我采用的是 slab allocator。其中 slab 的大小设置是 8, 16, ..., 256, 以及`rounddown<16>((4096 - sizeof(slab_header)) / n)`, 其中 $1 < n < 7 or n = 12$。这样的大小能让一页恰好可以分配 $n$ 个对象。超出这个范围的对象将会按整页分配。这里的 `rounddown<16>` 是为了对齐要求：这个 OS 中除了按页对齐之外，最大的对齐要求就是 16 字节的。
-
-至于 ```cpp operator new```，它会直接调用 `vmalloc()`。值得注意的是 C++ 会自动考虑 ```cpp operator new[]``` 所附带的数组长度信息，这会加在数组元素所需要的大小上。这无需来自 C++ runtime 的支持。
 
 === 染色
 

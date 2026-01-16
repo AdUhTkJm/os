@@ -192,10 +192,27 @@ namespace detail {
   };
 } // namespace detail
 
-// 4. The user-facing alias template.
-// This is the public interface that leverages the helper to return the correct sequence type.
-template <unsigned long N>
+template<unsigned long N>
 using make_index_sequence = typename detail::make_index_sequence_helper<N>::type;
+
+// Extracts name of a type at compile time.
+template<class T>
+class type_name {
+  constexpr static const char *getname() {
+    const char *p = __PRETTY_FUNCTION__;
+    const char *start = p;
+    for (; *start; start++) {
+      // Try and find a "T = ".
+      if (start[0] == 'T' && start[1] == ' ' && start[2] == '=' && start[3] == ' ') {
+        start += 4;
+        break;
+      }
+    }
+    return start;
+  }
+public:
+  constexpr static const char *name = getname();
+};
 
 }
 

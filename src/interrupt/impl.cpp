@@ -14,9 +14,11 @@
 #include "../utils/log.h"
 #include "../lock/futex.h"
 
+extern int clock_period;
+
 namespace os::detail {
 
-long futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
+long futex_wait(void *addr, int expected, void *_timeout, int tmtype, unsigned mask) {
   size_t timeout = 1800'0000'0000'0000'0000ul;
   if (_timeout) {
     timespec ts;
@@ -27,6 +29,20 @@ long futex_wait(void *addr, int expected, void *_timeout, unsigned mask) {
       return -EINVAL;
 
     timeout = ts.tv_nsec + ts.tv_sec * 1_s;
+
+    switch (tmtype) {
+    case 0:
+      break;
+    case 1: // Absolute monotonic.
+      timeout -= rdtime() * clock_period;
+      break;
+    case 2: // Absolute realtime.
+      timeout -= now();
+      break;
+    default:
+      panic("futex_wait: unreachable");
+    }
+    printk("timeout = %ld\n", timeout);
   }
 
   int u;
@@ -90,7 +106,7 @@ long futex_wake(void *addr, int count, unsigned mask) {
   futexes.lock.acquire();
   if (!futexes->count(key)) {
     futexes.lock.release();
-    return -EINVAL;
+    return 0;
   }
 
   futex_queue *q = (*futexes)[key];
@@ -229,7 +245,7 @@ long fcntl(int fd, int ty, unsigned long arg) {
       return -EBADF;
 
     size_t begin;
-    switch (lock.l_type) {
+    switch (lock.l_whence) {
     case 0: // From beginning.
       begin = lock.l_start;
       break;
@@ -242,24 +258,36 @@ long fcntl(int fd, int ty, unsigned long arg) {
     default:
       return -EINVAL;
     }
+    size_t end = begin + lock.l_len;
 
     if (!node->flock)
       node->flock = new inode::filelock;
 
     // Check overlaps.
-    auto it = node->flock->map.find_overlap(lock.l_start, lock.l_start + lock.l_len);
+    auto it = node->flock->map.find_overlap(begin, end);
+    if (lock.l_type == F_UNLCK) {
+      vector<size_t> overlap;
+      overlap.reserve(it.size());
+      for (auto x : it)
+        overlap.push_back(x->begin);
+      for (auto x : overlap)
+        node->flock->map.erase(x);
+      return 0;
+    }
+
     auto overlap = overlap_with(it, lock.l_type);
     // The lock is already held.
     if (overlap)
       return -EAGAIN;
 
     inode::filelock::lockinfo info {
-      .begin = begin, .end = begin + lock.l_len,
+      .begin = begin, .end = end,
       .type = lock.l_type, .pid = pcb->pid,
     };
     // Length being 0 means the file is locked till EOF. We give it -1ul here for infinity.
     if (info.end == info.begin)
       info.end = 18446744073709551615ul;
+    printk("insert: %p - %p\n", info.begin, info.end);
     node->flock->map.insert(info);
     return 0;
   }
@@ -842,7 +870,7 @@ long futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsig
   (void) val2;
   switch (op) {
   case FUTEX_WAIT:
-    return futex_wait(addr, val, timeout);
+    return futex_wait(addr, val, timeout, 0);
 
   case FUTEX_WAKE:
     return futex_wake(addr, val);
@@ -850,7 +878,7 @@ long futex(void *addr, int op, int val, void *timeout, unsigned long val2, unsig
   case FUTEX_WAIT_BITSET:
     if (val3 == 0)
       return -EINVAL;
-    return futex_wait(addr, val, timeout, val3);
+    return futex_wait(addr, val, timeout, realtime + 1, val3);
 
   case FUTEX_WAKE_BITSET:
     if (val3 == 0)

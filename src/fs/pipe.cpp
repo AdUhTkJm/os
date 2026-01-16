@@ -5,7 +5,8 @@ namespace os {
 // Change to printk for debugging.
 static_storage<class pipefs> pipefs;
 
-pipe_inode::pipe_inode(os::fs *fs, int uid, int gid): inode_impl(fs, uid, gid, 0666, FIFO) {}
+pipe_inode::pipe_inode(os::fs *fs, int uid, int gid):
+  inode_impl(fs, uid, gid, 0666, FIFO), buffer((char *) as_va(pframe())), capacity(4096) {}
 
 ssize_t pipe_inode::read(size_t, void *buf, size_t len, int flags) {
   lock.acquire();

@@ -242,47 +242,17 @@ extern "C" void _start() {
     syscall(stdin, /*TIOCSPGRP=*/ 0x5410, (reg_t) &pgid, ioctl);
     
     // Execute the shell.
-    [[gnu::unused]] const char *ltp = R"( 
-cd /mnt/glibc/ltp/testcases/bin
-export PATH="$(pwd):$PATH"
+    [[gnu::unused]] const char *ltp = R"(
+libc=glibc
+startfrom="getrlimit03"
+)"
+#include "ltp.sh"
+;
+    [[gnu::unused]] const char *libctest =
+"libc=glibc"
+#include "libctest.sh"
+;
 
-beginning="abort01"
-startfrom="fallocate03"
-started=0
-
-echo "#### OS COMP TEST GROUP START ltp-glibc ####"
-ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
-  if [ "$started" -eq 0 ]; then
-    [ "$f" = "$startfrom" ] && started=1 || continue
-  fi
-
-  case "$f" in
-    crash*) continue;;
-    copy_file_range*) continue;;      # Doesn't end.
-    cve*) continue;;
-    epoll*) continue;;                # NOSYS
-    exec*) continue;;
-    fallocate05) continue;;           # No tmpfs size limit now. This will exhaust all memory.
-    fallocate06) continue;;           # Exhausts all memory.
-    fanotify*) continue;;             # NOSYS
-    fork14) continue;;                # Allocates 16TB mmap; not supported yet.
-    ftruncate03) continue;;
-    ftest*) continue;;                # Doesn't end.
-  esac
-  if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
-    echo "Running $f"
-    "./$f"
-  fi
-done
-echo "#### OS COMP TEST GROUP END ltp-glibc ####"
-)";
-    [[gnu::unused]] const char *libctest = R"(
-cd /mnt/glibc
-echo "#### OS COMP TEST GROUP START libctest-glibc ####"
-grep -v "setvbuf_unget" ./run-static.sh | sh
-grep -v "setvbuf_unget" ./run-dynamic.sh | sh
-echo "#### OS COMP TEST GROUP END libctest-glibc ####"
-)";
 #if defined(TEST)
 #define LIBC "glibc"
 #define CD "cd /mnt/" LIBC
@@ -296,56 +266,28 @@ echo "#### OS COMP TEST GROUP END libctest-glibc ####"
       // CD " && sh ./iozone_testcode.sh";
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
-      // ltp;
-      CD "/ltp/testcases/bin; ./pipe04; echo 'done'";
+      ltp;
+      // CD "/ltp/testcases/bin; ./getrlimit03; echo 'done'";
       // CD " && ./lmbench_all lat_pipe -P 1";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)
-    const char *test = R"(
+    // Do note that we need a newline after `#include` hacks.
+    // The `R"(` starters already included one, so it's fine.
+    const char *test =
+R"(
 single() {
+  libc=$1
   chmod +x basic/run-all.sh
-  sh ./basic_testcode.sh
-  sh ./busybox_testcode.sh
-  sh ./libcbench_testcode.sh
-
-  echo "#### OS COMP TEST GROUP START libctest-$1 ####"
-  grep -v "setvbuf_unget" ./run-static.sh | sh
-  grep -v "setvbuf_unget" ./run-dynamic.sh | sh
-  echo "#### OS COMP TEST GROUP END libctest-$1 ####"
-
-  # sh ./lmbench_testcode.sh
-  cd ltp/testcases/bin
-  export PATH="$(pwd):$PATH"
-
+  # sh ./basic_testcode.sh
+  # sh ./busybox_testcode.sh
+  # sh ./libcbench_testcode.sh
+)"
+// #include "libctest.sh"
+R"(
   startfrom="abort01"
-  started=0
-
-  echo "#### OS COMP TEST GROUP START ltp-$1 ####"
-  ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
-    if [ "$started" -eq 0 ]; then
-      [ "$f" = "$startfrom" ] && started=1 || continue
-    fi
-
-    case "$f" in
-      crash01) continue;;               # Doesn't end.
-      crash02) continue;;               # TODO.
-      cve*) continue;;                  # These aren't system call tests.
-      copy_file_range*) continue;;      # Doesn't end.
-      epoll*) continue;;                # NOSYS
-      ftruncate03) continue;;           # No memory
-      fallocate05) continue;;           # No tmpfs size limit now. This will exhaust all memory.
-      fallocate06) continue;;           # Exhausts all memory.
-      fanotify*) continue;;             # NOSYS
-      fcntl2*|fcntl3*) continue;;
-      fork14) continue;;                # Allocates 16TB mmap; not supported yet
-      ftest*) break;;
-    esac
-    if head -c 4 "$f" 2>/dev/null | grep -q $'\x7fELF'; then
-      echo "Running $f"
-      "./$f"
-    fi
-  done
-  echo "#### OS COMP TEST GROUP END ltp-$1 ####"
+  )"
+#include "ltp.sh"
+R"(
 }
 
 cd /mnt/glibc

@@ -60,7 +60,7 @@ long syshandle(trapframe *ksp) { \
 #define ARGS6(a, b, c, d, e, f) reg_t a = a0, b = a1, c = a2, d = a3, e = a4, f = a5;
 
 #ifndef NO_SYSCALL_LOG
-const int IGNORED[] = { clock_gettime, getrusage, riscv_hwprobe, read, write };
+const int IGNORED[] = { clock_gettime, getrusage, riscv_hwprobe };
 static bool ignored(int x) {
   for (auto ignore : IGNORED) {
     if (x == ignore)
@@ -915,7 +915,10 @@ HANDLE(geteuid, _) {
   return pcb->euid;
 }
 
-HANDLE(setreuid, ruid, euid) {
+HANDLE(setreuid, _ruid, _euid) {
+  // We must convert them to int.
+  int ruid = _ruid, euid = _euid;
+
   if (ruid < -1 || euid < -1)
     return -EINVAL;
   // Nothing changes.
@@ -936,7 +939,20 @@ HANDLE(setreuid, ruid, euid) {
   return 0;
 }
 
-HANDLE(setresuid, ruid, euid, suid) {
+HANDLE(getresuid, ruid, euid, suid) {
+  if (!copy_to_user((void *) ruid, &pcb->uid, sizeof(pcb->uid)))
+    return -EFAULT;
+  if (!copy_to_user((void *) euid, &pcb->euid, sizeof(pcb->euid)))
+    return -EFAULT;
+  if (!copy_to_user((void *) suid, &pcb->suid, sizeof(pcb->suid)))
+    return -EFAULT;
+  return 0;
+}
+
+HANDLE(setresuid, _ruid, _euid, _suid) {
+  // We must convert them to int.
+  int ruid = _ruid, euid = _euid, suid = _suid;
+
   if (ruid < -1 || euid < -1 || suid < -1)
     return -EINVAL;
   // Nothing changes.
@@ -1211,7 +1227,7 @@ HANDLE(getcwd, buf, size) {
     return -ERANGE;
   if (!copy_to_user((void*) buf, path.c_str(), path.size() + 1))
     return -EFAULT;
-  return 0;
+  return buf;
 }
 
 HANDLE(uname, buf) {
@@ -1367,9 +1383,13 @@ HANDLE(getdents64, fd, dirents, cnt) {
   auto file = pcb->ftbl->at(fd);
   if (!file)
     return -EBADF;
+  if (file->node()->type != inode::Dir)
+    return -ENOTDIR;
   auto items = file->node()->list();
   
   char *pos = (char *) dirents;
+  if (cnt < (int) sizeof(linux_dirent64))
+    return -EINVAL;
   constexpr unsigned nameoff = offsetof(linux_dirent64, name);
   for (unsigned i = file->offset; i < items.size(); i++) {
     const auto &item = items[i];
@@ -1452,6 +1472,14 @@ HANDLE(chroot, _path) {
 
 HANDLE(prlimit64, pid, resource, new_rlim, old_rlim) {
   return detail::prlimit64(pid, resource, (void *) new_rlim, (void *) old_rlim);
+}
+
+HANDLE(getrlimit, lim, rlim) {
+  if (lim < 0 || lim >= 16)
+    return -EINVAL;
+  if (!copy_to_user((void *) rlim, &pcb->rlims[lim], sizeof(rlimit)))
+    return -EFAULT;
+  return 0;
 }
 
 HANDLE(ioctl, fd, op, argp) {
@@ -1882,6 +1910,10 @@ HANDLE(pipe2, fds, flags) {
   if (flags & O_DIRECT)
     return -EINVAL;
 
+  // We will open 2 new files, so we have to check it here.
+  if (pcb->ftbl->size() + 2 > pcb->rlims[RLIMIT_OFILE].rlim_cur)
+    return -EMFILE;
+
   auto pipe = pipefs->get(); // On creation it has a writer and a reader, so don't increment.
 
   file *read = new file(new dentry("<pipe r>", pipe, nullptr), O_RDONLY | extra);
@@ -1967,10 +1999,8 @@ HANDLE(sysinfo, info) {
 HANDLE(setitimer, which, timer, old) {
   if (which < 0 || which >= 3)
     return -EINVAL;
-  if (which != ITIMER_REAL) {
-    printk("setitimer: no timer %d yet\n", timer);
-    return -EINVAL;
-  }
+  if (which != ITIMER_REAL)
+    printk("setitimer: no timer %d yet\n", which);
   
   itimerval time;
   if (!copy_from_user(&time, (void *) timer, sizeof(itimerval)))
@@ -2007,10 +2037,10 @@ HANDLE(getitimer, which, old) {
 
   auto timer = pcb->itimers[which];
   auto intv = timer.interval * tick_length;
-  auto time = timer.timeout * tick_length + now();
+  auto time = timer.timeout * tick_length;
   itimerval v {
-    .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv / 1_us) },
-    .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time / 1_us) }
+    .it_interval = { .tv_sec = long(intv / 1_s), .tv_usec = long(intv % 1_s) / 1000 },
+    .it_value    = { .tv_sec = long(time / 1_s), .tv_usec = long(time % 1_s) / 1000 }
   };
   if (!copy_to_user((void *) old, &v, sizeof(timeval) * 2))
     return -EFAULT;

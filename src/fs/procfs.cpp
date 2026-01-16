@@ -87,7 +87,7 @@ ssize_t pid::mounts::read(size_t offset, void *buf, size_t len, int) {
 
 ssize_t pid::stat::read(size_t offset, void *buf, size_t len, int) {
   sstream out;
-  tcb_t *leader = pcb->threads.front(); // TODO: maybe this isn't always true.
+  tcb_t *leader = pcb->threads.front(); // TODO: maybe this isn't always true.=
   // 1. PID
   out << pcb->pid << ' ';
 
@@ -120,7 +120,10 @@ ssize_t pid::stat::read(size_t offset, void *buf, size_t len, int) {
   out << status << ' ';
 
   // 4. PPID
-  out << pcb->parent->pid << ' ';
+  if (pcb->parent)
+    out << pcb->parent->pid << ' ';
+  else
+    out << "0 ";
 
   // 5. pgrp
   out << pcb->pgid << ' ';

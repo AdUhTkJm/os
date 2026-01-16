@@ -14,8 +14,8 @@ class pipe_inode : public inode_impl<pipe_inode> {
   spinlock lock;
 
   // Try to keep the entire pipe in a page.
-  static constexpr size_t capacity = 3922;
-  char buffer[capacity];
+  char *buffer;
+  int capacity;
 
   size_t available() const { return wpos - rpos; }
   size_t space() const { return capacity - available(); }
@@ -24,6 +24,7 @@ public:
   FILE_INODE_DEFAULT_IMPL;
 
   pipe_inode(os::fs *fs, int uid, int gid);
+  ~pipe_inode() { pfree((pa_t) buffer - KERNEL_OFFSET); }
   ssize_t read(size_t offset, void *buf, size_t len, int flags) override;
   ssize_t write(size_t offset, const void *buf, size_t len, int flags) override;
   short poll(unsigned short) override;

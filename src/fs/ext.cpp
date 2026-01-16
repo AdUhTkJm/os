@@ -1100,20 +1100,25 @@ int ext_inode::erase_ext2(unsigned block, unsigned base, unsigned first, unsigne
     return -EIO;
 
   int freed = 0;
-  bool all_zero = false;
+  bool all_zero = true;
 
+  auto subspan = int(span / N);
   for (size_t i = 0; i < N; i++) {
-    if (!page[i])
+    if (!page[i]) {
+      freed += i * subspan;
       continue;
+    }
 
-    int ret = erase_ext2(page[i], end + i * (span / N), first, last, level - 1);
+    int ret = erase_ext2(page[i], base + i * subspan, first, last, level - 1);
     if (ret < 0)
       return ret;
 
     freed += ret;
     // The child is fully freed.
-    if (ret == int(span / N))
-      page[i] = 0, all_zero = true;
+    if (ret == subspan)
+      page[i] = 0;
+    else
+      all_zero = false;
   }
 
   if (all_zero)
@@ -1132,11 +1137,19 @@ int ext_inode::truncate_ext2(size_t len) {
 
     // Remove all blocks in [begin, end].
     const int N = fs->blksz / sizeof(unsigned);
-    erase_ext2(meta.indirect3, 12 + N + N * N, begin, end, 0);
-    erase_ext2(meta.indirect2, 12 + N, begin, end, 0);
-    erase_ext2(meta.indirect1, 12, begin, end, 0);
-    for (int i = 12; i >= 0; i--)
+    if (erase_ext2(meta.indirect3, 12 + N + N * N, begin, end, 3) == N * N)
+      meta.indirect3 = 0;
+
+    if (erase_ext2(meta.indirect2, 12 + N, begin, end, 2) == N)
+      meta.indirect2 = 0;
+
+    if (erase_ext2(meta.indirect1, 12, begin, end, 1) == N)
+      meta.indirect1 = 0;
+
+    for (int i = min(11ul, end); i >= (long) begin; i--) {
       erase_ext2(meta.directptr[i], i, begin, end, 0);
+      meta.directptr[i] = 0;
+    }
 
     meta.sz = len;
     fs->update_meta(this);

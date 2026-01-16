@@ -83,7 +83,7 @@ extern static_storage<pcb_t> boot_pcb;
   return scheduler.active;
 }
 
-constexpr int tick_length = 50_ms;
+constexpr int tick_length = 10_ms;
 
 }
 

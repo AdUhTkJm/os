@@ -409,15 +409,22 @@ struct sockaddr_in {
 #define FUTEX_CLOCK_REALTIME	256
 
 // From <sys/resource.h>.
-#define RLIMIT_CPU   0
-#define RLIMIT_FSIZE 1
-#define	RLIMIT_DATA  2
-#define RLIMIT_STACK 3
-#define RLIMIT_CORE  4
-#define RLIMIT_RSS   5
-#define RLIMIT_NPROC 6
-#define RLIMIT_OFILE 7
+#define RLIMIT_CPU    0
+#define RLIMIT_FSIZE  1
+#define	RLIMIT_DATA   2
+#define RLIMIT_STACK  3
+#define RLIMIT_CORE   4
+#define RLIMIT_RSS    5
+#define RLIMIT_NPROC  6
+#define RLIMIT_OFILE  7
 #define RLIMIT_MEMLOCK 8
+#define RLIMIT_AS     9
+#define RLIMIT_LOCK   10
+#define RLIMIT_MSGQUEUE 11
+#define RLIMIT_NICE   12
+#define RLIMIT_RTPRIO 13
+#define RLIMIT_SIGPENDING 14
+#define RLIMIT_RTTIME 15
 
 struct rlimit {
   unsigned long rlim_cur;  /* Soft limit */

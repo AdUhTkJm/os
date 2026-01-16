@@ -200,7 +200,7 @@ struct pcb_t {
   wait_queue vfork;       // Threads suspended in vfork() system call (or clone, clone3 with CLONE_VFORK).
   spinlock waitlock;      // Lock associated with `wait`.
   spinlock vforklock;     // Lock associated with `vfork`.
-  rlimit rlims[9];        // Resource limits.
+  rlimit rlims[16];        // Resource limits.
   pusage cruse;           // The rusage of all terminated children by wait().
   struct itimer {
     long timeout;         // In ticks.

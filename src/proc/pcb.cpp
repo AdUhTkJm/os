@@ -282,7 +282,7 @@ pcb_t::~pcb_t() {
 }
 
 int tcb_t::sleep(size_t nano) {
-  timeout = nano == -1ul ? (1l << 63) : (nano + tick_length - 1) / tick_length;
+  timeout = nano == -1ul ? (1l << 63) : 1 + (nano + tick_length - 1) / tick_length;
   
   wait_entry entry;
   napping.prepare(entry);
