@@ -15,6 +15,7 @@ long fcntl(int fd, int ty, unsigned long arg);
 long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, unsigned long offset);
 long mprotect(unsigned long start, unsigned long len, int prot);
 long munmap(unsigned long addr, unsigned long len);
+long mremap(unsigned long addr, unsigned long len, unsigned long newlen, int flags, unsigned long newaddr);
 long ioctl(int fd, int op, void *argp);
 long wait(int pid, void *wstatus, int options, void *rusage);
 long faccessat(int dirfd, const char *path, int mode, int flags);

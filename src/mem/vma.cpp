@@ -46,7 +46,7 @@ namespace os::vma {
   int flags = PTE_V | PTE_U;
   if (vma.prot & PROT_EXEC) flags |= PTE_X;
   if (vma.prot & PROT_READ) flags |= PTE_R;
-  if (vma.prot & PROT_WRITE) flags |= PTE_W;
+  if (vma.prot & PROT_WRITE) flags |= PTE_W | PTE_R; // In RISC-V it's impossible to distinguish the two.
   if (vma.flags & MAP_SHARED) {
     flags |= PTE_SHARED;
     pincref(pa);
@@ -184,6 +184,17 @@ vma_t *addrspace::find(va_t addr) const {
     cur = cur->ch[i];
   }
   return nullptr;
+}
+
+size_t addrspace::gap_after(va_t addr) const {
+  auto it = vmas.find_iterator(addr);
+  if (it == vmas.end())
+    return 0;
+  auto end = (*it).second.end;
+  ++it;
+  if (it == vmas.end())
+    return 0;
+  return (*it).first - end;
 }
 
 void addrspace::insert(const vma_t &vma) {

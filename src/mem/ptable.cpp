@@ -50,6 +50,37 @@ void free_impl(pte_t *pt, int lvl) {
   }
 }
 
+int pt_index(va_t va, int level) {
+  switch (level) {
+  case 0:
+    return PTE_PPN0(va);
+  case 1:
+    return PTE_PPN1(va);
+  case 2:
+    return PTE_PPN2(va);
+  default:
+    panic("pt_index: unreachable");
+  }
+}
+
+void bulk_unmap_impl(pte_t *pt, va_t begin, va_t end, int level) {
+  for (int i = pt_index(begin, level), e = pt_index(end - 1, level); i <= e; i++) {
+    pte_t pte = pt[i];
+    if (!(pte & PTE_V)) continue;
+
+    if (is_leaf(pte)) {
+      va_t page_start = (begin & ~(PAGE_SIZE - 1)) + (i << (12 + 9 * level));
+      va_t page_end = page_start + (1ull << (12 + 9 * level));
+      if (page_end <= end)
+        pt[i] = 0;
+    } else {
+      pte_t *child = (pte_t *) PTE_TO_VA(pte);
+      bulk_unmap_impl(child, begin, end, level - 1);
+    }
+  }
+}
+
+
 #ifdef LA
 // Try map RISC-V page table into Loongarch TLB arguments.
 // Since Loongarch is agnostic to software page table, we can simply use the same PTE as RV does.
@@ -399,5 +430,15 @@ void setroot(int asid, pa_t pt_root) {
 #ifdef LA
 void setroot(int, pa_t) {}
 #endif
+
+void bulk_unmap(uint64_t start, size_t len, pte_t *root) {
+  if (len == 0)
+    return;
+  bulk_unmap_impl(root, start, start + len, 2);
+}
+
+void bulk_unmap(va_t va, size_t len) {
+  return bulk_unmap(va, len, pt_root());
+}
 
 }

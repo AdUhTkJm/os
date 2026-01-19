@@ -320,8 +320,11 @@ long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, un
   va_t start;
   if (!fixed) {
     start = pcb->vma->find_mmap(len, addr);
-  } else
+  } else {
     start = rounddown<PAGE_SIZE>(addr);
+    if (start >= KERNEL_OFFSET)
+      return -EINVAL;
+  }
   va_t end = roundup<PAGE_SIZE>(start + len);
   
   file *backup = nullptr;
@@ -351,13 +354,12 @@ long mmap(unsigned long addr, unsigned long len, int prot, int flags, int fd, un
 }
 
 long mprotect(unsigned long start, unsigned long len, int prot) {
-  if (len == 0)
+  if (len == 0 || start % PAGE_SIZE != 0)
     return -EINVAL;
   
   auto tcb = active();
   auto pcb = tcb->pcb;
 
-  start = rounddown<PAGE_SIZE>(start);
   auto finish = roundup<PAGE_SIZE>(start + len);
 
   pcb->vma->split(start);
@@ -367,10 +369,19 @@ long mprotect(unsigned long start, unsigned long len, int prot) {
   if (overlap.size() == 0)
     return -ENOMEM;
 
+  for (auto vma : overlap) {
+    auto back = vma->backup;
+    if (!back)
+      continue;
+    if ((back->flags & 0x3) == O_RDONLY && (prot & PROT_WRITE))
+      return -EACCES;
+    if ((back->flags & 0x3) == O_WRONLY && (prot & PROT_READ))
+      return -EACCES;
+  }
   for (auto vma : overlap)
     vma->prot = prot;
   
-  // Remap existing memory. TODO: change on page table instead!
+  // Remap existing memory.
   for (char *p = (char*) start; p != (char*) finish; p += PAGE_SIZE) {
     auto flags = pte_flags(p);
     if (flags == -1)
@@ -405,9 +416,10 @@ long munmap(unsigned long start, unsigned long len) {
   // The `overlap` vector is a list of pointers. They will be invalidated when we start to erase.
   vector<va_t> toremove;
   toremove.reserve(overlap.size());
-  for (auto vma : overlap)
+  for (auto vma : overlap) {
+    bulk_unmap(vma->begin, vma->end - vma->begin);
     toremove.push_back(vma->begin);
-
+  }
   if (overlap.size() == 0)
     return -ENOMEM;
 
@@ -415,6 +427,66 @@ long munmap(unsigned long start, unsigned long len) {
     pcb->vma->erase(start);
   
   return 0;
+}
+
+long mremap(unsigned long addr, unsigned long len, unsigned long newlen, int flags, unsigned long newaddr) {
+  auto pcb = active()->pcb;
+  auto vma = pcb->vma->vmas.find(addr);
+  if (!vma)
+    return -EINVAL;
+
+  if (flags & MREMAP_FIXED) {
+    if (!(flags & MREMAP_MAYMOVE))
+      return -EINVAL;
+
+    if (newaddr % PAGE_SIZE != 0)
+      return -EINVAL;
+    
+    // We don't allow overlap with the original segment.
+    if ((newaddr >= vma->begin && newaddr < vma->end)
+    || (newaddr + len >= vma->begin && newaddr + len < vma->end))
+      return -EINVAL;
+
+    // Erase all other overlapping ones.
+    munmap(newaddr, newaddr + newlen);
+
+    // Do the real movement.
+    pcb->vma->vmas.erase(vma->begin);
+    munmap(vma->begin, vma->end);
+    vma->begin = newaddr;
+    vma->end = roundup<PAGE_SIZE>(newaddr + newlen);
+    pcb->vma->vmas.insert(*vma);
+    return newaddr;
+  }
+
+  // Trying to access unmapped memory.
+  if (vma->end - vma->begin < len)
+    return -EFAULT;
+  // Trying to stretch too much.
+  if (!(flags & MREMAP_MAYMOVE) && vma->end - vma->begin > len)
+    return -ENOMEM;
+
+  auto gap = pcb->vma->gap_after(addr);
+  // The gap is not large enough.
+  if (gap + len < newlen) {
+    if (!(flags & MREMAP_MAYMOVE))
+      return -ENOMEM;
+
+    // Move the VMA somewhere else.
+    auto pos = pcb->vma->find_mmap(newlen, 0);
+    pcb->vma->vmas.erase(vma->begin);
+    vma->begin = pos;
+    vma->end = pos + newlen;
+    pcb->vma->vmas.insert(*vma);
+    return pos;
+  }
+
+  // The gap is enough. Just extend or shrink.
+  auto oldend = vma->end;
+  vma->end = roundup<PAGE_SIZE>(vma->begin + newlen);
+  if (oldend >= vma->end)
+    munmap(vma->end, oldend - vma->end);
+  return vma->begin;
 }
 
 long ioctl_tty(tty_inode *tty, int op, void *argp) {
@@ -1236,7 +1308,10 @@ long shmat(int id, unsigned long addr, int flags) {
   meta.attach++;
 
   auto fd = pcb->ftbl->allocate(file);
-  return mmap(addr, node->size(), prot, MAP_SHARED | MAP_FIXED, fd, 0);
+  int mapflags = MAP_SHARED;
+  if (addr)
+    mapflags |= MAP_FIXED;
+  return mmap(addr, node->size(), prot, mapflags, fd, 0);
 }
 
 long shmdt(unsigned long addr) {

@@ -751,11 +751,14 @@ HANDLE(fdatasync, fd) {
 }
 
 HANDLE(msync, addr, len, flags) {
-  if (addr % PAGE_SIZE != 0)
+  if (addr % PAGE_SIZE != 0 || flags > 7 || flags < 0)
+    return -EINVAL;
+
+  if ((flags & MS_ASYNC) && (flags & MS_SYNC))
     return -EINVAL;
   
   auto vma = pcb->vma->find(addr);
-  if (!vma->backup || vma->end < (unsigned long) addr + len)
+  if (!vma || !vma->backup || vma->end < (unsigned long) addr + len)
     return -ENOMEM;
 
   if (flags & MS_ASYNC && !(flags & MS_INVALIDATE))
@@ -1651,6 +1654,10 @@ HANDLE(mprotect, start, len, prot) {
 
 HANDLE(munmap, addr, len) {
   return detail::munmap(addr, len);
+}
+
+HANDLE(mremap, addr, len, newlen, flags, newaddr) {
+  return detail::mremap(addr, len, newlen, flags, newaddr);
 }
 
 HANDLE(shmget, key, len, flags) {

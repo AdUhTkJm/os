@@ -82,6 +82,7 @@ struct addrspace : shared {
   vma_t *find(va_t addr) const;
   va_t brk(va_t addr);
   va_t find_mmap(unsigned long len, va_t hint) const;
+  size_t gap_after(va_t addr) const;
 
   void insert(const vma_t &vma);
   void erase(va_t begin) { vmas.erase(begin); }

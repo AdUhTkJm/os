@@ -628,7 +628,7 @@ public:
     return it;
   }
 
-  iterator end() { return iterator(); }
+  iterator end() const { return iterator(); }
 
   interval_btree() {}
   ~interval_btree() {
@@ -728,6 +728,29 @@ public:
     }
 
     return nullptr;
+  }
+
+  // Iterators carry extra stack information.
+  iterator find_iterator(const K &key) const {
+    iterator it;
+    node *curr = root;
+
+    for (node *x = root; x;) {
+      int i = 0;
+      while (i < x->count && x->k[i] < key)
+        i++;
+      
+      it.stack[++it.top] = { x, i };
+      if (i < x->count && x->k[i] == key)
+        return it;
+
+      if (x->leaf)
+        return end();
+
+      x = x->ch[i];
+    }
+
+    return end();
   }
 
   int size() { return sz; }

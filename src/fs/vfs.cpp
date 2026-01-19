@@ -73,7 +73,6 @@ ssize_t file::write(const void *buf, size_t len) {
   // We must update file size.
   if (offset >= node()->size())
     node()->cache->flush();
-  printk("size = %ld\n", node()->size());
   return written;
 }
 

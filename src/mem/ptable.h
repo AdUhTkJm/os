@@ -112,6 +112,10 @@ expected<pa_t> punmap(va_t va, int mode);
 expected<pa_t> punmap(va_t va, int mode, pte_t *root);
 inline expected<pa_t> punmap(const void *va, int mode, pte_t *root) { return punmap((va_t) va, mode, root); }
 
+// Unmaps the virtual address [va, va + len).
+void bulk_unmap(va_t va, size_t len);
+void bulk_unmap(va_t va, size_t len, pte_t *root);
+
 // Sv39 requires that the virtual address is sign-extended on bit 38 (highest bit).
 inline constexpr va_t sext(va_t x) {
   return (((x >> 38) & 1) ? x | 0xffff'ff80'0000'0000 : x);

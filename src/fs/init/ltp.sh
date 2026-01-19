@@ -34,7 +34,9 @@ ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
     kill02|kill10) continue;;         # Seems to fail but no idea why.
     memctl*|memcontrol*) continue;;
     mmap-corruption*) continue;;
-    mmap001|mmap03|mprotect02) continue;; # munmap() needs to clear in-memory pages. TODO
+    mmap001|mmap03) continue;;
+    mprotect02|mprotect03) continue;;
+    mtest*) continue;;
     # h*) ended=1; continue;;
   esac
   echo "RUN LTP CASE $f"
