@@ -123,6 +123,17 @@ int tmpfs_inode::rmdir(const string &name) {
   return 0;
 }
 
+int tmpfs_inode::link(const string &name, inode *other) {
+  auto tmp = dyn_cast<tmpfs_inode>(other);
+  if (!tmp)
+    return -EXDEV;
+
+  children[name] = tmp;
+  other->linked();
+  meta.atime = meta.mtime = now();
+  return 0;
+}
+
 optional<string> tmpfs_inode::readlink() {
   if (type != Link)
     return nullopt;

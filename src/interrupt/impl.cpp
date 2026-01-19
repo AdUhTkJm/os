@@ -42,7 +42,6 @@ long futex_wait(void *addr, int expected, void *_timeout, int tmtype, unsigned m
     default:
       panic("futex_wait: unreachable");
     }
-    printk("timeout = %ld\n", timeout);
   }
 
   int u;
@@ -615,6 +614,8 @@ long wait(int pid, void *wstatus, int options, void *rusage) {
         if (wstatus) {
           // See <wait.h> for the bits.
           int status = child->sigterm ? (child->ret & 0x7f) : ((child->ret & 0xff) << 8);
+          if (child->coredump)
+            status |= 0x80;
           if (!copy_to_user(wstatus, &status, sizeof(int)))
             return -EFAULT;
         }
@@ -1103,9 +1104,10 @@ long nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
     };
     if (!copy_to_user(rmtp, &tm, sizeof(timespec)))
       return -EFAULT;
-    return -1;
+
+    return ret;
   }
-  return 0;
+  return ret;
 }
 
 long clone(int flags, unsigned long stack, void *parenttid, void *tls, void *childtid) {
@@ -1343,10 +1345,14 @@ long getsockname(int fd, void *sockname, void *_len) {
 }
 
 long ppoll(void *_fds, unsigned int cnt, unsigned long timeout, void *sigmask, bool isuser) {
+  auto tcb = active();
+  auto pcb = tcb->pcb;
+
   // TODO: Ignore sigmask for now.
   (void) sigmask;
-  if (cnt <= 0)
-    return -EINVAL;
+  // Special case: when cnt == 0, we just sleep.
+  if (cnt == 0)
+    return tcb->sleep(timeout);
 
   pollfd *fds;
   if (isuser) {
@@ -1361,9 +1367,6 @@ long ppoll(void *_fds, unsigned int cnt, unsigned long timeout, void *sigmask, b
     bool isuser;
     ~finisher() { if (isuser) delete[] fds; }
   } _takeback(fds, isuser);
-
-  auto tcb = active();
-  auto pcb = tcb->pcb;
   
 retry:
   int available = 0;
@@ -1437,11 +1440,15 @@ long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long new
   auto pcb = active()->pcb;
   
   auto path = copy_from_user((char *) oldpath);
-  if (!path || !*path)
+  if (!path)
+    return path;
+  if (!*path)
     return -EFAULT;
 
   auto npath = copy_from_user((char *) newpath);
-  if (!npath || !*npath)
+  if (!npath)
+    return npath;
+  if (!*npath)
     return -EFAULT;
 
   auto dir = dirname(path->get());

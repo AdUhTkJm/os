@@ -178,7 +178,7 @@ ssize_t pid::stat::read(size_t offset, void *buf, size_t len, int) {
 }
 
 process::process(class fs *fs, inode *parent, pcb_t *pcb): inode_impl(fs, 0, 0, 0666, Dir), pcb(pcb), parent(parent),
-  exe(new link(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)),
+  exe(new symlink(fs, pcb->execpath)), oom(new pid::oom_score_adj(fs, pcb)), mounts(new pid::mounts(fs, pcb)),
   stat(new pid::stat(fs, pcb)) {
   exe->linked();
   oom->linked();
@@ -343,7 +343,7 @@ namespace os {
 
 procroot::procroot(class fs *fs):
   inode_impl(fs, 0, 0, 0555, Dir), filesystems(new proc::filesystems(fs)), meminfo(new proc::meminfo(fs)),
-  stat(new proc::stat(fs)), sys(new proc::sys_inode(fs, this)), mounts(new proc::link(fs, "self/mounts")) {
+  stat(new proc::stat(fs)), sys(new proc::sys_inode(fs, this)), mounts(new proc::symlink(fs, "self/mounts")) {
   filesystems->linked();
   meminfo->linked();
   stat->linked();

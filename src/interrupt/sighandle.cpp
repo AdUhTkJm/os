@@ -16,11 +16,13 @@ bool restartable(int v) {
   return true;
 }
 
+// Signal is a process-level concept. Hence we should terminate the entire process.
 void kill(int sig) {
-  os::terminate(active(), sig, true);
+  os::terminate(active()->pcb, sig, true);
 }
 
 void core(int sig) {
+  active()->pcb->coredump = true;
   kill(sig);
 }
 
@@ -55,18 +57,28 @@ void sighandle() {
   auto action = pcb->actor->sigact[sig];
   if (!action.handler) {
     switch (sig) {
-    case SIGABRT:
-    case SIGFPE:
-    case SIGILL:
     case SIGQUIT:
+    case SIGILL:
+    case SIGTRAP:
+    case SIGABRT:
+    case SIGBUS:
+    case SIGFPE:
     case SIGSEGV:
+    case SIGXCPU:
+    case SIGXFSZ:
+    case SIGSYS:
       core(sig);
       break;
 
+    case SIGHUP:
+    case SIGINT:
     case SIGUSR1:
     case SIGUSR2:
     case SIGPIPE:
+    case SIGALRM:
+    case SIGTERM:
       kill(sig);
+      break;
 
     case SIGCHLD:
       // Ignore

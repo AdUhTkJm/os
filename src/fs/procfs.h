@@ -44,14 +44,14 @@ public:
   ssize_t read(size_t, void *, size_t, int) override;
 };
 
-class link : public inode_impl<link> {
+class symlink : public inode_impl<symlink> {
   inode::meta meta;
   string lnk;
 public:
   SYMLINK_INODE_DEFAULT_IMPL;
   META_DEFAULT_IMPL;
 
-  link(class fs *fs, const string &lnk): inode_impl(fs, 0, 0, 0444, Link), lnk(lnk) {}
+  symlink(class fs *fs, const string &lnk): inode_impl(fs, 0, 0, 0444, Link), lnk(lnk) {}
   optional<string> readlink() override { return lnk; }
   size_t size() const override { return lnk.size(); };
 };
@@ -104,7 +104,7 @@ class process : public inode_impl<process> {
   inode::meta meta;
   pcb_t *pcb;
   inode *parent;
-  link *exe;
+  symlink *exe;
   pid::oom_score_adj *oom;
   pid::mounts *mounts;
   pid::stat *stat;
@@ -174,7 +174,7 @@ class procroot : public inode_impl<procroot> {
   proc::meminfo *meminfo;
   proc::stat *stat;
   proc::sys_inode *sys;
-  proc::link *mounts;
+  proc::symlink *mounts;
 
   os::hashmap<int, proc::process*> pnodes;
   inode::meta meta;

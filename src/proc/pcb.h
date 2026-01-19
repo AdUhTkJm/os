@@ -191,6 +191,7 @@ struct pcb_t {
   int ret;                // Process return code.
   int umask = 022;        // Mask on mode when creating file.
   int sigonterm = SIGCHLD;// The signal to send to parent on termination.
+  bool coredump = false;  // Whether the process produced a core dump.
   dentry *pwd;            // Process working directory.
   string execpath;        // The path to the executable.
   sigset pending = 0;     // Pending signals.

@@ -31,6 +31,7 @@ enum error_code {
   ENOTTY = 25,
   EFBIG = 27,
   ENOSPC = 28,
+  ESPIPE = 29,
   EROFS = 30,
   EPIPE = 32,
   ERANGE = 34,

@@ -824,6 +824,17 @@ int ext_inode::move(const string &name, inode *other, const string &newname, int
   return 0;
 }
 
+int ext_inode::link(const string &name, inode *other) {
+  auto inode = dyn_cast<ext_inode>(other);
+  if (!inode)
+    return -EXDEV;
+
+  add_dirent(name, inode->inum(), inode->type);
+  inode->meta.lnkcnt++;
+  ((ext *) fs)->update_meta(inode);
+  return 0;
+}
+
 inode::meta ext_inode::get_meta() {
   return inode::meta(
     meta.atime * 1_s,

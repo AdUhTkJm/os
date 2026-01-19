@@ -244,7 +244,7 @@ extern "C" void _start() {
     // Execute the shell.
     [[gnu::unused]] const char *ltp = R"(
 libc=glibc
-startfrom="getrlimit03"
+startfrom="mmap01"
 )"
 #include "ltp.sh"
 ;
@@ -267,7 +267,7 @@ startfrom="getrlimit03"
       // CD " && sh ./cyclictest_testcode.sh";
       // CD " && sh ./iperf_testcode.sh";
       ltp;
-      // CD "/ltp/testcases/bin; ./getrlimit03; echo 'done'";
+      // CD "/ltp/testcases/bin; ./mprotect02; echo 'done'";
       // CD " && ./lmbench_all lat_pipe -P 1";
     const char *argv[] = { "/bin/sh", "-c", test, nullptr };
 #elif defined(REMOTE_TEST)

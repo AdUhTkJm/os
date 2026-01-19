@@ -31,7 +31,8 @@ ssize_t file::read(void *buf, size_t len) {
 
   // We have a page cache and have to read from it.
   ssize_t read = 0;
-  while (read < long(len) && offset < len) {
+  auto size = node()->size();
+  while (read < long(len) && offset < size) {
     size_t poff = offset % PAGE_SIZE;
     page_cache::page *page = (*node()->cache)[offset / PAGE_SIZE];
 
@@ -72,6 +73,7 @@ ssize_t file::write(const void *buf, size_t len) {
   // We must update file size.
   if (offset >= node()->size())
     node()->cache->flush();
+  printk("size = %ld\n", node()->size());
   return written;
 }
 

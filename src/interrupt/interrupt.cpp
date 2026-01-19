@@ -115,8 +115,9 @@ HANDLE(lseek, fd, offset, _whence) {
   if (!f)
     return -EBADF;
 
-  if (f->node()->type == inode::CharDevice)
-    return -EINVAL;
+  auto type = f->node()->type;
+  if (type != inode::File && type != inode::Dir)
+    return -ESPIPE;
   
   f->seek(offset, whence);
   return f->offset;
@@ -800,6 +801,46 @@ HANDLE(symlinkat, target, dirfd, linkpath) {
   return 0;
 }
 
+HANDLE(linkat, olddirfd, oldpath, newdirfd, newpath, flags) {
+  auto pcb = active()->pcb;
+  
+  auto path = copy_from_user((char *) oldpath);
+  if (!path)
+    return path;
+  if (!*path)
+    return -EFAULT;
+
+  auto npath = copy_from_user((char *) newpath);
+  if (!npath)
+    return npath;
+  if (!*npath)
+    return -EFAULT;
+
+  auto fd = pcb->obtain_file(path->get(), olddirfd, O_PATH);
+  if (!fd)
+    return fd;
+    
+  auto newdir = dirname(npath->get());
+  auto nfd = pcb->obtain_file(newdir, newdirfd, O_PATH);
+  if (!nfd)
+    return nfd;
+
+  auto node = (*fd)->node, nnode = (*nfd)->node;
+  if (nnode->type != inode::Dir)
+    return -ENOTDIR;
+
+  if (node->fs != nnode->fs)
+    return -EXDEV;
+  if (node->type == inode::Dir)
+    return -EPERM;
+
+  auto basename = os::basename(npath->get());
+  if (nnode->lookup(basename))
+    return -EEXIST;
+
+  return nnode->link(basename, node);
+}
+
 HANDLE(unlinkat, dirfd, _path, flags) {
   auto path = copy_from_user((char *) _path);
   if (!path)
@@ -1221,13 +1262,16 @@ HANDLE(getpgid, pid) {
   return tgt->pgid;
 }
 
+// getcwd(3) returns pointer, but getcwd(2) should return length.
+// See fs/d_path.c:412 in Linux source tree.
 HANDLE(getcwd, buf, size) {
   auto path = pcb->pwd->path();
-  if (path.size() + 1 >= (unsigned long) size)
+  auto len = path.size() + 1;
+  if (len > (unsigned long) size)
     return -ERANGE;
-  if (!copy_to_user((void*) buf, path.c_str(), path.size() + 1))
+  if (!copy_to_user((void*) buf, path.c_str(), len))
     return -EFAULT;
-  return buf;
+  return len;
 }
 
 HANDLE(uname, buf) {
@@ -1434,6 +1478,8 @@ HANDLE(umount2, target, flags) {
   auto path = copy_from_user((char *) target);
   if (!path)
     return path;
+  if (!*path)
+    return -EFAULT;
 
   if ((flags & MNT_DETACH )|| (flags & MNT_EXPIRE)) {
     printk("umount: unknown flags %d\n", flags);
@@ -1716,12 +1762,24 @@ HANDLE(rt_sigreturn, _) {
 }
 
 HANDLE(kill, pid, sig) {
-  if (sig >= 64)
+  if (sig < 0 || sig >= 64)
     return -EINVAL;
+
+  // Send to every process in this process group.
+  // We reuse the thing below.
+  if (pid == 0)
+    pid = -pcb->pgid;
   
   if (pid < -1) {
-    // Send to every process in the process group. (TODO)
-    pid = abs(pid);
+    auto pgid = abs(pid);
+    bool sent = false;
+    for (auto [_, pcb] : *pidmap) {
+      if (pcb->pgid == pgid) {
+        pcb->send_signal(sig);
+        sent = true;
+      }
+    }
+    return sent ? 0 : -ESRCH;
   }
 
   if (pid == 0)

@@ -79,6 +79,12 @@ public:
   void shrink_to_fit() {
     if (cap == sz)
       return;
+    if (sz == 0) {
+      delete[] dat;
+      cap = 0;
+      dat = nullptr;
+      return;
+    }
 
     V *newdata = new (safe) V[sz]();
     for (size_t i = 0; i < sz; i++)

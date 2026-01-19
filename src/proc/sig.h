@@ -15,6 +15,7 @@ enum signals : unsigned char {
   SIGILL   = 4,
   SIGTRAP  = 5,
   SIGABRT  = 6,
+  SIGBUS   = 7,
   SIGFPE   = 8,
   SIGKILL  = 9,
   SIGUSR1  = 10,
@@ -27,6 +28,9 @@ enum signals : unsigned char {
   SIGCONT  = 18,
   SIGSTOP  = 19,
   SIGTSTP  = 20,
+  SIGXCPU  = 24,
+  SIGXFSZ  = 25,
+  SIGSYS   = 31,
 };
 
 struct sigset {

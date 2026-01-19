@@ -260,6 +260,7 @@ void pcb_t::send_signal(int sig) {
   }
   pending.add(sig);
 }
+
 // We mainly fill in rlim[] defaults.
 pcb_t::pcb_t() {
   rlims[RLIMIT_OFILE] = { .rlim_cur = 1024, .rlim_max = 4096 };

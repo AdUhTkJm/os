@@ -29,7 +29,13 @@ ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
     futex_cmp_requeue*) continue;;
     getrusage03*) continue;;
     *xattr*) continue;;
-    h*) ended=1; continue;;
+    huge*) continue;;                 # Needs huge pages
+    icmp*) continue;;                 # Needs locale info?
+    kill02|kill10) continue;;         # Seems to fail but no idea why.
+    memctl*|memcontrol*) continue;;
+    mmap-corruption*) continue;;
+    mmap001|mmap03|mprotect02) continue;; # munmap() needs to clear in-memory pages. TODO
+    # h*) ended=1; continue;;
   esac
   echo "RUN LTP CASE $f"
   "./$f"

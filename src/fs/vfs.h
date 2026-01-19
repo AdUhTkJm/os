@@ -233,6 +233,7 @@ public:
   virtual int unlink(const string &name) = 0;
   virtual int rmdir(const string &name) = 0;
   virtual int move(const string &name, inode *other, const string &newname, int flags) = 0;
+  virtual int link(const string &name, inode *other) = 0;
   // Looks up a child with the given name.
   virtual inode *lookup(const string &name) = 0;
   virtual optional<string> readlink() = 0;
@@ -437,6 +438,7 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   int unlink(const string &) override { return -ENOTDIR; } \
   int rmdir(const string &) override { return -ENOTDIR; } \
   int move(const string &, inode *, const string &, int) override { return -ENOTDIR; } \
+  int link(const string &, inode *) override { return -ENOTDIR; } \
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
   optional<string> readlink() override { return nullopt; } \
@@ -450,6 +452,7 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   int unlink(const string &) override { return -ENOTDIR; } \
   int rmdir(const string &) override { return -ENOTDIR; } \
   int move(const string &, inode *, const string &, int) override { return -ENOTDIR; } \
+  int link(const string &, inode *) override { return -ENOTDIR; } \
   inode *lookup(const string &) override { return nullptr; } \
   vector<item> list() override { return {}; } \
   long inum() const override { return (long) this; } \
@@ -471,6 +474,7 @@ inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x
   int unlink(const string &) override { return -EACCES; } \
   int rmdir(const string &) override { return -EACCES; } \
   int move(const string &, inode *, const string &, int) override { return -EACCES; } \
+  int link(const string &, inode *) override { return -EACCES; } \
 
 #define READONLY_FILE \
   ssize_t write(size_t, const void *, size_t, int) override { return -EACCES; } \
