@@ -113,8 +113,8 @@ int pcb_t::open_file_from(const string &path, dentry *relbase, int flags, int mo
 
   bool create = flags & O_CREAT;
   bool existok = !(flags & O_EXCL);
-  bool write = can_write(flags);
-  bool read = can_read(flags);
+  bool write = (flags & 0x3) != O_RDONLY;
+  bool read = (flags & 0x3) != O_WRONLY;
   bool follow = !(flags & O_NOFOLLOW);
   
   if (flags & O_PATH)
@@ -178,8 +178,8 @@ expected<dentry*> pcb_t::obtain_file(const string &path, int dirfd, int flags) {
     relbase = entry;
   }
   
-  bool write = can_write(flags) & !(flags & O_PATH);
-  bool read = can_read(flags) & !(flags & O_PATH);
+  bool write = ((flags & 0x3) != O_RDONLY) & !(flags & O_PATH);
+  bool read = ((flags & 0x3) != O_WRONLY) & !(flags & O_PATH);
   bool follow = !(flags & O_NOFOLLOW);
 
   auto maybe_dentry = vfs->lookup_from(path, relbase, follow);

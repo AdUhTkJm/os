@@ -5,7 +5,7 @@ namespace os {
 
 // Some system calls can't be retried.
 constexpr syscall norestart[] = {
-  flock, nanosleep
+  flock, nanosleep, ppoll
 };
 
 bool restartable(int v) {

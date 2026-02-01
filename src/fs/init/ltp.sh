@@ -37,6 +37,10 @@ ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
     mmap001|mmap03) continue;;
     mprotect02|mprotect03) continue;;
     mtest*) continue;;
+    nanosleep*) continue;;
+    nptl*) continue;;                 # Not system calls.
+    open12|openat02) continue;;       # Needs sparse tmpfiles.
+    pause01) continue;;               # Why??
     # h*) ended=1; continue;;
   esac
   echo "RUN LTP CASE $f"

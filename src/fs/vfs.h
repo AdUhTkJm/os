@@ -144,6 +144,8 @@ public:
   ssize_t read(void *buf, size_t len);
   ssize_t write(const void *buf, size_t len);
   ssize_t seek(long pos, whence whence); // Returns the old offset.
+  bool readable() const { return !(flags & O_PATH) && (flags & 3) != O_WRONLY; }
+  bool writable() const { return !(flags & O_PATH) && (flags & 3) != O_RDONLY; }
   void close();
   void sync();
 
@@ -428,10 +430,6 @@ string normalize(const string &path);
 bool readable(int uid, int gid, const inode *node);
 int writable(int uid, int gid, const inode *node);
 bool executable(int uid, int gid, const inode *node);
-
-// These check file permissions.
-inline bool can_write(int flags) { return (flags & 0x3) == O_RDWR || (flags & 0x3) == O_WRONLY; }
-inline bool can_read(int flags)  { return (flags & 0x3) == O_RDWR || (flags & 0x3) == O_RDONLY; }
 
 #define FILE_INODE_DEFAULT_IMPL \
   int create(const string &, filetype, int) override { return -ENOTDIR; } \

@@ -112,9 +112,9 @@ void pipe_inode::onclose(int flags) {
 }
 
 void pipe_inode::incf(const file *file) {
-  if (can_read(file->flags))
+  if (file->readable())
     incread();
-  if (can_write(file->flags))
+  if (file->writable())
     incwrite();
 }
 

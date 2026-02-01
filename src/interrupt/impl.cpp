@@ -238,9 +238,9 @@ long fcntl(int fd, int ty, unsigned long arg) {
       return -EFAULT;
 
     // Check file open mode.
-    if ((file->flags & 0x3) == O_RDONLY && lock.l_type == F_WRLCK)
+    if (!file->writable() && lock.l_type == F_WRLCK)
       return -EBADF;
-    if ((file->flags & 0x3) == O_WRONLY && lock.l_type == F_RDLCK)
+    if (!file->readable() && lock.l_type == F_RDLCK)
       return -EBADF;
 
     size_t begin;
@@ -373,9 +373,9 @@ long mprotect(unsigned long start, unsigned long len, int prot) {
     auto back = vma->backup;
     if (!back)
       continue;
-    if ((back->flags & 0x3) == O_RDONLY && (prot & PROT_WRITE))
+    if (!back->writable() && (prot & PROT_WRITE))
       return -EACCES;
-    if ((back->flags & 0x3) == O_WRONLY && (prot & PROT_READ))
+    if (!back->readable() && (prot & PROT_READ))
       return -EACCES;
   }
   for (auto vma : overlap)
@@ -581,7 +581,7 @@ long ioctl_loop(block_inode *node, int op, void *argp) {
       return -EBADF;
 
     auto file = pcb->ftbl->at(fd);
-    if (((file->flags & 0x3) == O_WRONLY) || !readable(pcb->euid, pcb->egid, file->node()))
+    if (!file->readable() || !readable(pcb->euid, pcb->egid, file->node()))
       return -EACCES;
 
     lo->backup = file;

@@ -286,8 +286,10 @@ void vm_allocator::node_allocator::free(void *p) {
 
 vm_allocator::address vm_allocator::allocate(page_number total) {
   page_number begin = map.find_gap(total);
-  if (begin == 0)
+  if (begin == 0) {
+    printk("vm: required %d pages, but remaining %d\n", total, pavail());
     panic("vm: out of memory");
+  }
   map.insert({ begin, begin + total });
   return base + begin * PAGE_SIZE;
 }

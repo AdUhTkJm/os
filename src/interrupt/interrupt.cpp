@@ -18,6 +18,7 @@ extern int clock_period;
 extern size_t realtime;
 // Default to zero (UTC).
 timezone zone;
+unsigned long persona;
 
 // Returns current timestamp.
 size_t os::now() {
@@ -125,7 +126,7 @@ HANDLE(lseek, fd, offset, _whence) {
 
 HANDLE(read, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
-  if (!file || (file->flags & 3) == O_WRONLY)
+  if (!file || !file->readable())
     return -EBADF;
 
   return detail::read_to_user(file, (void *) buf, len);
@@ -133,7 +134,7 @@ HANDLE(read, fd, buf, len) {
 
 HANDLE(pread64, fd, buf, len, offset) {
   auto file = pcb->ftbl->at(fd);
-  if (!file || (file->flags & 3) == O_WRONLY)
+  if (!file || !file->readable())
     return -EBADF;
 
   SeekGuard _(file, offset);
@@ -142,7 +143,7 @@ HANDLE(pread64, fd, buf, len, offset) {
 
 HANDLE(readv, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
-  if (!file || (file->flags & 3) == O_WRONLY)
+  if (!file || !file->readable())
     return -EBADF;
 
   if (cnt <= 0)
@@ -173,7 +174,7 @@ HANDLE(readv, fd, iov, cnt) {
 
 HANDLE(write, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
-  if (!file || (file->flags & 3) == O_RDONLY)
+  if (!file || !file->writable())
     return -EBADF;
 
   return detail::write_from_user(file, (void *) buf, len);
@@ -181,7 +182,7 @@ HANDLE(write, fd, buf, len) {
 
 HANDLE(pwrite64, fd, buf, len, offset) {
   auto file = pcb->ftbl->at(fd);
-  if (!file || (file->flags & 3) == O_RDONLY)
+  if (!file || !file->writable())
     return -EBADF;
 
   SeekGuard _(file, offset);
@@ -190,7 +191,7 @@ HANDLE(pwrite64, fd, buf, len, offset) {
 
 HANDLE(writev, fd, iov, cnt) {
   auto file = pcb->ftbl->at(fd);
-  if (!file || (file->flags & 3) == O_RDONLY)
+  if (!file || !file->writable())
     return -EBADF;
 
   if (cnt <= 0)
@@ -309,11 +310,11 @@ HANDLE(mknodat, dirfd, _path, mode, dev) {
 
 HANDLE(sendfile, out, in, offptr, len) {
   auto fout = pcb->ftbl->at(out);
-  if (!fout || !can_write(fout->flags))
+  if (!fout || !fout->writable())
     return -EBADF;
 
   auto fin = pcb->ftbl->at(in);
-  if (!fin || !can_read(fin->flags))
+  if (!fin || !fin->readable())
     return -EBADF;
 
   size_t offset = fin->offset;
@@ -355,7 +356,16 @@ HANDLE(openat, dirfd, _path, flags, mode) {
   if (!*path)
     return -EFAULT;
 
-  return pcb->open_file_from(path->get(), dirfd, flags, mode);
+  int fd = pcb->open_file_from(path->get(), dirfd, flags, mode);
+  if (flags & O_NOFOLLOW) {
+    auto file = pcb->ftbl->at(fd);
+    if (file && file->node()->type == inode::Link) {
+      pcb->ftbl->deallocate(fd);
+      return -ELOOP;
+    }
+  }
+
+  return fd;
 }
 
 HANDLE(close, fd) {
@@ -526,7 +536,7 @@ HANDLE(fchdir, fd) {
 
 HANDLE(fchown, fd, uid, gid) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || file->flags & O_PATH)
     return -EBADF;
   auto node = file->node();
   if (node->uid != pcb->euid && pcb->euid != 0)
@@ -583,9 +593,17 @@ HANDLE(fchownat, dirfd, _path, uid, gid, flags) {
   return node->onchmod();
 }
 
+HANDLE(personality, x) {
+  if (x == 0xffff'ffff)
+    return persona;
+
+  persona = x;
+  return 0;
+}
+
 HANDLE(fchmod, fd, mode) {
   auto file = pcb->ftbl->at(fd);
-  if (!file)
+  if (!file || file->flags & O_PATH)
     return -EBADF;
   if (mode > 0107777)
     return -EINVAL;
