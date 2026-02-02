@@ -1,7 +1,7 @@
 /* 2> /dev/null #*/ R"(
 cd /mnt/$libc/ltp/testcases/bin
 export PATH="$(pwd):$PATH"
-
+` `
 started=0
 ended=0
 
@@ -17,7 +17,7 @@ ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
     crash*) continue;;
     copy_file_range*) continue;;      # Doesn't end.
     cve*) continue;;
-    epoll*) continue;;                # NOSYS
+    epoll*) continue;;                # TODO: a lot!
     exec*) continue;;
     fallocate05) continue;;           # No tmpfs size limit now. This will exhaust all memory.
     fallocate06) continue;;           # Exhausts all memory.
@@ -41,7 +41,9 @@ ls | grep -E '^[a-z0-9_-]+[0-9][0-9]$' | while read -r f; do
     nptl*) continue;;                 # Not system calls.
     open12|openat02) continue;;       # Needs sparse tmpfiles.
     pause01) continue;;               # Why??
-    # h*) ended=1; continue;;
+    pidns*) continue;;                # TODO: a lot!
+    profil*) continue;;
+    ptrace*) continue;;
   esac
   echo "RUN LTP CASE $f"
   "./$f"

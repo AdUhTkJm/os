@@ -137,6 +137,15 @@ HANDLE(pread64, fd, buf, len, offset) {
   if (!file || !file->readable())
     return -EBADF;
 
+  auto type = file->node()->type;
+  if (type == inode::FIFO)
+    return -ESPIPE;
+  if (type == inode::Dir)
+    return -EISDIR;
+
+  if (offset < 0)
+    return -EINVAL;
+
   SeekGuard _(file, offset);
   return detail::read_to_user(file, (void *) buf, len);
 }
@@ -172,6 +181,47 @@ HANDLE(readv, fd, iov, cnt) {
   return total;
 }
 
+HANDLE(preadv, fd, iov, cnt, offset) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file || !file->readable())
+    return -EBADF;
+
+  auto type = file->node()->type;
+  if (type == inode::FIFO)
+    return -ESPIPE;
+  if (type == inode::Dir)
+    return -EISDIR;
+
+  if (offset < 0 || cnt <= 0)
+    return -EINVAL;
+
+  SeekGuard _(file, offset);
+  long total = 0;
+  for (int i = 0; i < cnt; i++) {
+    iovec v;
+    if (!copy_from_user(&v, (char *) iov + i * sizeof(iovec), sizeof(iovec)))
+      return -EFAULT;
+
+    if (v.iov_len == -1ul)
+      return -EINVAL;
+
+    if (v.iov_len == 0)
+      continue;
+
+    // Copy a single buffer.
+    ssize_t n = detail::read_to_user(file, (void *) v.iov_base, v.iov_len);
+    if (n <= 0)
+      return total ? total : n;
+
+    total += n;
+    // If we have a partial read, then we stop immediately.
+    if ((size_t) n < v.iov_len)
+      break;
+  }
+
+  return total;
+}
+
 HANDLE(write, fd, buf, len) {
   auto file = pcb->ftbl->at(fd);
   if (!file || !file->writable())
@@ -184,6 +234,15 @@ HANDLE(pwrite64, fd, buf, len, offset) {
   auto file = pcb->ftbl->at(fd);
   if (!file || !file->writable())
     return -EBADF;
+
+  auto type = file->node()->type;
+  if (type == inode::FIFO)
+    return -ESPIPE;
+  if (type == inode::Dir)
+    return -EISDIR;
+
+  if (offset < 0)
+    return -EINVAL;
 
   SeekGuard _(file, offset);
   return detail::write_from_user(file, (void *) buf, len);
@@ -203,6 +262,50 @@ HANDLE(writev, fd, iov, cnt) {
     iovec v;
     if (!copy_from_user(&v, (iovec *) iov + i, sizeof(iovec)))
       return -EFAULT;
+
+    if (v.iov_len == 0)
+      continue;
+
+    // Copy a single buffer.
+    size_t n = detail::write_from_user(file, (void *) v.iov_base, v.iov_len);
+    if (n <= 0)
+      return total ? total : n;
+
+    total += n;
+    // If we have a partial write, then we stop immediately.
+    if (n < v.iov_len)
+      break;
+  }
+
+  return total;
+}
+
+HANDLE(pwritev, fd, iov, cnt, offset) {
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  auto type = file->node()->type;
+  if (type == inode::FIFO)
+    return -ESPIPE;
+  if (type == inode::Dir)
+    return -EISDIR;
+
+  if (offset < 0 || cnt <= 0)
+    return -EINVAL;
+  if (!file->writable())
+    return -EBADF;
+
+  SeekGuard _(file, offset);
+  long total = 0;
+  char buf[1024];
+  for (int i = 0; i < cnt; i++) {
+    iovec v;
+    if (!copy_from_user(&v, (iovec *) iov + i, sizeof(iovec)))
+      return -EFAULT;
+
+    if (v.iov_len == -1ul)
+      return -EINVAL;
 
     if (v.iov_len == 0)
       continue;
@@ -486,7 +589,7 @@ HANDLE(umask, mask) {
 }
 
 HANDLE(readlinkat, dirfd, _path, buf, size) {
-  if (size < 0)
+  if (size <= 0)
     return -EINVAL;
   auto path = copy_from_user((char *) _path);
   if (!path)
@@ -674,6 +777,22 @@ HANDLE(flock, fd, cmd) {
   // Do the real blocking.
   wait_entry entry;
   hangon(f->fwait, f->lock, entry);
+  return 0;
+}
+
+// This is safe to ignore; it is just a performance hint.
+HANDLE(fadvise64, fd, offset, size, advice) {
+  if (advice >= 6 || advice < 0)
+    return -EINVAL;
+
+  auto file = pcb->ftbl->at(fd);
+  if (!file)
+    return -EBADF;
+
+  auto type = file->node()->type;
+  if (type == inode::FIFO)
+    return -ESPIPE;
+
   return 0;
 }
 
@@ -1854,7 +1973,7 @@ HANDLE(pselect6, maxcnt, _read, _write, _except, tmo, sigmask) {
     timespec t;
     if (!copy_from_user(&t, (void *) tmo, sizeof(timespec)))
       return -EFAULT;
-    if (t.tv_nsec < 0 || t.tv_nsec > 999'999'999)
+    if (t.tv_nsec < 0 || t.tv_nsec > 999'999'999 || t.tv_sec < 0)
       return -EINVAL;
     timeout = t.tv_nsec + t.tv_sec * 1_s;
   }
@@ -1918,12 +2037,15 @@ HANDLE(pselect6, maxcnt, _read, _write, _except, tmo, sigmask) {
 }
 
 HANDLE(ppoll, _fds, cnt, tmo, sigmask) {
+  if ((int) cnt < 0)
+    return -EINVAL;
+
   size_t timeout = 1.8e19;
   if (tmo) {
     timespec t;
     if (!copy_from_user(&t, (void *) tmo, sizeof(timespec)))
       return -EFAULT;
-    if (t.tv_nsec < 0 || t.tv_nsec > 999'999'999)
+    if (t.tv_nsec < 0 || t.tv_nsec > 999'999'999 || t.tv_sec < 0)
       return -EINVAL;
     timeout = t.tv_nsec + t.tv_sec * 1_s;
   }
@@ -1981,8 +2103,16 @@ HANDLE(reboot, magic, magic2, op, arg) {
     return -EINVAL;
   if (magic2 != 0x28121969 && magic2 != 0x05121996 && magic2 != 0x16041998 && magic2 != 0x20112000)
     return -EINVAL;
-  if (int(op) != int(0xcdef0123))
+  
+  // These operations don't trigger a reboot.
+  // They control the CAD keystroke, which we don't care for now.
+  if (op == 0 || int(op) == int(0x89abcdef))
+    return pcb->euid == 0 ? 0 : -EPERM;
+
+  if (int(op) != int(0xcdef0123)) {
     printk("reboot: unsupported op: %d\n", int(op));
+    return -EINVAL;
+  }
   sbi_system_reset();
 }
 

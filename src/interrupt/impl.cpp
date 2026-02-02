@@ -25,7 +25,7 @@ long futex_wait(void *addr, int expected, void *_timeout, int tmtype, unsigned m
     if (!copy_from_user(&ts, (void *) _timeout, sizeof(timespec)))
       return -EFAULT;
 
-    if (ts.tv_nsec > 999'999'999 || ts.tv_nsec < 0)
+    if (ts.tv_nsec > 999'999'999 || ts.tv_nsec < 0 || ts.tv_sec < 0)
       return -EINVAL;
 
     timeout = ts.tv_nsec + ts.tv_sec * 1_s;
@@ -1163,7 +1163,7 @@ long nanosleep(int clock, int flags, void *rqtp, void *rmtp) {
   if (!copy_from_user(&rq, rqtp, sizeof(timespec)))
     return -EFAULT;
 
-  if (rq.tv_nsec >= (long) 1_s || rq.tv_nsec < 0)
+  if (rq.tv_nsec >= (long) 1_s || rq.tv_nsec < 0 || rq.tv_sec < 0)
     return -EINVAL;
 
   size_t nano = rq.tv_sec * 1'000'000'000 + rq.tv_nsec;
@@ -1447,14 +1447,13 @@ retry:
   int available = 0;
   for (long i = 0; i < cnt; i++) {
     pollfd &fd = fds[i];
-    if (fd.fd < 0) {
+    auto file = pcb->ftbl->at(fd.fd);
+    if (!file) {
       fd.revents = POLLNVAL;
+      available++;
       continue;
     }
 
-    auto file = pcb->ftbl->at(fd.fd);
-    if (!file)
-      return -EBADF;
     if (fd.events == 0)
       continue;
 
@@ -1549,6 +1548,10 @@ long rename(int olddirfd, unsigned long oldpath, int newdirfd, unsigned long new
 }
 
 long read_to_user(file *f, void *buf, unsigned long len) {
+  // The pointer wraps around, which is invalid.
+  [[unlikely]] if ((unsigned long) (buf) + len < (unsigned long) buf)
+    return -EFAULT;
+  
   char *p = (char *) buf, *q = (char *) buf + len;
   auto root = pt_root();
   long read = 0;
@@ -1585,6 +1588,9 @@ long read_to_user(file *f, void *buf, unsigned long len) {
 }
 
 long write_from_user(file *f, void *buf, unsigned long len) {
+  [[unlikely]] if ((unsigned long) (buf) + len < (unsigned long) buf)
+    return -EFAULT;
+    
   char *p = (char *) buf, *q = (char *) buf + len;
   auto root = pt_root();
   long written = 0;
